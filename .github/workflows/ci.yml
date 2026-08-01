@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: finance
+          POSTGRES_PASSWORD: finance_ci_password
+          POSTGRES_DB: finance_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: backend
+
+    env:
+      DATABASE_URL: postgresql+psycopg2://finance:finance_ci_password@localhost:5432/finance_db
+      JWT_SECRET_KEY: ci-only-secret-not-used-anywhere-else
+      # Одноразовый ключ только для CI-прогонов (шифрует тестовые данные в эфемерном контейнере,
+      # никак не связан с dev/prod ключом из backend/.env). При желании можно вынести в secrets.
+      FIELD_ENCRYPTION_KEY: rpQ603aL-JyyxHV-qr1bGDTTz7uCUQ5HrCU_sfoaXwA=
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Wait for Postgres
+        run: |
+          until PGPASSWORD=finance_ci_password psql -h localhost -U finance -d finance_db -c '\q'; do
+            sleep 1
+          done
+
+      - name: Create test database
+        run: PGPASSWORD=finance_ci_password psql -h localhost -U finance -d finance_db -c "CREATE DATABASE finance_test_db OWNER finance"
+
+      - name: Run tests
+        run: python -m pytest --cov=app --cov-report=term-missing
+
+  frontend-build:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+        run: npm run build
