@@ -98,3 +98,51 @@ docker exec finance-app-starter-db-1 psql -U finance -d finance_db -c "CREATE DA
 python -m pytest                              # запуск
 python -m pytest --cov=app --cov-report=term-missing  # с покрытием
 ```
+
+CI (`.github/workflows/ci.yml`) гоняет тот же набор тестов и продакшен-сборку фронтенда
+при каждом push/PR — активируется автоматически после первого `git push` в GitHub.
+
+## Деплой
+
+`docker-compose.prod.yml` — прод-вариант стека: без hot-reload и volume-монтирования кода
+(код запечён в образ), фронтенд собирается как Next.js `standalone`-сервер (не dev-режим),
+Postgres/Redis не публикуют порты наружу. Проверено вживую: сборка обоих образов, миграции
+на чистой БД, логин, запросы между контейнерами по внутренней сети — реальным прогоном,
+не только по документации.
+
+### Шаги
+
+1. Скопировать `backend/.env.example` → `backend/.env`, заполнить **свежесгенерированными**
+   секретами (команды генерации — прямо в комментариях файла), указать
+   `CORS_ORIGINS=https://ваш-домен` (реальный домен фронтенда, не localhost).
+2. Скопировать `.env.prod.example` → `.env` (в корне проекта), задать `POSTGRES_PASSWORD`,
+   `REDIS_PASSWORD` и `NEXT_PUBLIC_API_BASE_URL`. **`POSTGRES_PASSWORD` здесь должен
+   совпадать с паролем внутри `DATABASE_URL` в `backend/.env`** — Postgres применяет
+   `POSTGRES_PASSWORD` только при первой инициализации пустого volume, дальше эта
+   переменная игнорируется.
+3. `docker compose -f docker-compose.prod.yml up -d --build`
+4. Накатить миграции (не делается автоматически): `docker compose -f docker-compose.prod.yml exec backend alembic upgrade head`
+5. Создать первого администратора (самостоятельная регистрация не предусмотрена —
+   `POST /users` защищён ролью admin):
+   ```bash
+   docker compose -f docker-compose.prod.yml exec backend python scripts/create_admin.py \
+     --email admin@example.ru --full-name "Имя Фамилия" --password "сгенерировать_сильный_пароль"
+   ```
+6. Поставить перед портами 8000 (backend) и 3000 (frontend) реверс-прокси с HTTPS
+   (Nginx/Caddy/встроенный балансировщик Timeweb Cloud) — сам compose HTTPS не терминирует.
+
+### Чек-лист перед реальным запуском
+
+- [ ] `JWT_SECRET_KEY` и `FIELD_ENCRYPTION_KEY` — свежесгенерированные, отличные от dev-версий
+- [ ] `CORS_ORIGINS` указывает только на реальный домен, без localhost
+- [ ] HTTPS обязателен (реверс-прокси перед контейнерами)
+- [ ] Пароли Postgres/Redis не совпадают с dev-значениями из этого репозитория
+- [ ] `backend/.env` и корневой `.env` не закоммичены (уже в `.gitignore`)
+
+### 152-ФЗ — что закрыто технически, а что нет
+
+Технически: сервер физически в РФ (Timeweb Cloud подходит), банковские реквизиты
+сотрудников шифруются на уровне приложения (`FIELD_ENCRYPTION_KEY`, см. `app/crypto.py`).
+Но 152-ФЗ — это не только код: регистрация в реестре операторов персональных данных
+(Роскомнадзор), политика обработки ПДн, согласия сотрудников — организационно-юридические
+шаги вне зоны того, что можно решить в репозитории.
