@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { useAuth } from "../lib/auth-context";
+import OAuthButtons from "./OAuthButtons";
 
-export default function Login() {
+export default function Login({ onSwitchToRegister }) {
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -65,6 +66,25 @@ export default function Login() {
             {busy ? "Входим…" : "Войти"}
           </button>
         </form>
+        <OAuthButtons />
+        {onSwitchToRegister && (
+          <div style={{ marginTop: 16, textAlign: "center" }}>
+            <button
+              type="button"
+              onClick={onSwitchToRegister}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#2F6F5E",
+                fontSize: 12.5,
+                cursor: "pointer",
+                textDecoration: "underline",
+              }}
+            >
+              Новая компания? Зарегистрироваться
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
