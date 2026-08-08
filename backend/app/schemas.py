@@ -1,9 +1,9 @@
 from datetime import date, datetime
 from typing import Optional, Union
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.models import RoleEnum, TxTypeEnum
+from app.models import OrderStatusEnum, RoleEnum, StockDirectionEnum, TxTypeEnum
 
 
 class TransactionBase(BaseModel):
@@ -52,6 +52,7 @@ class CategoryIn(BaseModel):
     name: str
     type: TxTypeEnum
     group_name: Optional[str] = None
+    is_active: bool = True
 
 
 class CategoryOut(CategoryIn):
@@ -63,6 +64,7 @@ class CategoryOut(CategoryIn):
 
 class ProjectIn(BaseModel):
     name: str
+    is_active: bool = True
 
 
 class ProjectOut(ProjectIn):
@@ -77,6 +79,7 @@ class AccountIn(BaseModel):
     currency: str = "RUB"
     opening_balance: float = 0
     account_number: Optional[str] = None
+    is_active: bool = True
 
 
 class AccountOut(AccountIn):
@@ -90,6 +93,7 @@ class CounterpartyIn(BaseModel):
     name: str
     type: str = "debtor"
     inn: Optional[str] = None
+    is_active: bool = True
 
 
 class CounterpartyOut(CounterpartyIn):
@@ -186,15 +190,60 @@ class PayrollPaymentOut(PayrollPaymentIn):
     id: str
 
 
+class CompanyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    module_finance_enabled: bool
+    module_warehouse_enabled: bool
+    sdvf_auto_generate_documents: bool = False
+    sdvf_org_naming: Optional[str] = None
+    sdvf_org_inn: Optional[str] = None
+    sdvf_org_kpp: Optional[str] = None
+    sdvf_org_ogrn: Optional[str] = None
+    sdvf_org_address: Optional[str] = None
+    sdvf_org_phone: Optional[str] = None
+
+
+class CompanyModulesIn(BaseModel):
+    module_finance_enabled: Optional[bool] = None
+    module_warehouse_enabled: Optional[bool] = None
+    # Реквизиты "нашей" организации для интеграции с СДВФ (создание Счёт/УПД) —
+    # вводятся один раз, см. models.py::Company.
+    sdvf_org_naming: Optional[str] = None
+    sdvf_org_inn: Optional[str] = None
+    sdvf_org_kpp: Optional[str] = None
+    sdvf_org_ogrn: Optional[str] = None
+    sdvf_org_address: Optional[str] = None
+    sdvf_org_phone: Optional[str] = None
+
+
+class CompanyRegisterIn(BaseModel):
+    company_name: str
+    admin_email: str
+    admin_full_name: str
+    admin_password: str = Field(min_length=8)
+    # Необязательно, без проверки в этой версии (см. README) — просто сохраняется как есть
+    admin_phone: Optional[str] = None
+    # Согласие на обработку персональных данных (152-ФЗ) — обязательно true,
+    # иначе регистрация отклоняется на бэкенде (не только визуально на фронте)
+    pdn_consent: bool
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    email: str
+    company_id: str
+    company: CompanyOut
+    email: Optional[str] = None
     full_name: str
     role: RoleEnum
     project_id: Optional[str] = None
     is_active: bool = True
+    email_verified: bool = False
+    phone: Optional[str] = None
 
 
 class TokenResponse(BaseModel):
@@ -223,6 +272,27 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
 
 
+class ApiKeyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    key_prefix: str
+    user_id: str
+    is_active: bool
+    created_at: datetime
+    last_used_at: Optional[datetime] = None
+
+
+class ApiKeyCreateIn(BaseModel):
+    name: str
+    user_id: Optional[str] = None  # по умолчанию — сам создающий администратор
+
+
+class ApiKeyCreated(ApiKeyOut):
+    key: str
+
+
 class IntegrationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -246,4 +316,250 @@ class IntegrationSyncIn(BaseModel):
 class IntegrationSyncResult(BaseModel):
     created: int
     skipped: int
-    password: Optional[str] = None
+    skipped_duplicate: int = 0
+    skipped_no_fx_rate: int = 0
+    skipped_unparseable: int = 0
+
+
+class AmoCrmConnectIn(BaseModel):
+    subdomain: str
+    client_id: str
+    client_secret: str
+    access_token: str
+    refresh_token: str
+    redirect_uri: str = "https://localhost/"
+
+
+class AmoCrmSyncIn(BaseModel):
+    account_id: str
+    date_from: Optional[date] = None
+
+
+class AmoCrmSyncResult(BaseModel):
+    contacts_created: int
+    contacts_matched: int
+    deals_created: int
+    deals_skipped: int
+
+
+# ---------------------------------------------------------------------------
+# Склад
+# ---------------------------------------------------------------------------
+
+
+class WarehouseIn(BaseModel):
+    name: str
+    is_active: bool = True
+
+
+class WarehouseOut(WarehouseIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+
+
+class ProductIn(BaseModel):
+    name: str
+    unit: str = "кг"
+    category: Optional[str] = None
+    is_active: bool = True
+
+
+class ProductOut(ProductIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+
+
+class ProductVariantIn(BaseModel):
+    product_id: str
+    name: str
+    is_active: bool = True
+
+
+class ProductVariantOut(ProductVariantIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+
+
+class StockMovementIn(BaseModel):
+    date: date
+    warehouse_id: str
+    product_variant_id: str
+    direction: StockDirectionEnum
+    quantity: float
+    note: Optional[str] = None
+    executor_id: Optional[str] = None
+    payroll_rate: Optional[float] = None
+
+
+class StockMovementOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    date: date
+    warehouse_id: str
+    product_variant_id: str
+    direction: StockDirectionEnum
+    quantity: float
+    note: Optional[str] = None
+    executor_id: Optional[str] = None
+    payroll_rate: Optional[float] = None
+    payroll_accrual_id: Optional[str] = None
+    order_id: Optional[str] = None
+    production_run_id: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+
+
+class StockTransferIn(BaseModel):
+    date: date
+    product_variant_id: str
+    from_warehouse_id: str
+    to_warehouse_id: str
+    quantity: float
+    note: Optional[str] = None
+
+
+class EmployeeMiniOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    full_name: str
+
+
+class StockBalanceOut(BaseModel):
+    warehouse_id: str
+    warehouse_name: str
+    product_id: str
+    product_name: str
+    unit: str
+    product_variant_id: str
+    variant_name: str
+    quantity: float
+    reserved: float = 0
+    available: float = 0
+
+
+# ---------------------------------------------------------------------------
+# Заказы
+# ---------------------------------------------------------------------------
+
+
+class OrderLineIn(BaseModel):
+    product_variant_id: str
+    quantity: float
+
+
+class OrderLineOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    product_variant_id: str
+    quantity: float
+
+
+class OrderCreateIn(BaseModel):
+    counterparty_id: str
+    warehouse_id: str
+    requested_date: Optional[date] = None
+    note: Optional[str] = None
+    lines: list[OrderLineIn]
+
+
+class OrderUpdateIn(BaseModel):
+    counterparty_id: Optional[str] = None
+    requested_date: Optional[date] = None
+    note: Optional[str] = None
+
+
+class OrderOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    counterparty_id: str
+    warehouse_id: str
+    status: OrderStatusEnum
+    requested_date: Optional[date] = None
+    note: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+    lines: list[OrderLineOut] = []
+    sdvf_invoice_ref: Optional[dict] = None
+    sdvf_utd_ref: Optional[dict] = None
+
+
+class SdvfDocumentLineIn(BaseModel):
+    order_line_id: str
+    # Склад не хранит цену (см. models.py::OrderLine) — вводится вручную в
+    # момент генерации документа, отдельно для каждого заказа.
+    price: float
+    nds_product: Optional[int] = None
+
+
+class SdvfGenerateDocumentIn(BaseModel):
+    nds: int = 0
+    nds_type: str = "onTop"
+    lines: list[SdvfDocumentLineIn]
+
+
+class SdvfDocumentRefOut(BaseModel):
+    id: int
+    pdf_url: str
+
+
+# ---------------------------------------------------------------------------
+# Производство
+# ---------------------------------------------------------------------------
+
+
+class ProductionRecipeInputIn(BaseModel):
+    input_variant_id: str
+    qty_per_unit: float
+
+
+class ProductionRecipeInputOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    input_variant_id: str
+    qty_per_unit: float
+
+
+class ProductionRecipeIn(BaseModel):
+    name: str
+    output_variant_id: str
+    is_active: bool = True
+    inputs: list[ProductionRecipeInputIn]
+
+
+class ProductionRecipeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    output_variant_id: str
+    is_active: bool
+    inputs: list[ProductionRecipeInputOut] = []
+
+
+class ProductionRunIn(BaseModel):
+    recipe_id: str
+    warehouse_id: str
+    date: date
+    output_qty: float
+    note: Optional[str] = None
+
+
+class ProductionRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    recipe_id: str
+    warehouse_id: str
+    date: date
+    output_qty: float
+    note: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: datetime

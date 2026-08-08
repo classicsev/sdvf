@@ -8,6 +8,20 @@ import { useResource } from "../lib/useResource";
 import { fmt, fmtDate } from "../lib/format";
 import { canEditTransactions } from "../lib/roles";
 
+const SOURCE_LABELS = { tbank: "Т-Банк", amocrm: "amoCRM", alfabank: "Альфа-Банк" };
+
+function sourceBadge(externalRef) {
+  if (!externalRef) return null;
+  const provider = externalRef.split(":")[0];
+  const label = SOURCE_LABELS[provider];
+  if (!label) return null;
+  return (
+    <span className={`fp-source-badge ${provider}`} title="Источник операции">
+      {label}
+    </span>
+  );
+}
+
 const EMPTY_FORM = {
   date_odds: new Date().toISOString().slice(0, 10),
   account_id: "",
@@ -148,7 +162,12 @@ export default function Transactions() {
     }
   }
 
-  const filteredCategories = (categories || []).filter((c) => c.type === form.type);
+  const selectable = (list, selectedId) => (list || []).filter((x) => x.is_active !== false || x.id === selectedId);
+
+  const filteredCategories = selectable(categories, form.category_id).filter((c) => c.type === form.type);
+  const selectableAccounts = selectable(accounts, form.account_id);
+  const selectableProjects = selectable(projects, form.project_id);
+  const selectableCounterparties = selectable(counterparties, form.counterparty_id);
 
   return (
     <div className="fp-dash">
@@ -219,6 +238,7 @@ export default function Transactions() {
                 <th>Проект</th>
                 <th>Контрагент</th>
                 <th>Комментарий</th>
+                <th>Источник</th>
                 <th className="right">Комиссия</th>
                 <th className="right fp-table-amount-col" style={{ right: canEdit ? 90 : 0 }}>
                   Сумма
@@ -249,6 +269,7 @@ export default function Transactions() {
                     <td className="fp-muted fp-table-comment-col" title={t.comment || ""}>
                       {t.comment || "—"}
                     </td>
+                    <td>{sourceBadge(t.external_ref) || <span className="fp-muted">Вручную</span>}</td>
                     <td className="right fp-mono">{t.commission ? fmt(t.commission, t.currency) : "—"}</td>
                     <td
                       className={`right fp-mono fp-amount-${t.type} fp-table-amount-col`}
@@ -332,9 +353,10 @@ export default function Transactions() {
                   <option value="" disabled>
                     Выберите счёт
                   </option>
-                  {(accounts || []).map((a) => (
+                  {selectableAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.name} ({a.currency})
+                      {a.is_active === false ? " — деактивирован" : ""}
                     </option>
                   ))}
                 </select>
@@ -353,6 +375,7 @@ export default function Transactions() {
                   {filteredCategories.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
+                      {c.is_active === false ? " — деактивирована" : ""}
                     </option>
                   ))}
                 </select>
@@ -361,9 +384,10 @@ export default function Transactions() {
                 Проект
                 <select value={form.project_id} onChange={(e) => updateField("project_id", e.target.value)}>
                   <option value="">— не указан —</option>
-                  {(projects || []).map((p) => (
+                  {selectableProjects.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
+                      {p.is_active === false ? " — деактивирован" : ""}
                     </option>
                   ))}
                 </select>
@@ -373,9 +397,10 @@ export default function Transactions() {
                 Контрагент
                 <select value={form.counterparty_id} onChange={(e) => updateField("counterparty_id", e.target.value)}>
                   <option value="">— не указан —</option>
-                  {(counterparties || []).map((c) => (
+                  {selectableCounterparties.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
+                      {c.is_active === false ? " — деактивирован" : ""}
                     </option>
                   ))}
                 </select>

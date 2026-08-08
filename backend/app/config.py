@@ -14,6 +14,40 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
     env: str = "development"
 
+    # Почта (self-hosted через Postfix на проде) — используется для писем
+    # подтверждения email. В dev SMTP_HOST не поднят — отправка просто не
+    # удастся и будет проглочена (см. app/mailer.py), остальной флоу это не ломает.
+    smtp_host: str = "localhost"
+    smtp_port: int = 25
+    mail_from: str = "noreply@localhost"
+    # Базовый URL фронтенда — нужен, чтобы собрать ссылку в письме подтверждения
+    # и адрес, куда бэкенд редиректит после OAuth-колбэка.
+    frontend_base_url: str = "http://localhost:3000"
+    # Публичный URL самого бэкенда — redirect_uri в OAuth должен указывать на
+    # бэкенд (он обменивает code на токен), а не на фронтенд. В проде это
+    # отдельный поддомен (см. Caddyfile: api.uvost.ru), не совпадает с frontend_base_url.
+    backend_base_url: str = "http://localhost:8000"
+
+    # OAuth — пусто по умолчанию: если для провайдера не заданы client_id/secret,
+    # соответствующая кнопка на фронте не показывается (см. GET /auth/oauth/providers).
+    vk_client_id: str = ""
+    vk_client_secret: str = ""
+    yandex_client_id: str = ""
+    yandex_client_secret: str = ""
+    sber_client_id: str = ""
+    sber_client_secret: str = ""
+
+    # Интеграция с СДВФ (sdvf.ru) — генерация Счёт/УПД из карточки заказа.
+    # Пусто по умолчанию — кнопки генерации на фронте не показываются, пока не настроено.
+    sdvf_base_url: str = ""
+    sdvf_api_key: str = ""
+
+    # Единый вход: Учёт выступает identity-провайдером для СДВФ (routers/identity_provider.py).
+    # redirect_uri — жёсткий allowlist ровно одного доверенного клиента (не
+    # произвольный параметр запроса) — защита от open redirect. Пусто = выключено.
+    sdvf_sso_redirect_uri: str = ""
+    sdvf_sso_client_secret: str = ""
+
     class Config:
         env_file = ".env"
 

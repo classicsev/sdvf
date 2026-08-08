@@ -9,7 +9,7 @@ from openpyxl import Workbook
 from sqlalchemy.orm import Session, Query
 
 from app.audit import log_action
-from app.auth import get_current_user, require_roles, scope_project_filter
+from app.auth import get_current_user, require_module, require_roles, scope_project_filter
 from app.automation_engine import apply_rules
 from app.database import get_db
 from app.fx import convert_to_rub
@@ -42,7 +42,7 @@ def _filtered_query(
     date_from: Optional[date],
     date_to: Optional[date],
 ) -> Query:
-    query = db.query(Transaction)
+    query = db.query(Transaction).filter(Transaction.company_id == user.company_id)
 
     # Row-level security: project_manager принудительно видит только свой проект,
     # даже если он передаст другой ?project= в запросе.
@@ -64,8 +64,8 @@ def _filtered_query(
     return query.order_by(Transaction.date_odds.desc())
 
 
-def _get_transaction_or_404(db: Session, transaction_id: str) -> Transaction:
-    return get_or_404(db, Transaction, transaction_id, "Операция не найдена")
+def _get_transaction_or_404(db: Session, transaction_id: str, company_id: str) -> Transaction:
+    return get_or_404(db, Transaction, transaction_id, "Операция не найдена", company_id=company_id)
 
 
 def _check_can_edit(user: User, tx: Transaction) -> None:
@@ -78,7 +78,7 @@ def _check_can_edit(user: User, tx: Transaction) -> None:
         )
 
 
-@router.get("", response_model=list[TransactionOut])
+@router.get("", response_model=list[TransactionOut], dependencies=[Depends(require_module("finance"))])
 def list_transactions(
     project: Optional[str] = None,
     account: Optional[str] = None,
@@ -91,7 +91,11 @@ def list_transactions(
     return _filtered_query(db, user, project, account, category, date_from, date_to).all()
 
 
-@router.post("", response_model=TransactionOut, dependencies=[Depends(require_roles(EDITORS))])
+@router.post(
+    "",
+    response_model=TransactionOut,
+    dependencies=[Depends(require_roles(EDITORS)), Depends(require_module("finance"))],
+)
 def create_transaction(
     payload: TransactionCreate,
     db: Session = Depends(get_db),
@@ -102,11 +106,12 @@ def create_transaction(
     # Правила автоматизации (см. /automation-rules) могут переопределить
     # категорию/проект операции по условиям (контрагент, комментарий, сумма).
     data = payload.model_dump()
-    data.update(apply_rules(db, payload))
+    data.update(apply_rules(db, payload, user.company_id))
 
     tx = Transaction(
         **data,
         amount_rub=amount_rub,
+        company_id=user.company_id,
         created_by=user.id,
     )
     db.add(tx)
@@ -116,14 +121,18 @@ def create_transaction(
     return tx
 
 
-@router.patch("/{transaction_id}", response_model=TransactionOut, dependencies=[Depends(require_roles(EDITORS))])
+@router.patch(
+    "/{transaction_id}",
+    response_model=TransactionOut,
+    dependencies=[Depends(require_roles(EDITORS)), Depends(require_module("finance"))],
+)
 def update_transaction(
     transaction_id: str,
     payload: TransactionUpdate,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    tx = _get_transaction_or_404(db, transaction_id)
+    tx = _get_transaction_or_404(db, transaction_id, user.company_id)
     _check_can_edit(user, tx)
 
     changes = payload.model_dump(exclude_unset=True)
@@ -141,13 +150,16 @@ def update_transaction(
     return tx
 
 
-@router.delete("/{transaction_id}", dependencies=[Depends(require_roles(EDITORS))])
+@router.delete(
+    "/{transaction_id}",
+    dependencies=[Depends(require_roles(EDITORS)), Depends(require_module("finance"))],
+)
 def delete_transaction(
     transaction_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    tx = _get_transaction_or_404(db, transaction_id)
+    tx = _get_transaction_or_404(db, transaction_id, user.company_id)
     _check_can_edit(user, tx)
 
     db.delete(tx)
@@ -156,7 +168,7 @@ def delete_transaction(
     return {"deleted": True}
 
 
-@router.get("/export.xlsx")
+@router.get("/export.xlsx", dependencies=[Depends(require_module("finance"))])
 def export_transactions_xlsx(
     project: Optional[str] = None,
     account: Optional[str] = None,
@@ -168,10 +180,12 @@ def export_transactions_xlsx(
 ):
     rows = _filtered_query(db, user, project, account, category, date_from, date_to).all()
 
-    account_names = {a.id: a.name for a in db.query(Account).all()}
-    category_names = {c.id: c.name for c in db.query(Category).all()}
-    project_names = {p.id: p.name for p in db.query(Project).all()}
-    counterparty_names = {c.id: c.name for c in db.query(Counterparty).all()}
+    account_names = {a.id: a.name for a in db.query(Account).filter(Account.company_id == user.company_id).all()}
+    category_names = {c.id: c.name for c in db.query(Category).filter(Category.company_id == user.company_id).all()}
+    project_names = {p.id: p.name for p in db.query(Project).filter(Project.company_id == user.company_id).all()}
+    counterparty_names = {
+        c.id: c.name for c in db.query(Counterparty).filter(Counterparty.company_id == user.company_id).all()
+    }
 
     wb = Workbook()
     ws = wb.active

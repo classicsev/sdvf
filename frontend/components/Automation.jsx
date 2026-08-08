@@ -17,7 +17,7 @@ const PROVIDER_LABELS = {
   "1c": "1С:УНФ",
 };
 
-const SYNC_SUPPORTED = ["tinkoff"];
+const SYNC_SUPPORTED = ["tinkoff", "amocrm"];
 
 const FIELD_OPTIONS = [
   { value: "counterparty", label: "Контрагент" },
@@ -60,9 +60,12 @@ function describeCondition(condition) {
     .join(" И ");
 }
 
+const AMO_CONNECT_EMPTY = { subdomain: "", client_id: "", client_secret: "", access_token: "", refresh_token: "" };
+
 function IntegrationsPanel({ token, integrations, accounts, reload }) {
   const [connectTarget, setConnectTarget] = useState(null);
   const [connectTokenValue, setConnectTokenValue] = useState("");
+  const [amoConnectForm, setAmoConnectForm] = useState(AMO_CONNECT_EMPTY);
   const [connectError, setConnectError] = useState("");
   const [connectSaving, setConnectSaving] = useState(false);
 
@@ -71,10 +74,12 @@ function IntegrationsPanel({ token, integrations, accounts, reload }) {
   const [syncError, setSyncError] = useState("");
   const [syncResult, setSyncResult] = useState(null);
   const [syncSaving, setSyncSaving] = useState(false);
+  const [syncDetailsOpen, setSyncDetailsOpen] = useState(false);
 
   function openConnect(integration) {
     setConnectTarget(integration);
     setConnectTokenValue("");
+    setAmoConnectForm(AMO_CONNECT_EMPTY);
     setConnectError("");
   }
 
@@ -83,7 +88,11 @@ function IntegrationsPanel({ token, integrations, accounts, reload }) {
     setConnectSaving(true);
     setConnectError("");
     try {
-      await api.connectIntegration(token, connectTarget.id, { token: connectTokenValue });
+      if (connectTarget.provider === "amocrm") {
+        await api.connectAmoCrm(token, connectTarget.id, amoConnectForm);
+      } else {
+        await api.connectIntegration(token, connectTarget.id, { token: connectTokenValue });
+      }
       setConnectTarget(null);
       reload();
     } catch (err) {
@@ -108,6 +117,7 @@ function IntegrationsPanel({ token, integrations, accounts, reload }) {
     setSyncForm({ account_id: "", date_from: "", date_to: "" });
     setSyncError("");
     setSyncResult(null);
+    setSyncDetailsOpen(false);
   }
 
   async function handleSync(e) {
@@ -115,12 +125,19 @@ function IntegrationsPanel({ token, integrations, accounts, reload }) {
     setSyncSaving(true);
     setSyncError("");
     setSyncResult(null);
+    setSyncDetailsOpen(false);
     try {
-      const result = await api.syncIntegration(token, syncTarget.id, {
-        account_id: syncForm.account_id,
-        date_from: syncForm.date_from,
-        date_to: syncForm.date_to || null,
-      });
+      const result =
+        syncTarget.provider === "amocrm"
+          ? await api.syncAmoCrm(token, syncTarget.id, {
+              account_id: syncForm.account_id,
+              date_from: syncForm.date_from || null,
+            })
+          : await api.syncIntegration(token, syncTarget.id, {
+              account_id: syncForm.account_id,
+              date_from: syncForm.date_from,
+              date_to: syncForm.date_to || null,
+            });
       setSyncResult(result);
       reload();
     } catch (err) {
@@ -191,7 +208,8 @@ function IntegrationsPanel({ token, integrations, accounts, reload }) {
           </tbody>
         </table>
         <p className="fp-note" style={{ padding: "0 16px 16px" }}>
-          Реальная синхронизация реализована только для Т-Банка (API «Операции по счету»). Остальные — заглушки
+          Реальная синхронизация реализована для Т-Банка (API «Операции по счету») и amoCRM (контакты →
+          контрагенты, сделки в статусе «Успешно реализовано» → доходные транзакции). Остальные — заглушки
           каталога на будущее.
         </p>
       </div>
@@ -206,15 +224,64 @@ function IntegrationsPanel({ token, integrations, accounts, reload }) {
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleConnect}>
-              <label className="fp-span-2">
-                API-токен
-                <input
-                  required
-                  value={connectTokenValue}
-                  onChange={(e) => setConnectTokenValue(e.target.value)}
-                  placeholder="Для теста Т-Банка: TBankSandboxToken"
-                />
-              </label>
+              {connectTarget.provider === "amocrm" ? (
+                <>
+                  <label className="fp-span-2">
+                    Поддомен (например, mvkusno из mvkusno.amocrm.ru)
+                    <input
+                      required
+                      value={amoConnectForm.subdomain}
+                      onChange={(e) => setAmoConnectForm((p) => ({ ...p, subdomain: e.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    Client ID
+                    <input
+                      required
+                      value={amoConnectForm.client_id}
+                      onChange={(e) => setAmoConnectForm((p) => ({ ...p, client_id: e.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    Client Secret
+                    <input
+                      required
+                      value={amoConnectForm.client_secret}
+                      onChange={(e) => setAmoConnectForm((p) => ({ ...p, client_secret: e.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    Access token
+                    <input
+                      required
+                      value={amoConnectForm.access_token}
+                      onChange={(e) => setAmoConnectForm((p) => ({ ...p, access_token: e.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    Refresh token
+                    <input
+                      required
+                      value={amoConnectForm.refresh_token}
+                      onChange={(e) => setAmoConnectForm((p) => ({ ...p, refresh_token: e.target.value }))}
+                    />
+                  </label>
+                  <div className="fp-note fp-span-2">
+                    amoCRM не выдаёт статичный токен для внешних интеграций — access/refresh получаются через
+                    обмен кода авторизации на вкладке «Ключи и доступы» вашей интеграции в amoMarket.
+                  </div>
+                </>
+              ) : (
+                <label className="fp-span-2">
+                  API-токен
+                  <input
+                    required
+                    value={connectTokenValue}
+                    onChange={(e) => setConnectTokenValue(e.target.value)}
+                    placeholder="Для теста Т-Банка: TBankSandboxToken"
+                  />
+                </label>
+              )}
               {connectError && <div className="fp-form-error fp-span-2">{connectError}</div>}
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setConnectTarget(null)}>
@@ -240,7 +307,7 @@ function IntegrationsPanel({ token, integrations, accounts, reload }) {
             </div>
             <form className="fp-form-grid" onSubmit={handleSync}>
               <label className="fp-span-2">
-                Счёт (с заполненным номером счёта)
+                {syncTarget.provider === "amocrm" ? "Счёт (куда записать доход по сделкам)" : "Счёт (с заполненным номером счёта)"}
                 <select
                   required
                   value={syncForm.account_id}
@@ -250,33 +317,62 @@ function IntegrationsPanel({ token, integrations, accounts, reload }) {
                     Выберите счёт
                   </option>
                   {(accounts || []).map((a) => (
-                    <option key={a.id} value={a.id} disabled={!a.account_number}>
-                      {a.name} {a.account_number ? `(${a.account_number})` : "— нет номера счёта"}
+                    <option key={a.id} value={a.id} disabled={syncTarget.provider !== "amocrm" && !a.account_number}>
+                      {syncTarget.provider === "amocrm"
+                        ? a.name
+                        : `${a.name} ${a.account_number ? `(${a.account_number})` : "— нет номера счёта"}`}
                     </option>
                   ))}
                 </select>
               </label>
-              <label>
-                С даты
+              <label className={syncTarget.provider === "amocrm" ? "fp-span-2" : ""}>
+                {syncTarget.provider === "amocrm" ? "Сделки, закрытые с даты (опц.)" : "С даты"}
                 <input
                   type="date"
-                  required
+                  required={syncTarget.provider !== "amocrm"}
                   value={syncForm.date_from}
                   onChange={(e) => setSyncForm((p) => ({ ...p, date_from: e.target.value }))}
                 />
               </label>
-              <label>
-                По дату (опц.)
-                <input
-                  type="date"
-                  value={syncForm.date_to}
-                  onChange={(e) => setSyncForm((p) => ({ ...p, date_to: e.target.value }))}
-                />
-              </label>
+              {syncTarget.provider !== "amocrm" && (
+                <label>
+                  По дату (опц.)
+                  <input
+                    type="date"
+                    value={syncForm.date_to}
+                    onChange={(e) => setSyncForm((p) => ({ ...p, date_to: e.target.value }))}
+                  />
+                </label>
+              )}
               {syncError && <div className="fp-form-error fp-span-2">{syncError}</div>}
-              {syncResult && (
+              {syncResult && syncTarget.provider === "amocrm" && (
                 <div className="fp-note fp-span-2">
-                  Загружено новых операций: {syncResult.created}. Пропущено (уже были/без курса): {syncResult.skipped}.
+                  Контрагенты: создано {syncResult.contacts_created}, уже были {syncResult.contacts_matched}.
+                  <br />
+                  Сделки («Успешно реализовано»): загружено {syncResult.deals_created}, пропущено{" "}
+                  {syncResult.deals_skipped}.
+                </div>
+              )}
+              {syncResult && syncTarget.provider !== "amocrm" && (
+                <div className="fp-note fp-span-2">
+                  <div>
+                    Загружено новых операций: {syncResult.created}. Пропущено: {syncResult.skipped}.{" "}
+                    <button
+                      type="button"
+                      className="fp-btn-tiny"
+                      style={{ marginLeft: 4 }}
+                      onClick={() => setSyncDetailsOpen((v) => !v)}
+                    >
+                      {syncDetailsOpen ? "Скрыть" : "Подробнее"}
+                    </button>
+                  </div>
+                  {syncDetailsOpen && (
+                    <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
+                      <li>Уже были загружены раньше: {syncResult.skipped_duplicate}</li>
+                      <li>Нет курса валюты на дату операции: {syncResult.skipped_no_fx_rate}</li>
+                      <li>Не удалось распознать операцию: {syncResult.skipped_unparseable}</li>
+                    </ul>
+                  )}
                 </div>
               )}
               <div className="fp-modal-foot fp-span-2">

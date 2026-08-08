@@ -26,8 +26,7 @@ services:
     depends_on:
       - db
       - redis
-    ports:
-      - "8000:8000"
+    # Порт наружу не публикуется — доступ только через Caddy по внутренней docker-сети.
     # Без volume-монтирования кода и без --reload — используется образ как есть
     # (см. backend/Dockerfile), команда запуска — прод-CMD из образа.
 
@@ -39,10 +38,27 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
-    ports:
-      - "3000:3000"
+    # Порт наружу не публикуется — доступ только через Caddy по внутренней docker-сети.
     # Standalone-сборка Next.js (см. frontend/Dockerfile) — без dev-сервера.
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    # Автоматически получает и продлевает бесплатные сертификаты Let's Encrypt
+    # для доменов из Caddyfile — HTTPS без ручной настройки certbot/nginx.
 
 volumes:
   pgdata:
   redisdata:
+  caddy_data:
+  caddy_config:

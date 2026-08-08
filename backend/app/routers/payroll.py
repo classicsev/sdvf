@@ -5,7 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.audit import log_action
-from app.auth import get_current_user, require_roles
+from app.auth import get_current_user, require_module, require_roles
 from app.crypto import decrypt_field, encrypt_field
 from app.database import get_db
 from app.models import Employee, PayrollAccrual, PayrollPayment, RoleEnum, User
@@ -45,8 +45,8 @@ def _parse_period(period: str) -> tuple[date, date]:
     return date(year, month, 1), _month_end(year, month)
 
 
-def _get_or_404(db: Session, model, entity_id: str, detail: str):
-    return get_or_404(db, model, entity_id, detail)
+def _get_or_404(db: Session, model, entity_id: str, detail: str, company_id: str):
+    return get_or_404(db, model, entity_id, detail, company_id=company_id)
 
 
 def _employee_to_out(emp: Employee) -> EmployeeOut:
@@ -61,25 +61,43 @@ def _employee_to_out(emp: Employee) -> EmployeeOut:
     )
 
 
-@router.get("/employees", response_model=list[EmployeeOut], dependencies=[Depends(require_roles(PAYROLL_EDITORS))])
-def list_employees(db: Session = Depends(get_db)):
-    return [_employee_to_out(e) for e in db.query(Employee).all()]
+@router.get(
+    "/employees",
+    response_model=list[EmployeeOut],
+    dependencies=[Depends(require_roles(PAYROLL_EDITORS)), Depends(require_module("finance"))],
+)
+def list_employees(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return [_employee_to_out(e) for e in db.query(Employee).filter(Employee.company_id == user.company_id).all()]
 
 
-@router.post("/employees", response_model=EmployeeOut, dependencies=[Depends(require_roles(PAYROLL_EDITORS))])
-def create_employee(payload: EmployeeIn, db: Session = Depends(get_db)):
+@router.post(
+    "/employees",
+    response_model=EmployeeOut,
+    dependencies=[Depends(require_roles(PAYROLL_EDITORS)), Depends(require_module("finance"))],
+)
+def create_employee(payload: EmployeeIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     data = payload.model_dump()
     bank_details = data.pop("bank_details", None)
-    obj = Employee(**data, bank_details_encrypted=encrypt_field(bank_details) if bank_details else None)
+    obj = Employee(
+        **data,
+        company_id=user.company_id,
+        bank_details_encrypted=encrypt_field(bank_details) if bank_details else None,
+    )
     db.add(obj)
     db.commit()
     db.refresh(obj)
     return _employee_to_out(obj)
 
 
-@router.patch("/employees/{employee_id}", response_model=EmployeeOut, dependencies=[Depends(require_roles(PAYROLL_EDITORS))])
-def update_employee(employee_id: str, payload: EmployeeIn, db: Session = Depends(get_db)):
-    obj = _get_or_404(db, Employee, employee_id, "Сотрудник не найден")
+@router.patch(
+    "/employees/{employee_id}",
+    response_model=EmployeeOut,
+    dependencies=[Depends(require_roles(PAYROLL_EDITORS)), Depends(require_module("finance"))],
+)
+def update_employee(
+    employee_id: str, payload: EmployeeIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    obj = _get_or_404(db, Employee, employee_id, "Сотрудник не найден", user.company_id)
     data = payload.model_dump()
     bank_details = data.pop("bank_details", None)
     for k, v in data.items():
@@ -90,35 +108,46 @@ def update_employee(employee_id: str, payload: EmployeeIn, db: Session = Depends
     return _employee_to_out(obj)
 
 
-@router.delete("/employees/{employee_id}", dependencies=[Depends(require_roles(PAYROLL_EDITORS))])
-def delete_employee(employee_id: str, db: Session = Depends(get_db)):
+@router.delete(
+    "/employees/{employee_id}",
+    dependencies=[Depends(require_roles(PAYROLL_EDITORS)), Depends(require_module("finance"))],
+)
+def delete_employee(employee_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     # TODO: запретить удаление, если у сотрудника уже есть начисления/выплаты —
     # предложить деактивировать (status="dismissed"), а не удалять физически
-    obj = _get_or_404(db, Employee, employee_id, "Сотрудник не найден")
+    obj = _get_or_404(db, Employee, employee_id, "Сотрудник не найден", user.company_id)
     db.delete(obj)
     db.commit()
     return {"deleted": True}
 
 
-@router.get("/accruals", response_model=list[PayrollAccrualOut], dependencies=[Depends(require_roles(PAYROLL_EDITORS))])
-def list_accruals(period: str | None = None, db: Session = Depends(get_db)):
-    query = db.query(PayrollAccrual)
+@router.get(
+    "/accruals",
+    response_model=list[PayrollAccrualOut],
+    dependencies=[Depends(require_roles(PAYROLL_EDITORS)), Depends(require_module("finance"))],
+)
+def list_accruals(period: str | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    query = db.query(PayrollAccrual).filter(PayrollAccrual.company_id == user.company_id)
     if period:
         start, end = _parse_period(period)
         query = query.filter(PayrollAccrual.period >= start, PayrollAccrual.period <= end)
     return query.order_by(PayrollAccrual.period.desc()).all()
 
 
-@router.post("/accruals", response_model=PayrollAccrualOut, dependencies=[Depends(require_roles(PAYROLL_EDITORS))])
+@router.post(
+    "/accruals",
+    response_model=PayrollAccrualOut,
+    dependencies=[Depends(require_roles(PAYROLL_EDITORS)), Depends(require_module("finance"))],
+)
 def create_accrual(
     payload: PayrollAccrualIn,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _get_or_404(db, Employee, payload.employee_id, "Сотрудник не найден")
+    _get_or_404(db, Employee, payload.employee_id, "Сотрудник не найден", user.company_id)
 
     total = payload.salary + payload.bonus - payload.deductions
-    accrual = PayrollAccrual(**payload.model_dump(), total=total)
+    accrual = PayrollAccrual(**payload.model_dump(), company_id=user.company_id, total=total)
     db.add(accrual)
     db.commit()
     db.refresh(accrual)
@@ -126,22 +155,35 @@ def create_accrual(
     return accrual
 
 
-@router.get("/payments", response_model=list[PayrollPaymentOut], dependencies=[Depends(require_roles(PAYROLL_EDITORS))])
-def list_payments(db: Session = Depends(get_db)):
-    return db.query(PayrollPayment).order_by(PayrollPayment.date.desc()).all()
+@router.get(
+    "/payments",
+    response_model=list[PayrollPaymentOut],
+    dependencies=[Depends(require_roles(PAYROLL_EDITORS)), Depends(require_module("finance"))],
+)
+def list_payments(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return (
+        db.query(PayrollPayment)
+        .filter(PayrollPayment.company_id == user.company_id)
+        .order_by(PayrollPayment.date.desc())
+        .all()
+    )
 
 
-@router.post("/payments", response_model=PayrollPaymentOut, dependencies=[Depends(require_roles(PAYROLL_EDITORS))])
+@router.post(
+    "/payments",
+    response_model=PayrollPaymentOut,
+    dependencies=[Depends(require_roles(PAYROLL_EDITORS)), Depends(require_module("finance"))],
+)
 def create_payment(
     payload: PayrollPaymentIn,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _get_or_404(db, Employee, payload.employee_id, "Сотрудник не найден")
+    _get_or_404(db, Employee, payload.employee_id, "Сотрудник не найден", user.company_id)
     if payload.accrual_id:
-        _get_or_404(db, PayrollAccrual, payload.accrual_id, "Начисление не найдено")
+        _get_or_404(db, PayrollAccrual, payload.accrual_id, "Начисление не найдено", user.company_id)
 
-    payment = PayrollPayment(**payload.model_dump())
+    payment = PayrollPayment(**payload.model_dump(), company_id=user.company_id)
     db.add(payment)
     db.commit()
     db.refresh(payment)
@@ -149,12 +191,17 @@ def create_payment(
     return payment
 
 
-@router.get("/summary-for-viewer", dependencies=[Depends(require_roles(SUMMARY_VIEWERS))])
-def payroll_summary_for_viewer(period: str | None = None, db: Session = Depends(get_db)):
+@router.get(
+    "/summary-for-viewer",
+    dependencies=[Depends(require_roles(SUMMARY_VIEWERS)), Depends(require_module("finance"))],
+)
+def payroll_summary_for_viewer(
+    period: str | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
     # Агрегированная сводка ФОТ без ФИО и реквизитов — доступна viewer
     # (плюс admin/payroll_operator, которым и так открыты детальные эндпоинты).
-    accrual_query = db.query(PayrollAccrual)
-    payment_query = db.query(PayrollPayment)
+    accrual_query = db.query(PayrollAccrual).filter(PayrollAccrual.company_id == user.company_id)
+    payment_query = db.query(PayrollPayment).filter(PayrollPayment.company_id == user.company_id)
 
     if period:
         start, end = _parse_period(period)

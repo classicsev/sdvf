@@ -15,6 +15,7 @@ def log_action(
 ) -> None:
     db.add(
         AuditLog(
+            company_id=user.company_id,
             user_id=user.id,
             action=action,
             entity_type=entity_type,

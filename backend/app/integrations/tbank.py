@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from typing import Iterator, Optional
 
@@ -9,6 +9,13 @@ SANDBOX_TOKEN = "TBankSandboxToken"
 
 class TBankError(Exception):
     pass
+
+
+def _to_rfc3339(d: date, end_of_day: bool = False) -> str:
+    # Т-Банк API требует полный date-time (RFC3339), голая дата "2022-01-01"
+    # отклоняется как невалидный формат (проверено на реальном, не sandbox, API).
+    t = time(23, 59, 59) if end_of_day else time(0, 0, 0)
+    return datetime.combine(d, t, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class TBankClient:
@@ -31,9 +38,9 @@ class TBankClient:
         cursor: Optional[str] = None,
         limit: int = 1000,
     ) -> dict:
-        params = {"accountNumber": account_number, "from": date_from.isoformat(), "limit": limit}
+        params = {"accountNumber": account_number, "from": _to_rfc3339(date_from), "limit": limit}
         if date_to:
-            params["to"] = date_to.isoformat()
+            params["to"] = _to_rfc3339(date_to, end_of_day=True)
         if cursor:
             params["cursor"] = cursor
 
@@ -72,22 +79,29 @@ class TBankClient:
 def map_operation(op: dict) -> Optional[dict]:
     """Переводит сырую операцию из выписки Т-Банка в поля для Transaction.
 
-    Имена полей payer/receiver не подтверждены по официальному openapi.yaml —
-    перед первым реальным синком сверить с ответом песочницы/прод и поправить при расхождении.
+    Маппинг сверен с реальным (не sandbox) ответом /api/v1/statement: направление
+    приходит в typeOfOperation ("Debit"/"Credit"), единого числового поля credit/debit
+    в ответе нет — сумма всегда в accountAmount (в валюте счёта). Для карточных операций
+    receiver почти всегда "АО «ТБанк»" (это банк-эквайер, не реальный получатель) —
+    настоящий контрагент в таких случаях лежит в merch.name.
     """
     operation_id = op.get("operationId")
     if not operation_id:
         return None
 
-    credit = op.get("credit")
-    debit = op.get("debit")
-    if credit and Decimal(str(credit)) > 0:
-        tx_type = "income"
-        amount = Decimal(str(credit))
-    elif debit:
+    op_type = op.get("typeOfOperation")
+    if op_type == "Debit":
         tx_type = "expense"
-        amount = Decimal(str(debit))
+    elif op_type == "Credit":
+        tx_type = "income"
     else:
+        return None
+
+    raw_amount = op.get("accountAmount") or op.get("operationAmount")
+    if not raw_amount:
+        return None
+    amount = Decimal(str(raw_amount))
+    if amount <= 0:
         return None
 
     raw_date = op.get("operationDate") or op.get("docDate") or op.get("trxnPostDate")
@@ -100,7 +114,15 @@ def map_operation(op: dict) -> Optional[dict]:
 
     payer = op.get("payer") or {}
     receiver = op.get("receiver") or {}
-    counterparty_name = (receiver.get("name") if tx_type == "expense" else payer.get("name")) or None
+    counter_party = op.get("counterParty") or {}
+    merch = op.get("merch") or {}
+
+    counterparty_name = (
+        merch.get("name")
+        or (payer.get("name") if tx_type == "income" else receiver.get("name"))
+        or counter_party.get("name")
+        or None
+    )
 
     return {
         "external_ref": f"tbank:{operation_id}",

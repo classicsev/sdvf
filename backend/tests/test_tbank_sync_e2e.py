@@ -21,19 +21,21 @@ class _FakeTBankClient:
             [
                 {
                     "operationId": "op-1",
-                    "credit": "31500.00",
-                    "operationDate": "2026-06-01T00:00:00",
+                    "typeOfOperation": "Credit",
+                    "accountAmount": 31500.00,
+                    "operationDate": "2026-06-01T00:00:00Z",
                     "payPurpose": "ТД-620 от 26.05",
                     "payer": {"name": "ИП Мальшин"},
                 },
                 {
                     "operationId": "op-2",
-                    "debit": "4990.00",
-                    "operationDate": "2026-06-02T00:00:00",
+                    "typeOfOperation": "Debit",
+                    "accountAmount": 4990.00,
+                    "operationDate": "2026-06-02T00:00:00Z",
                     "description": "Комиссия банка",
                 },
                 # Операция без operationId — map_operation вернёт None, должна быть пропущена
-                {"credit": "100", "operationDate": "2026-06-03T00:00:00"},
+                {"typeOfOperation": "Credit", "accountAmount": 100, "operationDate": "2026-06-03T00:00:00Z"},
             ]
         )
 
@@ -63,6 +65,9 @@ def test_sync_creates_transactions_and_dedupes_on_rerun(client, db_session, monk
     body = resp.json()
     assert body["created"] == 2  # третья операция без operationId пропущена
     assert body["skipped"] == 1
+    assert body["skipped_unparseable"] == 1
+    assert body["skipped_duplicate"] == 0
+    assert body["skipped_no_fx_rate"] == 0
 
     created = db_session.query(Transaction).filter(Transaction.external_ref.isnot(None)).all()
     assert len(created) == 2
@@ -87,6 +92,8 @@ def test_sync_creates_transactions_and_dedupes_on_rerun(client, db_session, monk
     assert resp.status_code == 200
     assert resp.json()["created"] == 0
     assert resp.json()["skipped"] == 3
+    assert resp.json()["skipped_duplicate"] == 2
+    assert resp.json()["skipped_unparseable"] == 1
 
     total = db_session.query(Transaction).filter(Transaction.external_ref.isnot(None)).count()
     assert total == 2  # дублей не появилось

@@ -55,10 +55,10 @@ def _rule_matches(rule: AutomationRule, payload: TransactionCreate, counterparty
     return all(_condition_matches(c, payload, counterparty_name) for c in conditions)
 
 
-def apply_rules(db: Session, payload: TransactionCreate) -> dict:
-    """Прогоняет активные правила автоматизации по новой операции и возвращает
-    поля для переопределения (category_id/project_id). Срабатывает первое
-    подошедшее правило — остальные не применяются."""
+def apply_rules(db: Session, payload: TransactionCreate, company_id: str) -> dict:
+    """Прогоняет активные правила автоматизации компании по новой операции и
+    возвращает поля для переопределения (category_id/project_id). Срабатывает
+    первое подошедшее правило — остальные не применяются."""
     counterparty_name = None
     if payload.counterparty_id:
         try:
@@ -66,10 +66,18 @@ def apply_rules(db: Session, payload: TransactionCreate) -> dict:
         except (ValueError, AttributeError):
             counterparty = None
         else:
-            counterparty = db.get(Counterparty, payload.counterparty_id)
+            counterparty = (
+                db.query(Counterparty)
+                .filter(Counterparty.id == payload.counterparty_id, Counterparty.company_id == company_id)
+                .first()
+            )
         counterparty_name = counterparty.name if counterparty else None
 
-    rules = db.query(AutomationRule).filter(AutomationRule.is_active.is_(True)).all()
+    rules = (
+        db.query(AutomationRule)
+        .filter(AutomationRule.company_id == company_id, AutomationRule.is_active.is_(True))
+        .all()
+    )
     for rule in rules:
         if _rule_matches(rule, payload, counterparty_name):
             action = rule.action_json or {}

@@ -1,5 +1,7 @@
-from app.models import RoleEnum
-from tests.conftest import auth_headers, make_user
+from datetime import date
+
+from app.models import RoleEnum, TxTypeEnum
+from tests.conftest import auth_headers, make_account, make_category, make_project, make_user
 
 
 def test_category_full_crud(client, db_session):
@@ -85,6 +87,103 @@ def test_counterparty_full_crud(client, db_session):
 
     resp = client.delete(f"/counterparties/{cp_id}", headers=headers)
     assert resp.status_code == 200
+
+
+def _post_transaction(client, headers, account_id, category_id):
+    return client.post(
+        "/transactions",
+        headers=headers,
+        json={
+            "date_odds": str(date.today()),
+            "account_id": account_id,
+            "category_id": category_id,
+            "type": "expense",
+            "amount": 100,
+            "currency": "RUB",
+        },
+    )
+
+
+def test_delete_category_in_use_deactivates_instead_of_erroring(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    category = make_category(db_session, tx_type=TxTypeEnum.expense)
+    account = make_account(db_session)
+    assert _post_transaction(client, headers, account.id, category.id).status_code == 200
+
+    resp = client.delete(f"/categories/{category.id}", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": False, "deactivated": True}
+
+    updated = next(c for c in client.get("/categories", headers=headers).json() if c["id"] == category.id)
+    assert updated["is_active"] is False
+
+
+def test_delete_unused_category_still_physically_deletes(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    category = make_category(db_session, name="Неиспользуемая")
+
+    resp = client.delete(f"/categories/{category.id}", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": True, "deactivated": False}
+    assert not any(c["id"] == category.id for c in client.get("/categories", headers=headers).json())
+
+
+def test_delete_account_in_use_deactivates(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    category = make_category(db_session)
+    account = make_account(db_session)
+    assert _post_transaction(client, headers, account.id, category.id).status_code == 200
+
+    resp = client.delete(f"/accounts/{account.id}", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": False, "deactivated": True}
+
+
+def test_delete_counterparty_in_use_deactivates(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    category = make_category(db_session)
+    account = make_account(db_session)
+    counterparty_id = client.post(
+        "/counterparties", headers=headers, json={"name": "ИП Тест", "type": "debtor"}
+    ).json()["id"]
+    tx_id = _post_transaction(client, headers, account.id, category.id).json()["id"]
+    client.patch(f"/transactions/{tx_id}", headers=headers, json={"counterparty_id": counterparty_id})
+
+    resp = client.delete(f"/counterparties/{counterparty_id}", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": False, "deactivated": True}
+
+
+def test_delete_project_used_by_project_manager_deactivates(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    project = make_project(db_session)
+    make_user(db_session, RoleEnum.project_manager, project_id=project.id, email="pm-ref-test@test.local")
+
+    resp = client.delete(f"/projects/{project.id}", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": False, "deactivated": True}
+
+
+def test_reactivate_deactivated_category_via_patch(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    category = make_category(db_session, name="Реклама")
+    account = make_account(db_session)
+    assert _post_transaction(client, headers, account.id, category.id).status_code == 200
+    client.delete(f"/categories/{category.id}", headers=headers)
+
+    resp = client.patch(
+        f"/categories/{category.id}",
+        headers=headers,
+        json={"name": "Реклама", "type": "expense", "is_active": True},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["is_active"] is True
 
 
 def test_operator_can_read_but_not_write_reference(client, db_session):

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
-from app.auth import get_current_user, require_roles, scope_project_filter
+from app.auth import get_current_user, require_module, require_roles, scope_project_filter
 from app.database import get_db
 from app.fx import convert_to_rub
 from app.models import (
@@ -31,6 +31,7 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 # По матрице прав в README у payroll_operator нет доступа к дашборду/отчётам —
 # у остальных ролей есть (project_manager дополнительно ограничен RLS по проекту).
 REPORT_VIEWERS = [RoleEnum.admin, RoleEnum.operator, RoleEnum.project_manager, RoleEnum.viewer]
+FINANCE_MODULE = Depends(require_module("finance"))
 
 
 def _month_end(year: int, month: int) -> date:
@@ -76,12 +77,14 @@ def _account_balance(db: Session, account: Account, as_of: date) -> Decimal:
     return Decimal(str(account.opening_balance)) + (flow or Decimal("0"))
 
 
-@router.get("/dashboard-summary", dependencies=[Depends(require_roles(REPORT_VIEWERS))])
+@router.get("/dashboard-summary", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
 def dashboard_summary(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     today = date.today()
     period_from, period_to = _current_month_bounds()
 
-    accounts = db.query(Account).filter(Account.is_active.is_(True)).all()
+    accounts = (
+        db.query(Account).filter(Account.company_id == user.company_id, Account.is_active.is_(True)).all()
+    )
     account_rows = []
     total_balance_rub = Decimal("0")
     for account in accounts:
@@ -101,7 +104,7 @@ def dashboard_summary(db: Session = Depends(get_db), user: User = Depends(get_cu
 
     forced_project = scope_project_filter(user)
     period_query = db.query(Transaction).filter(
-        Transaction.date_odds >= period_from, Transaction.date_odds <= period_to
+        Transaction.company_id == user.company_id, Transaction.date_odds >= period_from, Transaction.date_odds <= period_to
     )
     if forced_project:
         period_query = period_query.filter(Transaction.project_id == forced_project)
@@ -128,13 +131,13 @@ def dashboard_summary(db: Session = Depends(get_db), user: User = Depends(get_cu
     }
 
 
-@router.get("/cashflow", dependencies=[Depends(require_roles(REPORT_VIEWERS))])
+@router.get("/cashflow", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
 def cashflow_report(
     period: Optional[str] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    query = db.query(Transaction)
+    query = db.query(Transaction).filter(Transaction.company_id == user.company_id)
     forced_project = scope_project_filter(user)
     if forced_project:
         query = query.filter(Transaction.project_id == forced_project)
@@ -181,7 +184,7 @@ def cashflow_report(
     return {"by_month": list(by_month.values())}
 
 
-@router.get("/pnl", dependencies=[Depends(require_roles(REPORT_VIEWERS))])
+@router.get("/pnl", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
 def pnl_report(
     period: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -189,7 +192,9 @@ def pnl_report(
 ):
     start, end = _parse_period(period) if period else _current_month_bounds()
 
-    query = db.query(Transaction).filter(Transaction.date_odds >= start, Transaction.date_odds <= end)
+    query = db.query(Transaction).filter(
+        Transaction.company_id == user.company_id, Transaction.date_odds >= start, Transaction.date_odds <= end
+    )
     forced_project = scope_project_filter(user)
     if forced_project:
         query = query.filter(Transaction.project_id == forced_project)
@@ -221,12 +226,12 @@ def pnl_report(
     }
 
 
-@router.get("/balance", dependencies=[Depends(require_roles(REPORT_VIEWERS))])
-def balance_report(as_of: Optional[date] = None, db: Session = Depends(get_db)):
+@router.get("/balance", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
+def balance_report(as_of: Optional[date] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     as_of = as_of or date.today()
 
     cash_rub = Decimal("0")
-    for account in db.query(Account).all():
+    for account in db.query(Account).filter(Account.company_id == user.company_id).all():
         balance = _account_balance(db, account, as_of)
         rub = convert_to_rub(db, account.currency, balance, as_of)
         if rub is not None:
@@ -236,10 +241,14 @@ def balance_report(as_of: Optional[date] = None, db: Session = Depends(get_db)):
     # (дебиторка/предоплаты в схеме не моделируются — invoicing нет,
     # поэтому в активах учитываются только денежные средства)
     total_accrued = (
-        db.query(func.coalesce(func.sum(PayrollAccrual.total), 0)).filter(PayrollAccrual.period <= as_of).scalar()
+        db.query(func.coalesce(func.sum(PayrollAccrual.total), 0))
+        .filter(PayrollAccrual.company_id == user.company_id, PayrollAccrual.period <= as_of)
+        .scalar()
     )
     total_paid = (
-        db.query(func.coalesce(func.sum(PayrollPayment.amount), 0)).filter(PayrollPayment.date <= as_of).scalar()
+        db.query(func.coalesce(func.sum(PayrollPayment.amount), 0))
+        .filter(PayrollPayment.company_id == user.company_id, PayrollPayment.date <= as_of)
+        .scalar()
     )
     payable_to_staff = Decimal(str(total_accrued)) - Decimal(str(total_paid))
 
@@ -256,12 +265,14 @@ def balance_report(as_of: Optional[date] = None, db: Session = Depends(get_db)):
     }
 
 
-@router.get("/debt", dependencies=[Depends(require_roles(REPORT_VIEWERS))])
+@router.get("/debt", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
 def debt_report(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     # Дебиторка/кредиторка по counterparties: в схеме нет отдельного реестра
     # счетов/инвойсов, поэтому считаем чистый оборот по контрагенту
     # (income − expense в amount_rub) как показатель задолженности.
-    query = db.query(Transaction).filter(Transaction.counterparty_id.isnot(None))
+    query = db.query(Transaction).filter(
+        Transaction.company_id == user.company_id, Transaction.counterparty_id.isnot(None)
+    )
     forced_project = scope_project_filter(user)
     if forced_project:
         query = query.filter(Transaction.project_id == forced_project)
@@ -289,13 +300,15 @@ def debt_report(db: Session = Depends(get_db), user: User = Depends(get_current_
     ]
 
 
-@router.get("/profitability", dependencies=[Depends(require_roles(REPORT_VIEWERS))])
+@router.get("/profitability", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
 def profitability_report(
     project: Optional[str] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    query = db.query(Transaction).filter(Transaction.project_id.isnot(None))
+    query = db.query(Transaction).filter(
+        Transaction.company_id == user.company_id, Transaction.project_id.isnot(None)
+    )
 
     forced_project = scope_project_filter(user)
     if forced_project:
@@ -328,7 +341,7 @@ def profitability_report(
     return result
 
 
-@router.get("/payment-calendar", dependencies=[Depends(require_roles(REPORT_VIEWERS))])
+@router.get("/payment-calendar", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
 def payment_calendar(
     quarter: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -347,8 +360,12 @@ def payment_calendar(
     forced_project = scope_project_filter(user)
     year_start, year_end = date(year, 1, 1), date(year, 12, 31)
 
-    plan_query = db.query(Planning).filter(Planning.scheduled_date >= year_start, Planning.scheduled_date <= year_end)
-    fact_query = db.query(Transaction).filter(Transaction.date_odds >= year_start, Transaction.date_odds <= year_end)
+    plan_query = db.query(Planning).filter(
+        Planning.company_id == user.company_id, Planning.scheduled_date >= year_start, Planning.scheduled_date <= year_end
+    )
+    fact_query = db.query(Transaction).filter(
+        Transaction.company_id == user.company_id, Transaction.date_odds >= year_start, Transaction.date_odds <= year_end
+    )
     if forced_project:
         plan_query = plan_query.filter(Planning.project_id == forced_project)
         fact_query = fact_query.filter(Transaction.project_id == forced_project)
@@ -367,7 +384,7 @@ def payment_calendar(
         signed = float(tx.amount_rub) if tx.type == TxTypeEnum.income else -float(tx.amount_rub)
         row[_quarter_of(tx.date_odds)]["fact"] += signed
 
-    category_names = {c.id: c.name for c in db.query(Category).all()}
+    category_names = {c.id: c.name for c in db.query(Category).filter(Category.company_id == user.company_id).all()}
     rows = []
     for category_id, quarters in by_category.items():
         rows.append(

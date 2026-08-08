@@ -1,12 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, X, Pencil, Trash2, Tag, LayoutDashboard, Building2, Contact } from "lucide-react";
+import { Plus, X, Pencil, Trash2, Tag, LayoutDashboard, Building2, Contact, Ban, RotateCcw } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { fmt } from "../lib/format";
 import { canEditReference } from "../lib/roles";
+
+const STATUS_COLUMN = {
+  key: "is_active",
+  label: "Статус",
+  render: (v) => (
+    <span className={`fp-status-badge ${v === false ? "warn" : "ok"}`}>{v === false ? "Неактивен" : "Активен"}</span>
+  ),
+};
 
 const TABS = {
   categories: {
@@ -34,6 +42,7 @@ const TABS = {
       { key: "name", label: "Статья" },
       { key: "group_name", label: "Группа" },
       { key: "type", label: "Тип", render: (v) => (v === "income" ? "Приход" : "Расход") },
+      STATUS_COLUMN,
     ],
   },
   projects: {
@@ -45,7 +54,7 @@ const TABS = {
     update: (token, id, payload) => api.updateProject(token, id, payload),
     remove: (token, id) => api.deleteProject(token, id),
     fields: [{ key: "name", label: "Название проекта", type: "text", required: true }],
-    columns: [{ key: "name", label: "Проект" }],
+    columns: [{ key: "name", label: "Проект" }, STATUS_COLUMN],
   },
   accounts: {
     label: "Счета",
@@ -76,6 +85,7 @@ const TABS = {
       { key: "currency", label: "Валюта" },
       { key: "opening_balance", label: "Начальный остаток", render: (v, row) => fmt(v, row.currency) },
       { key: "account_number", label: "Номер счёта", render: (v) => v || "—" },
+      STATUS_COLUMN,
     ],
   },
   counterparties: {
@@ -103,6 +113,7 @@ const TABS = {
       { key: "name", label: "Контрагент" },
       { key: "type", label: "Тип", render: (v) => (v === "debtor" ? "Дебитор" : "Кредитор") },
       { key: "inn", label: "ИНН", render: (v) => v || "—" },
+      STATUS_COLUMN,
     ],
   },
 };
@@ -126,12 +137,14 @@ export default function Reference() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(defaultFormFor(config.fields));
+  const [formIsActive, setFormIsActive] = useState(true);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
 
   function openAdd() {
     setEditingId(null);
     setForm(defaultFormFor(config.fields));
+    setFormIsActive(true);
     setFormError("");
     setModalOpen(true);
   }
@@ -141,6 +154,7 @@ export default function Reference() {
     const next = {};
     config.fields.forEach((f) => (next[f.key] = item[f.key] ?? ""));
     setForm(next);
+    setFormIsActive(item.is_active !== false);
     setFormError("");
     setModalOpen(true);
   }
@@ -154,7 +168,7 @@ export default function Reference() {
     setSaving(true);
     setFormError("");
     try {
-      const payload = { ...form };
+      const payload = { ...form, is_active: formIsActive };
       config.fields.forEach((f) => {
         if (f.type === "number") payload[f.key] = Number(payload[f.key] || 0);
       });
@@ -175,7 +189,24 @@ export default function Reference() {
   async function handleDelete(item) {
     if (!window.confirm(`Удалить «${item.name}»?`)) return;
     try {
-      await config.remove(token, item.id);
+      const result = await config.remove(token, item.id);
+      if (result?.deactivated) {
+        window.alert(
+          `«${item.name}» уже используется в операциях, поэтому не удалено, а деактивировано — ` +
+            `больше не будет предлагаться при выборе, но история сохранена. Восстановить можно кнопкой в списке.`
+        );
+      }
+      reload();
+    } catch (err) {
+      window.alert(err.message);
+    }
+  }
+
+  async function handleToggleActive(item) {
+    const payload = Object.fromEntries(config.fields.map((f) => [f.key, item[f.key]]));
+    payload.is_active = item.is_active === false;
+    try {
+      await config.update(token, item.id, payload);
       reload();
     } catch (err) {
       window.alert(err.message);
@@ -228,6 +259,13 @@ export default function Reference() {
                       <span className="fp-row-actions">
                         <button className="fp-icon-btn" onClick={() => openEdit(item)}>
                           <Pencil size={14} />
+                        </button>
+                        <button
+                          className="fp-icon-btn"
+                          onClick={() => handleToggleActive(item)}
+                          title={item.is_active === false ? "Восстановить" : "Деактивировать"}
+                        >
+                          {item.is_active === false ? <RotateCcw size={14} /> : <Ban size={14} />}
                         </button>
                         <button className="fp-icon-btn" onClick={() => handleDelete(item)}>
                           <Trash2 size={14} />
