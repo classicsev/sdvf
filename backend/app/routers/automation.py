@@ -1,18 +1,37 @@
 import json
 from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.audit import log_action
-from app.auth import get_current_user, require_module, require_roles
+from app.auth import (
+    check_company_role,
+    get_accessible_company_ids,
+    get_current_user,
+    require_module,
+    resolve_company_ids_with_role,
+    resolve_write_company_id,
+)
 from app.config import settings
 from app.crypto import decrypt_field, encrypt_field
 from app.database import get_db
 from app.fx import convert_to_rub
 from app.integrations.amocrm import AmoCrmClient, AmoCrmError, map_contact, map_lead
 from app.integrations.tbank import TBankClient, TBankError, map_operation
-from app.models import Account, AutomationRule, Category, Counterparty, Integration, RoleEnum, Transaction, TxTypeEnum, User
+from app.models import (
+    Account,
+    AutomationRule,
+    Category,
+    Counterparty,
+    Integration,
+    Project,
+    RoleEnum,
+    Transaction,
+    TxTypeEnum,
+    User,
+)
 from app.schemas import (
     AmoCrmConnectIn,
     AmoCrmSyncIn,
@@ -24,7 +43,7 @@ from app.schemas import (
     IntegrationSyncIn,
     IntegrationSyncResult,
 )
-from app.utils import get_or_404
+from app.utils import get_or_404_accessible
 
 router = APIRouter(tags=["automation"])
 
@@ -49,8 +68,27 @@ INTEGRATION_CATALOG = [
 SYNC_SUPPORTED_PROVIDERS = {"tinkoff"}
 
 
-def _get_rule_or_404(db: Session, rule_id: str, company_id: str) -> AutomationRule:
-    return get_or_404(db, AutomationRule, rule_id, "Правило не найдено", company_id=company_id)
+def _get_rule_or_404(db: Session, user: User, rule_id: str) -> AutomationRule:
+    return get_or_404_accessible(db, AutomationRule, rule_id, get_accessible_company_ids(db, user), "Правило не найдено")
+
+
+def _validate_rule_action(db: Session, action_json: dict, company_id: str) -> None:
+    # set_category/set_project переопределяют поля операции при срабатывании
+    # правила (см. automation_engine.apply_rules) — обе ссылки обязаны
+    # принадлежать той же компании, что и само правило, иначе можно было бы
+    # незаметно проставить в операцию статью/проект другой компании.
+    category_id = (action_json or {}).get("set_category")
+    if category_id:
+        get_or_404_accessible(db, Category, category_id, [company_id], "Статья не найдена")
+    project_id = (action_json or {}).get("set_project")
+    if project_id:
+        get_or_404_accessible(db, Project, project_id, [company_id], "Проект не найден")
+
+
+def _get_integration_or_404(db: Session, user: User, integration_id: str) -> Integration:
+    return get_or_404_accessible(
+        db, Integration, integration_id, get_accessible_company_ids(db, user), "Интеграция не найдена"
+    )
 
 
 def _ensure_integration_catalog(db: Session, company_id: str) -> None:
@@ -80,43 +118,39 @@ def _get_or_create_counterparty(db: Session, name: str, company_id: str) -> Coun
     return counterparty
 
 
-@router.get(
-    "/automation-rules",
-    response_model=list[AutomationRuleOut],
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), FINANCE_MODULE],
-)
-def list_rules(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return db.query(AutomationRule).filter(AutomationRule.company_id == user.company_id).all()
+@router.get("/automation-rules", response_model=list[AutomationRuleOut], dependencies=[FINANCE_MODULE])
+def list_rules(
+    company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    company_ids = resolve_company_ids_with_role(db, user, company_id, ADMIN_ONLY)
+    return db.query(AutomationRule).filter(AutomationRule.company_id.in_(company_ids)).all()
 
 
-@router.post(
-    "/automation-rules",
-    response_model=AutomationRuleOut,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), FINANCE_MODULE],
-)
+@router.post("/automation-rules", response_model=AutomationRuleOut, dependencies=[FINANCE_MODULE])
 def create_rule(
     payload: AutomationRuleIn,
+    company_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     # condition_json / action_json: {"field": "counterparty", "op": "contains", "value": "Wildberries"}
     # (или список таких условий — все должны выполняться) → {"set_category": "...", "set_project": "..."}
-    rule = AutomationRule(**payload.model_dump(), company_id=user.company_id, created_by=user.id)
+    target = resolve_write_company_id(db, user, company_id, ADMIN_ONLY)
+    _validate_rule_action(db, payload.action_json, target)
+    rule = AutomationRule(**payload.model_dump(), company_id=target, created_by=user.id)
     db.add(rule)
     db.commit()
     db.refresh(rule)
     return rule
 
 
-@router.patch(
-    "/automation-rules/{rule_id}",
-    response_model=AutomationRuleOut,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), FINANCE_MODULE],
-)
+@router.patch("/automation-rules/{rule_id}", response_model=AutomationRuleOut, dependencies=[FINANCE_MODULE])
 def update_rule(
     rule_id: str, payload: AutomationRuleIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    rule = _get_rule_or_404(db, rule_id, user.company_id)
+    rule = _get_rule_or_404(db, user, rule_id)
+    check_company_role(db, user, rule.company_id, ADMIN_ONLY)
+    _validate_rule_action(db, payload.action_json, rule.company_id)
     for field, value in payload.model_dump().items():
         setattr(rule, field, value)
     db.commit()
@@ -124,39 +158,39 @@ def update_rule(
     return rule
 
 
-@router.delete(
-    "/automation-rules/{rule_id}",
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), FINANCE_MODULE],
-)
+@router.delete("/automation-rules/{rule_id}", dependencies=[FINANCE_MODULE])
 def delete_rule(rule_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    rule = _get_rule_or_404(db, rule_id, user.company_id)
+    rule = _get_rule_or_404(db, user, rule_id)
+    check_company_role(db, user, rule.company_id, ADMIN_ONLY)
     db.delete(rule)
     db.commit()
     return {"deleted": True}
 
 
-@router.get(
-    "/integrations",
-    response_model=list[IntegrationOut],
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), FINANCE_MODULE],
-)
-def list_integrations(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    _ensure_integration_catalog(db, user.company_id)
-    return db.query(Integration).filter(Integration.company_id == user.company_id).order_by(Integration.provider).all()
+@router.get("/integrations", response_model=list[IntegrationOut], dependencies=[FINANCE_MODULE])
+def list_integrations(
+    company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    company_ids = resolve_company_ids_with_role(db, user, company_id, ADMIN_ONLY)
+    for cid in company_ids:
+        _ensure_integration_catalog(db, cid)
+    return (
+        db.query(Integration)
+        .filter(Integration.company_id.in_(company_ids))
+        .order_by(Integration.provider)
+        .all()
+    )
 
 
-@router.post(
-    "/integrations/{integration_id}/connect",
-    response_model=IntegrationOut,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), FINANCE_MODULE],
-)
+@router.post("/integrations/{integration_id}/connect", response_model=IntegrationOut, dependencies=[FINANCE_MODULE])
 def connect_integration(
     integration_id: str,
     payload: IntegrationConnectIn,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    integration = get_or_404(db, Integration, integration_id, "Интеграция не найдена", company_id=user.company_id)
+    integration = _get_integration_or_404(db, user, integration_id)
+    check_company_role(db, user, integration.company_id, ADMIN_ONLY)
     if not payload.token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Токен обязателен")
     integration.credentials_encrypted = encrypt_field(payload.token)
@@ -167,14 +201,13 @@ def connect_integration(
 
 
 @router.post(
-    "/integrations/{integration_id}/disconnect",
-    response_model=IntegrationOut,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), FINANCE_MODULE],
+    "/integrations/{integration_id}/disconnect", response_model=IntegrationOut, dependencies=[FINANCE_MODULE]
 )
 def disconnect_integration(
     integration_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    integration = get_or_404(db, Integration, integration_id, "Интеграция не найдена", company_id=user.company_id)
+    integration = _get_integration_or_404(db, user, integration_id)
+    check_company_role(db, user, integration.company_id, ADMIN_ONLY)
     integration.credentials_encrypted = None
     integration.is_connected = False
     db.commit()
@@ -182,18 +215,16 @@ def disconnect_integration(
     return integration
 
 
-@router.post(
-    "/integrations/{integration_id}/sync",
-    response_model=IntegrationSyncResult,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), FINANCE_MODULE],
-)
+@router.post("/integrations/{integration_id}/sync", response_model=IntegrationSyncResult, dependencies=[FINANCE_MODULE])
 def sync_integration(
     integration_id: str,
     payload: IntegrationSyncIn,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    integration = get_or_404(db, Integration, integration_id, "Интеграция не найдена", company_id=user.company_id)
+    integration = _get_integration_or_404(db, user, integration_id)
+    check_company_role(db, user, integration.company_id, ADMIN_ONLY)
+    company_id = integration.company_id
     if not integration.is_connected or not integration.credentials_encrypted:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Интеграция не подключена")
     if integration.provider not in SYNC_SUPPORTED_PROVIDERS:
@@ -202,7 +233,7 @@ def sync_integration(
             detail="Синхронизация для этого провайдера пока не реализована",
         )
 
-    account = get_or_404(db, Account, payload.account_id, "Счёт не найден", company_id=user.company_id)
+    account = get_or_404_accessible(db, Account, payload.account_id, [company_id], "Счёт не найден")
     if not account.account_number:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -228,7 +259,7 @@ def sync_integration(
 
             if (
                 db.query(Transaction)
-                .filter(Transaction.company_id == user.company_id, Transaction.external_ref == mapped["external_ref"])
+                .filter(Transaction.company_id == company_id, Transaction.external_ref == mapped["external_ref"])
                 .first()
             ):
                 skipped_duplicate += 1
@@ -242,14 +273,14 @@ def sync_integration(
                 continue
 
             tx_type = TxTypeEnum(mapped["type"])
-            category = _get_or_create_import_category(db, tx_type, user.company_id)
+            category = _get_or_create_import_category(db, tx_type, company_id)
             counterparty_id = None
             if mapped["counterparty_name"]:
-                counterparty_id = _get_or_create_counterparty(db, mapped["counterparty_name"], user.company_id).id
+                counterparty_id = _get_or_create_counterparty(db, mapped["counterparty_name"], company_id).id
 
             db.add(
                 Transaction(
-                    company_id=user.company_id,
+                    company_id=company_id,
                     date_odds=mapped["date_odds"],
                     account_id=account.id,
                     category_id=category.id,
@@ -296,18 +327,15 @@ def sync_integration(
 # ---------------------------------------------------------------------------
 
 
-@router.post(
-    "/integrations/{integration_id}/connect-amocrm",
-    response_model=IntegrationOut,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), FINANCE_MODULE],
-)
+@router.post("/integrations/{integration_id}/connect-amocrm", response_model=IntegrationOut, dependencies=[FINANCE_MODULE])
 def connect_amocrm(
     integration_id: str,
     payload: AmoCrmConnectIn,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    integration = get_or_404(db, Integration, integration_id, "Интеграция не найдена", company_id=user.company_id)
+    integration = _get_integration_or_404(db, user, integration_id)
+    check_company_role(db, user, integration.company_id, ADMIN_ONLY)
     if integration.provider != "amocrm":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Эта интеграция не amoCRM")
 
@@ -318,24 +346,22 @@ def connect_amocrm(
     return integration
 
 
-@router.post(
-    "/integrations/{integration_id}/sync-amocrm",
-    response_model=AmoCrmSyncResult,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), FINANCE_MODULE],
-)
+@router.post("/integrations/{integration_id}/sync-amocrm", response_model=AmoCrmSyncResult, dependencies=[FINANCE_MODULE])
 def sync_amocrm(
     integration_id: str,
     payload: AmoCrmSyncIn,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    integration = get_or_404(db, Integration, integration_id, "Интеграция не найдена", company_id=user.company_id)
+    integration = _get_integration_or_404(db, user, integration_id)
+    check_company_role(db, user, integration.company_id, ADMIN_ONLY)
+    company_id = integration.company_id
     if integration.provider != "amocrm":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Эта интеграция не amoCRM")
     if not integration.is_connected or not integration.credentials_encrypted:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Интеграция не подключена")
 
-    account = get_or_404(db, Account, payload.account_id, "Счёт не найден", company_id=user.company_id)
+    account = get_or_404_accessible(db, Account, payload.account_id, [company_id], "Счёт не найден")
 
     creds_raw = decrypt_field(integration.credentials_encrypted)
     if creds_raw is None:
@@ -365,11 +391,11 @@ def sync_amocrm(
             contact_names_by_id[mapped["id"]] = mapped["name"]
             already_existed = (
                 db.query(Counterparty)
-                .filter(Counterparty.company_id == user.company_id, Counterparty.name == mapped["name"])
+                .filter(Counterparty.company_id == company_id, Counterparty.name == mapped["name"])
                 .first()
                 is not None
             )
-            _get_or_create_counterparty(db, mapped["name"], user.company_id)
+            _get_or_create_counterparty(db, mapped["name"], company_id)
             if already_existed:
                 contacts_matched += 1
             else:
@@ -384,7 +410,7 @@ def sync_amocrm(
 
             if (
                 db.query(Transaction)
-                .filter(Transaction.company_id == user.company_id, Transaction.external_ref == mapped["external_ref"])
+                .filter(Transaction.company_id == company_id, Transaction.external_ref == mapped["external_ref"])
                 .first()
             ):
                 deals_skipped += 1
@@ -395,15 +421,15 @@ def sync_amocrm(
                 deals_skipped += 1
                 continue
 
-            category = _get_or_create_import_category(db, TxTypeEnum.income, user.company_id)
+            category = _get_or_create_import_category(db, TxTypeEnum.income, company_id)
             counterparty_id = None
             contact_name = contact_names_by_id.get(mapped["contact_id"])
             if contact_name:
-                counterparty_id = _get_or_create_counterparty(db, contact_name, user.company_id).id
+                counterparty_id = _get_or_create_counterparty(db, contact_name, company_id).id
 
             db.add(
                 Transaction(
-                    company_id=user.company_id,
+                    company_id=company_id,
                     date_odds=mapped["date_odds"],
                     account_id=account.id,
                     category_id=category.id,

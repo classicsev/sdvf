@@ -11,31 +11,58 @@ const FORM_EMPTY = { email: "", full_name: "", password: "", role: "viewer", pro
 
 export default function UsersView() {
   const { token, user: currentUser } = useAuth();
-  const { data: users, loading, error, reload } = useResource(() => api.listUsers(token), [token]);
+  const myCompanies = currentUser.companies || [];
+  const multiCompany = myCompanies.length > 1;
+  const editableCompanies = myCompanies.filter((m) => m.role === "admin");
+
+  const [companyFilter, setCompanyFilter] = useState("");
+  const { data: users, loading, error, reload } = useResource(
+    () => api.listUsers(token, { company_id: companyFilter || undefined }),
+    [token, companyFilter]
+  );
   const { data: projects } = useResource(() => api.listProjects(token), [token]);
+
+  // Роль пользователя в компании, которую сейчас показываем в таблице — при
+  // просмотре "Все компании" берём первую компанию из списка пользователя
+  // (обратная совместимость), при фильтре по конкретной — роль именно в ней.
+  function roleInContext(u) {
+    if (companyFilter) return u.companies?.find((c) => c.company.id === companyFilter)?.role || u.role;
+    return u.role;
+  }
+  function targetCompanyFor(u) {
+    return companyFilter || u.company_id;
+  }
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [editingCompanyId, setEditingCompanyId] = useState(null);
   const [form, setForm] = useState(FORM_EMPTY);
+  const [formCompanyId, setFormCompanyId] = useState("");
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
 
   function openAdd() {
     setEditingId(null);
+    setEditingCompanyId(null);
     setForm(FORM_EMPTY);
+    const preselected = editableCompanies.find((m) => m.company.id === companyFilter) || editableCompanies[0];
+    setFormCompanyId(preselected?.company.id || "");
     setFormError("");
     setModalOpen(true);
   }
 
   function openEdit(u) {
+    const companyId = targetCompanyFor(u);
     setEditingId(u.id);
+    setEditingCompanyId(companyId);
     setForm({
       email: u.email,
       full_name: u.full_name,
       password: "",
-      role: u.role,
-      project_id: u.project_id || "",
+      role: roleInContext(u),
+      project_id: u.companies?.find((c) => c.company.id === companyId)?.project_id || "",
     });
+    setFormCompanyId(companyId);
     setFormError("");
     setModalOpen(true);
   }
@@ -52,15 +79,19 @@ export default function UsersView() {
           project_id: form.role === "project_manager" ? form.project_id || null : null,
         };
         if (form.password) payload.password = form.password;
-        await api.updateUser(token, editingId, payload);
+        await api.updateUser(token, editingId, payload, editingCompanyId || undefined);
       } else {
-        await api.createUser(token, {
-          email: form.email,
-          full_name: form.full_name,
-          password: form.password,
-          role: form.role,
-          project_id: form.role === "project_manager" ? form.project_id || null : null,
-        });
+        await api.createUser(
+          token,
+          {
+            email: form.email,
+            full_name: form.full_name,
+            password: form.password,
+            role: form.role,
+            project_id: form.role === "project_manager" ? form.project_id || null : null,
+          },
+          formCompanyId || undefined
+        );
       }
       setModalOpen(false);
       reload();
@@ -74,11 +105,12 @@ export default function UsersView() {
   async function toggleActive(u) {
     const action = u.is_active === false ? "восстановить" : "деактивировать";
     if (!window.confirm(`Точно ${action} пользователя «${u.full_name}»?`)) return;
+    const companyId = targetCompanyFor(u) || undefined;
     try {
       if (u.is_active === false) {
-        await api.updateUser(token, u.id, { is_active: true });
+        await api.updateUser(token, u.id, { is_active: true }, companyId);
       } else {
-        await api.deleteUser(token, u.id);
+        await api.deleteUser(token, u.id, companyId);
       }
       reload();
     } catch (err) {
@@ -89,7 +121,18 @@ export default function UsersView() {
   return (
     <div className="fp-dash">
       <div className="fp-tabs-row">
-        <div />
+        {multiCompany ? (
+          <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>
+            <option value="">Все компании</option>
+            {myCompanies.map((m) => (
+              <option key={m.company.id} value={m.company.id}>
+                {m.company.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div />
+        )}
         <button type="button" className="fp-btn-tiny" onClick={openAdd}>
           <Plus size={13} /> Новый пользователь
         </button>
@@ -104,6 +147,7 @@ export default function UsersView() {
           <table className="fp-table">
             <thead>
               <tr>
+                {multiCompany && <th>Компания</th>}
                 <th>ФИО</th>
                 <th>Email</th>
                 <th>Роль</th>
@@ -112,11 +156,20 @@ export default function UsersView() {
               </tr>
             </thead>
             <tbody>
-              {(users || []).map((u) => (
+              {(users || []).map((u) => {
+                const role = roleInContext(u);
+                return (
                 <tr key={u.id}>
+                  {multiCompany && (
+                    <td className="fp-muted">
+                      {companyFilter
+                        ? myCompanies.find((m) => m.company.id === companyFilter)?.company.name || "—"
+                        : (u.companies || []).map((c) => c.company.name).join(", ") || "—"}
+                    </td>
+                  )}
                   <td>{u.full_name}</td>
                   <td className="fp-muted">{u.email}</td>
-                  <td>{ROLE_LABELS[u.role] || u.role}</td>
+                  <td>{ROLE_LABELS[role] || role}</td>
                   <td className="center">
                     <span className={`fp-status-badge ${u.is_active === false ? "danger" : "ok"}`}>
                       {u.is_active === false ? "Нет" : "Да"}
@@ -135,10 +188,11 @@ export default function UsersView() {
                     </span>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {(users || []).length === 0 && (
                 <tr>
-                  <td colSpan={5} className="fp-empty">
+                  <td colSpan={multiCompany ? 6 : 5} className="fp-empty">
                     Пользователей пока нет
                   </td>
                 </tr>
@@ -162,6 +216,26 @@ export default function UsersView() {
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmit}>
+              {multiCompany && (
+                <label className="fp-span-2">
+                  Компания
+                  {editingId ? (
+                    <input
+                      type="text"
+                      disabled
+                      value={myCompanies.find((m) => m.company.id === editingCompanyId)?.company.name || ""}
+                    />
+                  ) : (
+                    <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
+                      {editableCompanies.map((m) => (
+                        <option key={m.company.id} value={m.company.id}>
+                          {m.company.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </label>
+              )}
               <label className="fp-span-2">
                 ФИО
                 <input

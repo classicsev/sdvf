@@ -37,12 +37,25 @@ const EMPTY_FORM = {
 
 export default function Transactions() {
   const { token, user } = useAuth();
-  const canEdit = canEditTransactions(user.role);
+  const companies = user.companies || [];
+  const multiCompany = companies.length > 1;
+  const roleForCompany = (companyId) => companies.find((m) => m.company.id === companyId)?.role;
+  const canEditAnyCompany = companies.some((m) => canEditTransactions(m.role));
+  // Обратная совместимость для однокомпанийного случая — совпадает со старым canEdit.
+  const canEdit = canEditAnyCompany;
 
-  const [filters, setFilters] = useState({ project: "", account: "", category: "", date_from: "", date_to: "" });
+  const [filters, setFilters] = useState({
+    company: "",
+    project: "",
+    account: "",
+    category: "",
+    date_from: "",
+    date_to: "",
+  });
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [formCompanyId, setFormCompanyId] = useState("");
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -53,6 +66,7 @@ export default function Transactions() {
   const { data: counterparties } = useResource(() => api.listCounterparties(token), [token]);
 
   const query = {
+    company_id: filters.company || undefined,
     project: filters.project || undefined,
     account: filters.account || undefined,
     category: filters.category || undefined,
@@ -77,6 +91,9 @@ export default function Transactions() {
   function openAdd() {
     setEditing(null);
     setForm(EMPTY_FORM);
+    const editableCompanies = companies.filter((m) => canEditTransactions(m.role));
+    const preselected = editableCompanies.find((m) => m.company.id === filters.company) || editableCompanies[0];
+    setFormCompanyId(preselected?.company.id || "");
     setFormError("");
     setModalOpen(true);
   }
@@ -95,6 +112,7 @@ export default function Transactions() {
       commission: String(tx.commission || 0),
       comment: tx.comment || "",
     });
+    setFormCompanyId(tx.company_id || "");
     setFormError("");
     setModalOpen(true);
   }
@@ -108,6 +126,12 @@ export default function Transactions() {
       }
       return next;
     });
+  }
+
+  function updateFormCompany(companyId) {
+    setFormCompanyId(companyId);
+    // Счёт/статья/проект/контрагент из прошлой компании могут не подойти к новой — сбрасываем.
+    setForm((prev) => ({ ...prev, account_id: "", category_id: "", project_id: "", counterparty_id: "" }));
   }
 
   async function handleSubmit(e) {
@@ -130,7 +154,7 @@ export default function Transactions() {
       if (editing) {
         await api.updateTransaction(token, editing.id, payload);
       } else {
-        await api.createTransaction(token, payload);
+        await api.createTransaction(token, payload, formCompanyId || undefined);
       }
       setModalOpen(false);
       reload();
@@ -162,17 +186,32 @@ export default function Transactions() {
     }
   }
 
-  const selectable = (list, selectedId) => (list || []).filter((x) => x.is_active !== false || x.id === selectedId);
+  const selectable = (list, selectedId) =>
+    (list || [])
+      .filter((x) => x.is_active !== false || x.id === selectedId)
+      .filter((x) => !multiCompany || !formCompanyId || x.company_id === formCompanyId || x.id === selectedId);
 
   const filteredCategories = selectable(categories, form.category_id).filter((c) => c.type === form.type);
   const selectableAccounts = selectable(accounts, form.account_id);
   const selectableProjects = selectable(projects, form.project_id);
   const selectableCounterparties = selectable(counterparties, form.counterparty_id);
+  const editableCompanies = companies.filter((m) => canEditTransactions(m.role));
+  const showCompanyColumn = multiCompany && !filters.company;
 
   return (
     <div className="fp-dash">
       <div className="fp-tabs-row">
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {multiCompany && (
+            <select value={filters.company} onChange={(e) => setFilters((f) => ({ ...f, company: e.target.value }))}>
+              <option value="">Все компании</option>
+              {companies.map((m) => (
+                <option key={m.company.id} value={m.company.id}>
+                  {m.company.name}
+                </option>
+              ))}
+            </select>
+          )}
           <select value={filters.project} onChange={(e) => setFilters((f) => ({ ...f, project: e.target.value }))}>
             <option value="">Все проекты</option>
             {(projects || []).map((p) => (
@@ -232,6 +271,7 @@ export default function Transactions() {
           <table className="fp-table">
             <thead>
               <tr>
+                {showCompanyColumn && <th>Компания</th>}
                 <th>Дата</th>
                 <th>Счёт</th>
                 <th>Статья</th>
@@ -252,9 +292,14 @@ export default function Transactions() {
                 const cat = categoriesById[t.category_id];
                 const proj = t.project_id ? projectsById[t.project_id] : null;
                 const cp = t.counterparty_id ? counterpartiesById[t.counterparty_id] : null;
-                const canEditRow = canEdit && (user.role === "admin" || t.created_by === user.id);
+                const rowRole = roleForCompany(t.company_id);
+                const canEditRow =
+                  canEditTransactions(rowRole) && (rowRole === "admin" || t.created_by === user.id);
                 return (
                   <tr key={t.id}>
+                    {showCompanyColumn && (
+                      <td>{companies.find((m) => m.company.id === t.company_id)?.company.name || "—"}</td>
+                    )}
                     <td>{fmtDate(t.date_odds)}</td>
                     <td>
                       {acc?.name || "—"}
@@ -338,6 +383,30 @@ export default function Transactions() {
             </div>
 
             <form className="fp-form-grid" onSubmit={handleSubmit}>
+              {multiCompany && (
+                <label className="fp-span-2">
+                  Компания
+                  {editing ? (
+                    <input
+                      type="text"
+                      disabled
+                      value={companies.find((m) => m.company.id === formCompanyId)?.company.name || ""}
+                    />
+                  ) : (
+                    <select
+                      value={formCompanyId}
+                      onChange={(e) => updateFormCompany(e.target.value)}
+                      required
+                    >
+                      {editableCompanies.map((m) => (
+                        <option key={m.company.id} value={m.company.id}>
+                          {m.company.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </label>
+              )}
               <label>
                 Дата операции
                 <input

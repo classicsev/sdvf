@@ -9,13 +9,21 @@ from openpyxl import Workbook
 from sqlalchemy.orm import Session, Query
 
 from app.audit import log_action
-from app.auth import get_current_user, require_module, require_roles, scope_project_filter
+from app.auth import (
+    check_company_role,
+    get_accessible_company_ids,
+    get_current_user,
+    require_module,
+    resolve_company_ids,
+    resolve_write_company_id,
+    scope_project_filter,
+)
 from app.automation_engine import apply_rules
 from app.database import get_db
 from app.fx import convert_to_rub
 from app.models import Account, Category, Counterparty, Project, RoleEnum, Transaction, User
 from app.schemas import TransactionCreate, TransactionOut, TransactionUpdate
-from app.utils import get_or_404
+from app.utils import get_or_404_accessible
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
@@ -36,13 +44,17 @@ def _convert_to_rub(db: Session, currency: str, amount, on_date: date) -> Decima
 def _filtered_query(
     db: Session,
     user: User,
+    company_id: Optional[str],
     project: Optional[str],
     account: Optional[str],
     category: Optional[str],
     date_from: Optional[date],
     date_to: Optional[date],
 ) -> Query:
-    query = db.query(Transaction).filter(Transaction.company_id == user.company_id)
+    # Без ?company_id= — сразу по всем компаниям пользователя (сводно, без
+    # переключения контекста); с ?company_id= — только по одной.
+    company_ids = resolve_company_ids(db, user, company_id)
+    query = db.query(Transaction).filter(Transaction.company_id.in_(company_ids))
 
     # Row-level security: project_manager принудительно видит только свой проект,
     # даже если он передаст другой ?project= в запросе.
@@ -64,14 +76,18 @@ def _filtered_query(
     return query.order_by(Transaction.date_odds.desc())
 
 
-def _get_transaction_or_404(db: Session, transaction_id: str, company_id: str) -> Transaction:
-    return get_or_404(db, Transaction, transaction_id, "Операция не найдена", company_id=company_id)
+def _get_transaction_or_404(db: Session, user: User, transaction_id: str) -> Transaction:
+    return get_or_404_accessible(
+        db, Transaction, transaction_id, get_accessible_company_ids(db, user), "Операция не найдена"
+    )
 
 
-def _check_can_edit(user: User, tx: Transaction) -> None:
+def _check_can_edit(user: User, tx: Transaction, role: RoleEnum) -> None:
     # operator может редактировать только созданные им операции; admin — любые
-    # (см. матрицу прав в README).
-    if user.role == RoleEnum.operator and tx.created_by != user.id:
+    # (см. матрицу прав в README). Роль проверяется для компании самой
+    # операции (tx.company_id), не "первой" компании пользователя — см.
+    # check_company_role в вызывающем коде.
+    if role == RoleEnum.operator and tx.created_by != user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Operator может редактировать только свои операции",
@@ -80,6 +96,7 @@ def _check_can_edit(user: User, tx: Transaction) -> None:
 
 @router.get("", response_model=list[TransactionOut], dependencies=[Depends(require_module("finance"))])
 def list_transactions(
+    company_id: Optional[str] = None,
     project: Optional[str] = None,
     account: Optional[str] = None,
     category: Optional[str] = None,
@@ -88,30 +105,43 @@ def list_transactions(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    return _filtered_query(db, user, project, account, category, date_from, date_to).all()
+    return _filtered_query(db, user, company_id, project, account, category, date_from, date_to).all()
 
 
 @router.post(
     "",
     response_model=TransactionOut,
-    dependencies=[Depends(require_roles(EDITORS)), Depends(require_module("finance"))],
+    dependencies=[Depends(require_module("finance"))],
 )
 def create_transaction(
     payload: TransactionCreate,
+    company_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    target = resolve_write_company_id(db, user, company_id, EDITORS)
+
+    # Счёт/статья/проект/контрагент обязаны принадлежать той же компании, что и
+    # сама операция — иначе можно было бы создать операцию в одной компании,
+    # ссылаясь на справочники другой (утечка между компаниями).
+    get_or_404_accessible(db, Account, payload.account_id, [target], "Счёт не найден")
+    get_or_404_accessible(db, Category, payload.category_id, [target], "Статья не найдена")
+    if payload.project_id:
+        get_or_404_accessible(db, Project, payload.project_id, [target], "Проект не найден")
+    if payload.counterparty_id:
+        get_or_404_accessible(db, Counterparty, payload.counterparty_id, [target], "Контрагент не найден")
+
     amount_rub = _convert_to_rub(db, payload.currency, payload.amount, payload.date_odds)
 
     # Правила автоматизации (см. /automation-rules) могут переопределить
     # категорию/проект операции по условиям (контрагент, комментарий, сумма).
     data = payload.model_dump()
-    data.update(apply_rules(db, payload, user.company_id))
+    data.update(apply_rules(db, payload, target))
 
     tx = Transaction(
         **data,
         amount_rub=amount_rub,
-        company_id=user.company_id,
+        company_id=target,
         created_by=user.id,
     )
     db.add(tx)
@@ -124,7 +154,7 @@ def create_transaction(
 @router.patch(
     "/{transaction_id}",
     response_model=TransactionOut,
-    dependencies=[Depends(require_roles(EDITORS)), Depends(require_module("finance"))],
+    dependencies=[Depends(require_module("finance"))],
 )
 def update_transaction(
     transaction_id: str,
@@ -132,10 +162,25 @@ def update_transaction(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    tx = _get_transaction_or_404(db, transaction_id, user.company_id)
-    _check_can_edit(user, tx)
+    tx = _get_transaction_or_404(db, user, transaction_id)
+    # Роль проверяется для компании самой операции — пользователь может быть
+    # admin в одной своей компании и viewer в другой (см. план "Мульти-компании").
+    role = check_company_role(db, user, tx.company_id, EDITORS)
+    _check_can_edit(user, tx, role)
 
     changes = payload.model_dump(exclude_unset=True)
+
+    # При смене счёта/статьи/проекта/контрагента — та же защита от межкомпанийной
+    # ссылки, что и при создании (см. create_transaction).
+    if changes.get("account_id"):
+        get_or_404_accessible(db, Account, changes["account_id"], [tx.company_id], "Счёт не найден")
+    if changes.get("category_id"):
+        get_or_404_accessible(db, Category, changes["category_id"], [tx.company_id], "Статья не найдена")
+    if changes.get("project_id"):
+        get_or_404_accessible(db, Project, changes["project_id"], [tx.company_id], "Проект не найден")
+    if changes.get("counterparty_id"):
+        get_or_404_accessible(db, Counterparty, changes["counterparty_id"], [tx.company_id], "Контрагент не найден")
+
     for field, value in changes.items():
         setattr(tx, field, value)
 
@@ -152,15 +197,16 @@ def update_transaction(
 
 @router.delete(
     "/{transaction_id}",
-    dependencies=[Depends(require_roles(EDITORS)), Depends(require_module("finance"))],
+    dependencies=[Depends(require_module("finance"))],
 )
 def delete_transaction(
     transaction_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    tx = _get_transaction_or_404(db, transaction_id, user.company_id)
-    _check_can_edit(user, tx)
+    tx = _get_transaction_or_404(db, user, transaction_id)
+    role = check_company_role(db, user, tx.company_id, EDITORS)
+    _check_can_edit(user, tx, role)
 
     db.delete(tx)
     db.commit()
@@ -170,6 +216,7 @@ def delete_transaction(
 
 @router.get("/export.xlsx", dependencies=[Depends(require_module("finance"))])
 def export_transactions_xlsx(
+    company_id: Optional[str] = None,
     project: Optional[str] = None,
     account: Optional[str] = None,
     category: Optional[str] = None,
@@ -178,13 +225,14 @@ def export_transactions_xlsx(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    rows = _filtered_query(db, user, project, account, category, date_from, date_to).all()
+    rows = _filtered_query(db, user, company_id, project, account, category, date_from, date_to).all()
+    company_ids = resolve_company_ids(db, user, company_id)
 
-    account_names = {a.id: a.name for a in db.query(Account).filter(Account.company_id == user.company_id).all()}
-    category_names = {c.id: c.name for c in db.query(Category).filter(Category.company_id == user.company_id).all()}
-    project_names = {p.id: p.name for p in db.query(Project).filter(Project.company_id == user.company_id).all()}
+    account_names = {a.id: a.name for a in db.query(Account).filter(Account.company_id.in_(company_ids)).all()}
+    category_names = {c.id: c.name for c in db.query(Category).filter(Category.company_id.in_(company_ids)).all()}
+    project_names = {p.id: p.name for p in db.query(Project).filter(Project.company_id.in_(company_ids)).all()}
     counterparty_names = {
-        c.id: c.name for c in db.query(Counterparty).filter(Counterparty.company_id == user.company_id).all()
+        c.id: c.name for c in db.query(Counterparty).filter(Counterparty.company_id.in_(company_ids)).all()
     }
 
     wb = Workbook()

@@ -21,8 +21,8 @@ const TABS = {
     label: "Статьи",
     icon: Tag,
     noun: "статью",
-    list: (token) => api.listCategories(token),
-    create: (token, payload) => api.createCategory(token, payload),
+    list: (token, companyId) => api.listCategories(token, { company_id: companyId }),
+    create: (token, payload, companyId) => api.createCategory(token, payload, companyId),
     update: (token, id, payload) => api.updateCategory(token, id, payload),
     remove: (token, id) => api.deleteCategory(token, id),
     fields: [
@@ -49,8 +49,8 @@ const TABS = {
     label: "Проекты",
     icon: LayoutDashboard,
     noun: "проект",
-    list: (token) => api.listProjects(token),
-    create: (token, payload) => api.createProject(token, payload),
+    list: (token, companyId) => api.listProjects(token, { company_id: companyId }),
+    create: (token, payload, companyId) => api.createProject(token, payload, companyId),
     update: (token, id, payload) => api.updateProject(token, id, payload),
     remove: (token, id) => api.deleteProject(token, id),
     fields: [{ key: "name", label: "Название проекта", type: "text", required: true }],
@@ -60,8 +60,8 @@ const TABS = {
     label: "Счета",
     icon: Building2,
     noun: "счёт",
-    list: (token) => api.listAccounts(token),
-    create: (token, payload) => api.createAccount(token, payload),
+    list: (token, companyId) => api.listAccounts(token, { company_id: companyId }),
+    create: (token, payload, companyId) => api.createAccount(token, payload, companyId),
     update: (token, id, payload) => api.updateAccount(token, id, payload),
     remove: (token, id) => api.deleteAccount(token, id),
     fields: [
@@ -92,8 +92,8 @@ const TABS = {
     label: "Контрагенты",
     icon: Contact,
     noun: "контрагента",
-    list: (token) => api.listCounterparties(token),
-    create: (token, payload) => api.createCounterparty(token, payload),
+    list: (token, companyId) => api.listCounterparties(token, { company_id: companyId }),
+    create: (token, payload, companyId) => api.createCounterparty(token, payload, companyId),
     update: (token, id, payload) => api.updateCounterparty(token, id, payload),
     remove: (token, id) => api.deleteCounterparty(token, id),
     fields: [
@@ -128,15 +128,26 @@ function defaultFormFor(fields) {
 
 export default function Reference() {
   const { token, user } = useAuth();
-  const canEdit = canEditReference(user.role);
+  const companies = user.companies || [];
+  const multiCompany = companies.length > 1;
+  const roleForCompany = (companyId) => companies.find((m) => m.company.id === companyId)?.role;
+  const canEditAny = companies.some((m) => canEditReference(m.role));
+
   const [tab, setTab] = useState("categories");
   const config = TABS[tab];
 
-  const { data: items, loading, error, reload } = useResource(() => config.list(token), [token, tab]);
+  // "" = все доступные компании сразу (сводный список); иначе — id конкретной.
+  const [companyFilter, setCompanyFilter] = useState("");
+
+  const { data: items, loading, error, reload } = useResource(
+    () => config.list(token, companyFilter || undefined),
+    [token, tab, companyFilter]
+  );
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(defaultFormFor(config.fields));
+  const [formCompanyId, setFormCompanyId] = useState("");
   const [formIsActive, setFormIsActive] = useState(true);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -144,6 +155,9 @@ export default function Reference() {
   function openAdd() {
     setEditingId(null);
     setForm(defaultFormFor(config.fields));
+    const editableCompanies = companies.filter((m) => canEditReference(m.role));
+    const preselected = editableCompanies.find((m) => m.company.id === companyFilter) || editableCompanies[0];
+    setFormCompanyId(preselected?.company.id || "");
     setFormIsActive(true);
     setFormError("");
     setModalOpen(true);
@@ -154,6 +168,7 @@ export default function Reference() {
     const next = {};
     config.fields.forEach((f) => (next[f.key] = item[f.key] ?? ""));
     setForm(next);
+    setFormCompanyId(item.company_id || "");
     setFormIsActive(item.is_active !== false);
     setFormError("");
     setModalOpen(true);
@@ -175,7 +190,7 @@ export default function Reference() {
       if (editingId) {
         await config.update(token, editingId, payload);
       } else {
-        await config.create(token, payload);
+        await config.create(token, payload, formCompanyId || undefined);
       }
       setModalOpen(false);
       reload();
@@ -213,6 +228,9 @@ export default function Reference() {
     }
   }
 
+  const showCompanyColumn = multiCompany && !companyFilter;
+  const editableCompanies = companies.filter((m) => canEditReference(m.role));
+
   return (
     <div className="fp-dash">
       <div className="fp-tabs-row">
@@ -224,7 +242,17 @@ export default function Reference() {
             </button>
           ))}
         </div>
-        {canEdit && (
+        {multiCompany && (
+          <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>
+            <option value="">Все компании</option>
+            {companies.map((m) => (
+              <option key={m.company.id} value={m.company.id}>
+                {m.company.name}
+              </option>
+            ))}
+          </select>
+        )}
+        {canEditAny && (
           <button type="button" className="fp-btn-tiny" onClick={openAdd}>
             <Plus size={13} /> Добавить
           </button>
@@ -242,39 +270,46 @@ export default function Reference() {
           <table className="fp-table">
             <thead>
               <tr>
+                {showCompanyColumn && <th>Компания</th>}
                 {config.columns.map((c) => (
                   <th key={c.key}>{c.label}</th>
                 ))}
-                {canEdit && <th className="fp-table-actions-col"></th>}
+                <th className="fp-table-actions-col"></th>
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
-                <tr key={item.id}>
-                  {config.columns.map((c) => (
-                    <td key={c.key}>{c.render ? c.render(item[c.key], item) : item[c.key] || "—"}</td>
-                  ))}
-                  {canEdit && (
+              {items.map((item) => {
+                const canEditRow = canEditReference(roleForCompany(item.company_id));
+                return (
+                  <tr key={item.id}>
+                    {showCompanyColumn && (
+                      <td>{companies.find((m) => m.company.id === item.company_id)?.company.name || "—"}</td>
+                    )}
+                    {config.columns.map((c) => (
+                      <td key={c.key}>{c.render ? c.render(item[c.key], item) : item[c.key] || "—"}</td>
+                    ))}
                     <td className="fp-table-actions-col">
-                      <span className="fp-row-actions">
-                        <button className="fp-icon-btn" onClick={() => openEdit(item)}>
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          className="fp-icon-btn"
-                          onClick={() => handleToggleActive(item)}
-                          title={item.is_active === false ? "Восстановить" : "Деактивировать"}
-                        >
-                          {item.is_active === false ? <RotateCcw size={14} /> : <Ban size={14} />}
-                        </button>
-                        <button className="fp-icon-btn" onClick={() => handleDelete(item)}>
-                          <Trash2 size={14} />
-                        </button>
-                      </span>
+                      {canEditRow && (
+                        <span className="fp-row-actions">
+                          <button className="fp-icon-btn" onClick={() => openEdit(item)}>
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            className="fp-icon-btn"
+                            onClick={() => handleToggleActive(item)}
+                            title={item.is_active === false ? "Восстановить" : "Деактивировать"}
+                          >
+                            {item.is_active === false ? <RotateCcw size={14} /> : <Ban size={14} />}
+                          </button>
+                          <button className="fp-icon-btn" onClick={() => handleDelete(item)}>
+                            <Trash2 size={14} />
+                          </button>
+                        </span>
+                      )}
                     </td>
-                  )}
-                </tr>
-              ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -290,6 +325,26 @@ export default function Reference() {
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmit}>
+              {multiCompany && (
+                <label className="fp-span-2">
+                  Компания
+                  {editingId ? (
+                    <input
+                      type="text"
+                      disabled
+                      value={companies.find((m) => m.company.id === formCompanyId)?.company.name || ""}
+                    />
+                  ) : (
+                    <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
+                      {editableCompanies.map((m) => (
+                        <option key={m.company.id} value={m.company.id}>
+                          {m.company.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </label>
+              )}
               {config.fields.map((f) => (
                 <label key={f.key} className={f.type === "text" && f.key === "name" ? "fp-span-2" : ""}>
                   {f.label}

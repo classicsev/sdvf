@@ -1,11 +1,21 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.auth import get_current_user, require_module, require_roles
+from app.auth import (
+    check_company_role,
+    get_accessible_company_ids,
+    get_current_user,
+    require_module,
+    resolve_company_ids,
+    resolve_write_company_id,
+)
 from app.database import get_db
 from app.models import (
     Account,
     Category,
+    CompanyMember,
     Counterparty,
     PayrollAccrual,
     PayrollPayment,
@@ -25,15 +35,15 @@ from app.schemas import (
     ProjectIn,
     ProjectOut,
 )
-from app.utils import delete_or_deactivate, get_or_404
+from app.utils import delete_or_deactivate, get_or_404_accessible
 
 router = APIRouter(tags=["reference"])
 
 ADMIN_ONLY = [RoleEnum.admin]
 
 
-def _get_or_404(db: Session, model, entity_id: str, company_id: str):
-    return get_or_404(db, model, entity_id, company_id=company_id)
+def _get_or_404(db: Session, user: User, model, entity_id: str):
+    return get_or_404_accessible(db, model, entity_id, get_accessible_company_ids(db, user))
 
 
 # ---------------------------------------------------------------------------
@@ -42,17 +52,22 @@ def _get_or_404(db: Session, model, entity_id: str, company_id: str):
 
 
 @router.get("/categories", response_model=list[CategoryOut], dependencies=[Depends(require_module("finance"))])
-def list_categories(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return db.query(Category).filter(Category.company_id == user.company_id).all()
+def list_categories(
+    company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    company_ids = resolve_company_ids(db, user, company_id)
+    return db.query(Category).filter(Category.company_id.in_(company_ids)).all()
 
 
-@router.post(
-    "/categories",
-    response_model=CategoryOut,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), Depends(require_module("finance"))],
-)
-def create_category(payload: CategoryIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    obj = Category(**payload.model_dump(), company_id=user.company_id)
+@router.post("/categories", response_model=CategoryOut, dependencies=[Depends(require_module("finance"))])
+def create_category(
+    payload: CategoryIn,
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    target = resolve_write_company_id(db, user, company_id, ADMIN_ONLY)
+    obj = Category(**payload.model_dump(), company_id=target)
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -60,14 +75,13 @@ def create_category(payload: CategoryIn, db: Session = Depends(get_db), user: Us
 
 
 @router.patch(
-    "/categories/{category_id}",
-    response_model=CategoryOut,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), Depends(require_module("finance"))],
+    "/categories/{category_id}", response_model=CategoryOut, dependencies=[Depends(require_module("finance"))]
 )
 def update_category(
     category_id: str, payload: CategoryIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    obj = _get_or_404(db, Category, category_id, user.company_id)
+    obj = _get_or_404(db, user, Category, category_id)
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
     for k, v in payload.model_dump().items():
         setattr(obj, k, v)
     db.commit()
@@ -75,12 +89,10 @@ def update_category(
     return obj
 
 
-@router.delete(
-    "/categories/{category_id}",
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), Depends(require_module("finance"))],
-)
+@router.delete("/categories/{category_id}", dependencies=[Depends(require_module("finance"))])
 def delete_category(category_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    obj = _get_or_404(db, Category, category_id, user.company_id)
+    obj = _get_or_404(db, user, Category, category_id)
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
     deleted = delete_or_deactivate(db, obj, [(Transaction, "category_id"), (Planning, "category_id")])
     return {"deleted": deleted, "deactivated": not deleted}
 
@@ -91,17 +103,22 @@ def delete_category(category_id: str, db: Session = Depends(get_db), user: User 
 
 
 @router.get("/projects", response_model=list[ProjectOut], dependencies=[Depends(require_module("finance"))])
-def list_projects(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return db.query(Project).filter(Project.company_id == user.company_id).all()
+def list_projects(
+    company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    company_ids = resolve_company_ids(db, user, company_id)
+    return db.query(Project).filter(Project.company_id.in_(company_ids)).all()
 
 
-@router.post(
-    "/projects",
-    response_model=ProjectOut,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), Depends(require_module("finance"))],
-)
-def create_project(payload: ProjectIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    obj = Project(**payload.model_dump(), company_id=user.company_id)
+@router.post("/projects", response_model=ProjectOut, dependencies=[Depends(require_module("finance"))])
+def create_project(
+    payload: ProjectIn,
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    target = resolve_write_company_id(db, user, company_id, ADMIN_ONLY)
+    obj = Project(**payload.model_dump(), company_id=target)
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -109,14 +126,13 @@ def create_project(payload: ProjectIn, db: Session = Depends(get_db), user: User
 
 
 @router.patch(
-    "/projects/{project_id}",
-    response_model=ProjectOut,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), Depends(require_module("finance"))],
+    "/projects/{project_id}", response_model=ProjectOut, dependencies=[Depends(require_module("finance"))]
 )
 def update_project(
     project_id: str, payload: ProjectIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    obj = _get_or_404(db, Project, project_id, user.company_id)
+    obj = _get_or_404(db, user, Project, project_id)
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
     for k, v in payload.model_dump().items():
         setattr(obj, k, v)
     db.commit()
@@ -124,12 +140,10 @@ def update_project(
     return obj
 
 
-@router.delete(
-    "/projects/{project_id}",
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), Depends(require_module("finance"))],
-)
+@router.delete("/projects/{project_id}", dependencies=[Depends(require_module("finance"))])
 def delete_project(project_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    obj = _get_or_404(db, Project, project_id, user.company_id)
+    obj = _get_or_404(db, user, Project, project_id)
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
     deleted = delete_or_deactivate(
         db,
         obj,
@@ -137,7 +151,7 @@ def delete_project(project_id: str, db: Session = Depends(get_db), user: User = 
             (Transaction, "project_id"),
             (Planning, "project_id"),
             (PayrollAccrual, "project_id"),
-            (User, "project_id"),
+            (CompanyMember, "project_id"),
         ],
     )
     return {"deleted": deleted, "deactivated": not deleted}
@@ -149,17 +163,22 @@ def delete_project(project_id: str, db: Session = Depends(get_db), user: User = 
 
 
 @router.get("/accounts", response_model=list[AccountOut], dependencies=[Depends(require_module("finance"))])
-def list_accounts(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return db.query(Account).filter(Account.company_id == user.company_id).all()
+def list_accounts(
+    company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    company_ids = resolve_company_ids(db, user, company_id)
+    return db.query(Account).filter(Account.company_id.in_(company_ids)).all()
 
 
-@router.post(
-    "/accounts",
-    response_model=AccountOut,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), Depends(require_module("finance"))],
-)
-def create_account(payload: AccountIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    obj = Account(**payload.model_dump(), company_id=user.company_id)
+@router.post("/accounts", response_model=AccountOut, dependencies=[Depends(require_module("finance"))])
+def create_account(
+    payload: AccountIn,
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    target = resolve_write_company_id(db, user, company_id, ADMIN_ONLY)
+    obj = Account(**payload.model_dump(), company_id=target)
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -167,14 +186,13 @@ def create_account(payload: AccountIn, db: Session = Depends(get_db), user: User
 
 
 @router.patch(
-    "/accounts/{account_id}",
-    response_model=AccountOut,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), Depends(require_module("finance"))],
+    "/accounts/{account_id}", response_model=AccountOut, dependencies=[Depends(require_module("finance"))]
 )
 def update_account(
     account_id: str, payload: AccountIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    obj = _get_or_404(db, Account, account_id, user.company_id)
+    obj = _get_or_404(db, user, Account, account_id)
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
     for k, v in payload.model_dump().items():
         setattr(obj, k, v)
     db.commit()
@@ -182,12 +200,10 @@ def update_account(
     return obj
 
 
-@router.delete(
-    "/accounts/{account_id}",
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), Depends(require_module("finance"))],
-)
+@router.delete("/accounts/{account_id}", dependencies=[Depends(require_module("finance"))])
 def delete_account(account_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    obj = _get_or_404(db, Account, account_id, user.company_id)
+    obj = _get_or_404(db, user, Account, account_id)
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
     deleted = delete_or_deactivate(db, obj, [(Transaction, "account_id"), (PayrollPayment, "account_id")])
     return {"deleted": deleted, "deactivated": not deleted}
 
@@ -202,19 +218,26 @@ def delete_account(account_id: str, db: Session = Depends(get_db), user: User = 
     response_model=list[CounterpartyOut],
     dependencies=[Depends(require_module("finance", "warehouse"))],
 )
-def list_counterparties(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return db.query(Counterparty).filter(Counterparty.company_id == user.company_id).all()
+def list_counterparties(
+    company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    company_ids = resolve_company_ids(db, user, company_id)
+    return db.query(Counterparty).filter(Counterparty.company_id.in_(company_ids)).all()
 
 
 @router.post(
     "/counterparties",
     response_model=CounterpartyOut,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), Depends(require_module("finance", "warehouse"))],
+    dependencies=[Depends(require_module("finance", "warehouse"))],
 )
 def create_counterparty(
-    payload: CounterpartyIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    payload: CounterpartyIn,
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    obj = Counterparty(**payload.model_dump(), company_id=user.company_id)
+    target = resolve_write_company_id(db, user, company_id, ADMIN_ONLY)
+    obj = Counterparty(**payload.model_dump(), company_id=target)
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -224,7 +247,7 @@ def create_counterparty(
 @router.patch(
     "/counterparties/{counterparty_id}",
     response_model=CounterpartyOut,
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), Depends(require_module("finance", "warehouse"))],
+    dependencies=[Depends(require_module("finance", "warehouse"))],
 )
 def update_counterparty(
     counterparty_id: str,
@@ -232,7 +255,8 @@ def update_counterparty(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    obj = _get_or_404(db, Counterparty, counterparty_id, user.company_id)
+    obj = _get_or_404(db, user, Counterparty, counterparty_id)
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
     for k, v in payload.model_dump().items():
         setattr(obj, k, v)
     db.commit()
@@ -242,9 +266,10 @@ def update_counterparty(
 
 @router.delete(
     "/counterparties/{counterparty_id}",
-    dependencies=[Depends(require_roles(ADMIN_ONLY)), Depends(require_module("finance", "warehouse"))],
+    dependencies=[Depends(require_module("finance", "warehouse"))],
 )
 def delete_counterparty(counterparty_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    obj = _get_or_404(db, Counterparty, counterparty_id, user.company_id)
+    obj = _get_or_404(db, user, Counterparty, counterparty_id)
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
     deleted = delete_or_deactivate(db, obj, [(Transaction, "counterparty_id")])
     return {"deleted": deleted, "deactivated": not deleted}

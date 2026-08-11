@@ -47,3 +47,23 @@ def get_or_404(
     if obj is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
     return obj
+
+
+def get_or_404_accessible(
+    db: Session,
+    model: Type[ModelT],
+    entity_id: str,
+    accessible_company_ids: list[str],
+    detail: str = "Запись не найдена",
+) -> ModelT:
+    """Как get_or_404, но company_id проверяется против СПИСКА доступных
+    компаний (см. auth.get_accessible_company_ids), а не одной — для
+    роутеров, переведённых на мульти-компании (план "Мульти-компании")."""
+    try:
+        uuid.UUID(str(entity_id))
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+    obj = db.query(model).filter(model.id == entity_id, model.company_id.in_(accessible_company_ids)).first()
+    if obj is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+    return obj

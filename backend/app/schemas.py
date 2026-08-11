@@ -28,6 +28,7 @@ class TransactionOut(TransactionBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
     amount_rub: float
     created_at: datetime
     created_by: Optional[str] = None
@@ -59,6 +60,7 @@ class CategoryOut(CategoryIn):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
     is_active: bool
 
 
@@ -71,6 +73,7 @@ class ProjectOut(ProjectIn):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
     is_active: bool
 
 
@@ -86,6 +89,7 @@ class AccountOut(AccountIn):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
     is_active: bool
 
 
@@ -100,6 +104,7 @@ class CounterpartyOut(CounterpartyIn):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
     is_active: bool
 
 
@@ -113,6 +118,7 @@ class EmployeeIn(BaseModel):
 
 class EmployeeOut(BaseModel):
     id: str
+    company_id: str
     full_name: str
     department: Optional[str] = None
     position: Optional[str] = None
@@ -137,6 +143,7 @@ class AutomationRuleOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
     condition_json: object
     action_json: dict
     is_active: bool
@@ -156,6 +163,7 @@ class PlanningOut(PlanningIn):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
 
 
 class PayrollAccrualIn(BaseModel):
@@ -172,6 +180,7 @@ class PayrollAccrualOut(PayrollAccrualIn):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
     total: float
 
 
@@ -188,6 +197,7 @@ class PayrollPaymentOut(PayrollPaymentIn):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
 
 
 class CompanyOut(BaseModel):
@@ -204,6 +214,38 @@ class CompanyOut(BaseModel):
     sdvf_org_ogrn: Optional[str] = None
     sdvf_org_address: Optional[str] = None
     sdvf_org_phone: Optional[str] = None
+    company_type: str = "legal_entity"
+
+
+class CompanyMembershipOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    company: CompanyOut
+    role: RoleEnum
+    project_id: Optional[str] = None
+
+
+class CompanyCreate(BaseModel):
+    name: str
+    # 'legal_entity' (по умолчанию, ООО/ИП с реквизитами) | 'individual'
+    # (личные счета физлица, без обязательных юр. реквизитов)
+    company_type: str = "legal_entity"
+
+
+class CompanyMemberCreate(BaseModel):
+    email: str
+    role: RoleEnum
+    project_id: Optional[str] = None
+    # Обязательны, только если пользователя с таким email ещё нет в системе —
+    # тогда для него создаётся новый аккаунт. Если email уже существует,
+    # игнорируются — пользователь просто получает доступ к этой компании.
+    full_name: Optional[str] = None
+    password: Optional[str] = None
+
+
+class CompanyMemberUpdate(BaseModel):
+    role: Optional[RoleEnum] = None
+    project_id: Optional[str] = None
 
 
 class CompanyModulesIn(BaseModel):
@@ -237,6 +279,11 @@ class UserOut(BaseModel):
     id: str
     company_id: str
     company: CompanyOut
+    # Все компании пользователя (см. план "Мульти-компании") — company/company_id/
+    # role/project_id выше остаются для обратной совместимости и указывают на
+    # "первую" (по дате создания) компанию; новый фронтенд должен работать со
+    # списком companies целиком.
+    companies: list[CompanyMembershipOut] = []
     email: Optional[str] = None
     full_name: str
     role: RoleEnum
@@ -244,6 +291,10 @@ class UserOut(BaseModel):
     is_active: bool = True
     email_verified: bool = False
     phone: Optional[str] = None
+    avatar_url: Optional[str] = None
+    telegram: Optional[str] = None
+    max_messenger: Optional[str] = None
+    gender: Optional[str] = None
 
 
 class TokenResponse(BaseModel):
@@ -272,6 +323,18 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
 
 
+class MyProfileUpdate(BaseModel):
+    """Самостоятельное редактирование пользователем собственного профиля —
+    в отличие от UserUpdate (админский эндпоинт), тут нет role/project_id/
+    is_active/password: их менять себе через этот путь нельзя."""
+
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    telegram: Optional[str] = None
+    max_messenger: Optional[str] = None
+    gender: Optional[str] = None
+
+
 class ApiKeyOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -297,6 +360,7 @@ class IntegrationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
     provider: str
     type: str
     is_connected: bool
@@ -356,6 +420,7 @@ class WarehouseOut(WarehouseIn):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
 
 
 class ProductIn(BaseModel):
@@ -369,6 +434,7 @@ class ProductOut(ProductIn):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
 
 
 class ProductVariantIn(BaseModel):
@@ -381,6 +447,7 @@ class ProductVariantOut(ProductVariantIn):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
 
 
 class StockMovementIn(BaseModel):
@@ -398,6 +465,7 @@ class StockMovementOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
     date: date
     warehouse_id: str
     product_variant_id: str
@@ -430,6 +498,7 @@ class EmployeeMiniOut(BaseModel):
 
 
 class StockBalanceOut(BaseModel):
+    company_id: str
     warehouse_id: str
     warehouse_name: str
     product_id: str
@@ -478,6 +547,7 @@ class OrderOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
     counterparty_id: str
     warehouse_id: str
     status: OrderStatusEnum
@@ -538,6 +608,7 @@ class ProductionRecipeOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
     name: str
     output_variant_id: str
     is_active: bool
@@ -556,6 +627,7 @@ class ProductionRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    company_id: str
     recipe_id: str
     warehouse_id: str
     date: date

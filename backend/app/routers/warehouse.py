@@ -1,11 +1,19 @@
 import re
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import case, func, true
 from sqlalchemy.orm import Session
 
 from app.audit import log_action
-from app.auth import get_current_user, require_module, require_roles
+from app.auth import (
+    check_company_role,
+    get_accessible_company_ids,
+    get_current_user,
+    require_module,
+    resolve_company_ids,
+    resolve_write_company_id,
+)
 from app.database import get_db
 from app.models import (
     Employee,
@@ -35,7 +43,7 @@ from app.schemas import (
     WarehouseIn,
     WarehouseOut,
 )
-from app.utils import delete_or_deactivate, get_or_404
+from app.utils import delete_or_deactivate, get_or_404_accessible
 
 router = APIRouter(prefix="/warehouse", tags=["warehouse"])
 
@@ -96,17 +104,22 @@ def _apply_payroll_bridge(db: Session, movement: StockMovement, company_id: str)
 
 
 @router.get("/warehouses", response_model=list[WarehouseOut], dependencies=[WAREHOUSE_MODULE])
-def list_warehouses(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return db.query(Warehouse).filter(Warehouse.company_id == user.company_id).all()
+def list_warehouses(
+    company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    company_ids = resolve_company_ids(db, user, company_id)
+    return db.query(Warehouse).filter(Warehouse.company_id.in_(company_ids)).all()
 
 
-@router.post(
-    "/warehouses",
-    response_model=WarehouseOut,
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
-def create_warehouse(payload: WarehouseIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    obj = Warehouse(**payload.model_dump(), company_id=user.company_id)
+@router.post("/warehouses", response_model=WarehouseOut, dependencies=[WAREHOUSE_MODULE])
+def create_warehouse(
+    payload: WarehouseIn,
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    target = resolve_write_company_id(db, user, company_id, WAREHOUSE_EDITORS)
+    obj = Warehouse(**payload.model_dump(), company_id=target)
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -114,14 +127,13 @@ def create_warehouse(payload: WarehouseIn, db: Session = Depends(get_db), user: 
 
 
 @router.patch(
-    "/warehouses/{warehouse_id}",
-    response_model=WarehouseOut,
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
+    "/warehouses/{warehouse_id}", response_model=WarehouseOut, dependencies=[WAREHOUSE_MODULE]
 )
 def update_warehouse(
     warehouse_id: str, payload: WarehouseIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    obj = get_or_404(db, Warehouse, warehouse_id, "Склад не найден", company_id=user.company_id)
+    obj = get_or_404_accessible(db, Warehouse, warehouse_id, get_accessible_company_ids(db, user), "Склад не найден")
+    check_company_role(db, user, obj.company_id, WAREHOUSE_EDITORS)
     for k, v in payload.model_dump().items():
         setattr(obj, k, v)
     db.commit()
@@ -129,12 +141,10 @@ def update_warehouse(
     return obj
 
 
-@router.delete(
-    "/warehouses/{warehouse_id}",
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.delete("/warehouses/{warehouse_id}", dependencies=[WAREHOUSE_MODULE])
 def delete_warehouse(warehouse_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    obj = get_or_404(db, Warehouse, warehouse_id, "Склад не найден", company_id=user.company_id)
+    obj = get_or_404_accessible(db, Warehouse, warehouse_id, get_accessible_company_ids(db, user), "Склад не найден")
+    check_company_role(db, user, obj.company_id, WAREHOUSE_EDITORS)
     deleted = delete_or_deactivate(db, obj, [(StockMovement, "warehouse_id")])
     return {"deleted": deleted, "deactivated": not deleted}
 
@@ -148,10 +158,13 @@ def delete_warehouse(warehouse_id: str, db: Session = Depends(get_db), user: Use
 
 
 @router.get("/employees", response_model=list[EmployeeMiniOut], dependencies=[WAREHOUSE_MODULE])
-def list_warehouse_employees(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def list_warehouse_employees(
+    company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    company_ids = resolve_company_ids(db, user, company_id)
     return (
         db.query(Employee)
-        .filter(Employee.company_id == user.company_id, Employee.status == "active")
+        .filter(Employee.company_id.in_(company_ids), Employee.status == "active")
         .all()
     )
 
@@ -162,32 +175,34 @@ def list_warehouse_employees(db: Session = Depends(get_db), user: User = Depends
 
 
 @router.get("/products", response_model=list[ProductOut], dependencies=[WAREHOUSE_MODULE])
-def list_products(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return db.query(Product).filter(Product.company_id == user.company_id).all()
+def list_products(
+    company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    company_ids = resolve_company_ids(db, user, company_id)
+    return db.query(Product).filter(Product.company_id.in_(company_ids)).all()
 
 
-@router.post(
-    "/products",
-    response_model=ProductOut,
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
-def create_product(payload: ProductIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    obj = Product(**payload.model_dump(), company_id=user.company_id)
+@router.post("/products", response_model=ProductOut, dependencies=[WAREHOUSE_MODULE])
+def create_product(
+    payload: ProductIn,
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    target = resolve_write_company_id(db, user, company_id, WAREHOUSE_EDITORS)
+    obj = Product(**payload.model_dump(), company_id=target)
     db.add(obj)
     db.commit()
     db.refresh(obj)
     return obj
 
 
-@router.patch(
-    "/products/{product_id}",
-    response_model=ProductOut,
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.patch("/products/{product_id}", response_model=ProductOut, dependencies=[WAREHOUSE_MODULE])
 def update_product(
     product_id: str, payload: ProductIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    obj = get_or_404(db, Product, product_id, "Товар не найден", company_id=user.company_id)
+    obj = get_or_404_accessible(db, Product, product_id, get_accessible_company_ids(db, user), "Товар не найден")
+    check_company_role(db, user, obj.company_id, WAREHOUSE_EDITORS)
     for k, v in payload.model_dump().items():
         setattr(obj, k, v)
     db.commit()
@@ -195,12 +210,10 @@ def update_product(
     return obj
 
 
-@router.delete(
-    "/products/{product_id}",
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.delete("/products/{product_id}", dependencies=[WAREHOUSE_MODULE])
 def delete_product(product_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    obj = get_or_404(db, Product, product_id, "Товар не найден", company_id=user.company_id)
+    obj = get_or_404_accessible(db, Product, product_id, get_accessible_company_ids(db, user), "Товар не найден")
+    check_company_role(db, user, obj.company_id, WAREHOUSE_EDITORS)
     deleted = delete_or_deactivate(db, obj, [(ProductVariant, "product_id")])
     return {"deleted": deleted, "deactivated": not deleted}
 
@@ -212,40 +225,44 @@ def delete_product(product_id: str, db: Session = Depends(get_db), user: User = 
 
 @router.get("/variants", response_model=list[ProductVariantOut], dependencies=[WAREHOUSE_MODULE])
 def list_variants(
-    product_id: str | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    product_id: str | None = None,
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    query = db.query(ProductVariant).filter(ProductVariant.company_id == user.company_id)
+    company_ids = resolve_company_ids(db, user, company_id)
+    query = db.query(ProductVariant).filter(ProductVariant.company_id.in_(company_ids))
     if product_id:
         query = query.filter(ProductVariant.product_id == product_id)
     return query.all()
 
 
-@router.post(
-    "/variants",
-    response_model=ProductVariantOut,
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.post("/variants", response_model=ProductVariantOut, dependencies=[WAREHOUSE_MODULE])
 def create_variant(
     payload: ProductVariantIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    get_or_404(db, Product, payload.product_id, "Товар не найден", company_id=user.company_id)
-    obj = ProductVariant(**payload.model_dump(), company_id=user.company_id)
+    # Компания варианта определяется по товару — они всегда в одной компании.
+    product = get_or_404_accessible(
+        db, Product, payload.product_id, get_accessible_company_ids(db, user), "Товар не найден"
+    )
+    check_company_role(db, user, product.company_id, WAREHOUSE_EDITORS)
+    obj = ProductVariant(**payload.model_dump(), company_id=product.company_id)
     db.add(obj)
     db.commit()
     db.refresh(obj)
     return obj
 
 
-@router.patch(
-    "/variants/{variant_id}",
-    response_model=ProductVariantOut,
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.patch("/variants/{variant_id}", response_model=ProductVariantOut, dependencies=[WAREHOUSE_MODULE])
 def update_variant(
     variant_id: str, payload: ProductVariantIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    obj = get_or_404(db, ProductVariant, variant_id, "Вариант не найден", company_id=user.company_id)
-    get_or_404(db, Product, payload.product_id, "Товар не найден", company_id=user.company_id)
+    accessible = get_accessible_company_ids(db, user)
+    obj = get_or_404_accessible(db, ProductVariant, variant_id, accessible, "Вариант не найден")
+    check_company_role(db, user, obj.company_id, WAREHOUSE_EDITORS)
+    product = get_or_404_accessible(db, Product, payload.product_id, accessible, "Товар не найден")
+    if product.company_id != obj.company_id:
+        raise HTTPException(status_code=400, detail="Товар принадлежит другой компании")
     for k, v in payload.model_dump().items():
         setattr(obj, k, v)
     db.commit()
@@ -253,12 +270,12 @@ def update_variant(
     return obj
 
 
-@router.delete(
-    "/variants/{variant_id}",
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.delete("/variants/{variant_id}", dependencies=[WAREHOUSE_MODULE])
 def delete_variant(variant_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    obj = get_or_404(db, ProductVariant, variant_id, "Вариант не найден", company_id=user.company_id)
+    obj = get_or_404_accessible(
+        db, ProductVariant, variant_id, get_accessible_company_ids(db, user), "Вариант не найден"
+    )
+    check_company_role(db, user, obj.company_id, WAREHOUSE_EDITORS)
     deleted = delete_or_deactivate(db, obj, [(StockMovement, "product_variant_id")])
     return {"deleted": deleted, "deactivated": not deleted}
 
@@ -272,9 +289,11 @@ def delete_variant(variant_id: str, db: Session = Depends(get_db), user: User = 
 def get_balances(
     warehouse_id: str | None = None,
     include_empty: bool = False,
+    company_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    company_ids = resolve_company_ids(db, user, company_id)
     # Зарезервированное количество = сумма позиций заказов в статусе "reserved" по тому
     # же складу и варианту — доступно-к-обещанию (available) не хранится, а считается
     # так же на лету, как и сам остаток.
@@ -285,7 +304,7 @@ def get_balances(
             func.sum(OrderLine.quantity).label("reserved_qty"),
         )
         .join(OrderLine, OrderLine.order_id == Order.id)
-        .filter(Order.status == OrderStatusEnum.reserved, Order.company_id == user.company_id)
+        .filter(Order.status == OrderStatusEnum.reserved, Order.company_id.in_(company_ids))
         .group_by(Order.warehouse_id, OrderLine.product_variant_id)
         .subquery()
     )
@@ -295,7 +314,7 @@ def get_balances(
             StockMovement.product_variant_id.label("product_variant_id"),
             func.sum(_signed_quantity_expr()).label("quantity"),
         )
-        .filter(StockMovement.company_id == user.company_id)
+        .filter(StockMovement.company_id.in_(company_ids))
         .group_by(StockMovement.warehouse_id, StockMovement.product_variant_id)
         .subquery()
     )
@@ -306,6 +325,7 @@ def get_balances(
         # что уже засветились в ленте движений.
         query = (
             db.query(
+                Warehouse.company_id,
                 Warehouse.id.label("warehouse_id"),
                 Warehouse.name.label("warehouse_name"),
                 Product.id.label("product_id"),
@@ -330,7 +350,7 @@ def get_balances(
                 & (reserved_subq.c.product_variant_id == ProductVariant.id),
             )
             .filter(
-                Warehouse.company_id == user.company_id,
+                Warehouse.company_id.in_(company_ids),
                 Warehouse.is_active.is_(True),
                 ProductVariant.is_active.is_(True),
                 Product.is_active.is_(True),
@@ -341,6 +361,7 @@ def get_balances(
     else:
         query = (
             db.query(
+                Warehouse.company_id,
                 movement_subq.c.warehouse_id,
                 Warehouse.name.label("warehouse_name"),
                 Product.id.label("product_id"),
@@ -370,6 +391,7 @@ def get_balances(
         reserved = float(row.reserved_qty or 0)
         results.append(
             StockBalanceOut(
+                company_id=row.company_id,
                 warehouse_id=row.warehouse_id,
                 warehouse_name=row.warehouse_name,
                 product_id=row.product_id,
@@ -396,10 +418,12 @@ def get_balances(
 def list_movements(
     warehouse_id: str | None = None,
     product_variant_id: str | None = None,
+    company_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    query = db.query(StockMovement).filter(StockMovement.company_id == user.company_id)
+    company_ids = resolve_company_ids(db, user, company_id)
+    query = db.query(StockMovement).filter(StockMovement.company_id.in_(company_ids))
     if warehouse_id:
         query = query.filter(StockMovement.warehouse_id == warehouse_id)
     if product_variant_id:
@@ -407,11 +431,7 @@ def list_movements(
     return query.order_by(StockMovement.date.desc(), StockMovement.created_at.desc()).all()
 
 
-@router.post(
-    "/movements",
-    response_model=StockMovementOut,
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.post("/movements", response_model=StockMovementOut, dependencies=[WAREHOUSE_MODULE])
 def create_movement(
     payload: StockMovementIn,
     db: Session = Depends(get_db),
@@ -425,13 +445,23 @@ def create_movement(
     if payload.direction != StockDirectionEnum.adjustment and payload.quantity <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Количество должно быть больше нуля")
 
-    get_or_404(db, Warehouse, payload.warehouse_id, "Склад не найден", company_id=user.company_id)
-    get_or_404(db, ProductVariant, payload.product_variant_id, "Вариант товара не найден", company_id=user.company_id)
+    # Компания движения определяется по складу — все ссылки (вариант, сотрудник)
+    # должны принадлежать той же компании.
+    accessible = get_accessible_company_ids(db, user)
+    warehouse = get_or_404_accessible(db, Warehouse, payload.warehouse_id, accessible, "Склад не найден")
+    check_company_role(db, user, warehouse.company_id, WAREHOUSE_EDITORS)
+    variant = get_or_404_accessible(
+        db, ProductVariant, payload.product_variant_id, accessible, "Вариант товара не найден"
+    )
+    if variant.company_id != warehouse.company_id:
+        raise HTTPException(status_code=400, detail="Вариант товара принадлежит другой компании")
     if payload.executor_id:
-        get_or_404(db, Employee, payload.executor_id, "Сотрудник не найден", company_id=user.company_id)
+        employee = get_or_404_accessible(db, Employee, payload.executor_id, accessible, "Сотрудник не найден")
+        if employee.company_id != warehouse.company_id:
+            raise HTTPException(status_code=400, detail="Сотрудник принадлежит другой компании")
 
     movement = StockMovement(
-        company_id=user.company_id,
+        company_id=warehouse.company_id,
         date=payload.date,
         warehouse_id=payload.warehouse_id,
         product_variant_id=payload.product_variant_id,
@@ -445,7 +475,7 @@ def create_movement(
     db.add(movement)
     db.flush()
 
-    _apply_payroll_bridge(db, movement, user.company_id)
+    _apply_payroll_bridge(db, movement, warehouse.company_id)
 
     db.commit()
     db.refresh(movement)
@@ -453,12 +483,12 @@ def create_movement(
     return movement
 
 
-@router.delete(
-    "/movements/{movement_id}",
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.delete("/movements/{movement_id}", dependencies=[WAREHOUSE_MODULE])
 def delete_movement(movement_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    movement = get_or_404(db, StockMovement, movement_id, "Движение не найдено", company_id=user.company_id)
+    movement = get_or_404_accessible(
+        db, StockMovement, movement_id, get_accessible_company_ids(db, user), "Движение не найдено"
+    )
+    check_company_role(db, user, movement.company_id, WAREHOUSE_EDITORS)
 
     accrual = None
     if movement.payroll_accrual_id:
@@ -482,23 +512,27 @@ def delete_movement(movement_id: str, db: Session = Depends(get_db), user: User 
     return {"deleted": True}
 
 
-@router.post(
-    "/movements/transfer",
-    response_model=list[StockMovementOut],
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.post("/movements/transfer", response_model=list[StockMovementOut], dependencies=[WAREHOUSE_MODULE])
 def transfer_stock(payload: StockTransferIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if payload.from_warehouse_id == payload.to_warehouse_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Склад отправления и назначения совпадают")
     if payload.quantity <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Количество должно быть больше нуля")
 
-    get_or_404(db, Warehouse, payload.from_warehouse_id, "Склад отправления не найден", company_id=user.company_id)
-    get_or_404(db, Warehouse, payload.to_warehouse_id, "Склад назначения не найден", company_id=user.company_id)
-    get_or_404(db, ProductVariant, payload.product_variant_id, "Вариант товара не найден", company_id=user.company_id)
+    accessible = get_accessible_company_ids(db, user)
+    from_wh = get_or_404_accessible(db, Warehouse, payload.from_warehouse_id, accessible, "Склад отправления не найден")
+    check_company_role(db, user, from_wh.company_id, WAREHOUSE_EDITORS)
+    to_wh = get_or_404_accessible(db, Warehouse, payload.to_warehouse_id, accessible, "Склад назначения не найден")
+    if to_wh.company_id != from_wh.company_id:
+        raise HTTPException(status_code=400, detail="Перемещение возможно только между складами одной компании")
+    variant = get_or_404_accessible(
+        db, ProductVariant, payload.product_variant_id, accessible, "Вариант товара не найден"
+    )
+    if variant.company_id != from_wh.company_id:
+        raise HTTPException(status_code=400, detail="Вариант товара принадлежит другой компании")
 
     out_movement = StockMovement(
-        company_id=user.company_id,
+        company_id=from_wh.company_id,
         date=payload.date,
         warehouse_id=payload.from_warehouse_id,
         product_variant_id=payload.product_variant_id,
@@ -508,7 +542,7 @@ def transfer_stock(payload: StockTransferIn, db: Session = Depends(get_db), user
         created_by=user.id,
     )
     in_movement = StockMovement(
-        company_id=user.company_id,
+        company_id=from_wh.company_id,
         date=payload.date,
         warehouse_id=payload.to_warehouse_id,
         product_variant_id=payload.product_variant_id,

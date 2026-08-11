@@ -1,17 +1,18 @@
 from app.models import RoleEnum
-from tests.conftest import auth_headers, make_user
+from tests.conftest import auth_headers, make_category, make_company, make_user
 
 
 def test_rule_full_crud(client, db_session):
     admin = make_user(db_session, RoleEnum.admin)
     headers = auth_headers(admin)
+    category = make_category(db_session)
 
     resp = client.post(
         "/automation-rules",
         headers=headers,
         json={
             "condition_json": {"field": "amount", "op": "gt", "value": 1000},
-            "action_json": {"set_category": "cat-1"},
+            "action_json": {"set_category": category.id},
         },
     )
     assert resp.status_code == 200, resp.text
@@ -27,7 +28,7 @@ def test_rule_full_crud(client, db_session):
         headers=headers,
         json={
             "condition_json": {"field": "amount", "op": "gt", "value": 2000},
-            "action_json": {"set_category": "cat-1"},
+            "action_json": {"set_category": category.id},
             "is_active": False,
         },
     )
@@ -44,6 +45,7 @@ def test_rule_full_crud(client, db_session):
 
 def test_rule_accepts_compound_condition_list(client, db_session):
     admin = make_user(db_session, RoleEnum.admin)
+    category = make_category(db_session, "Комиссии")
     resp = client.post(
         "/automation-rules",
         headers=auth_headers(admin),
@@ -52,12 +54,28 @@ def test_rule_accepts_compound_condition_list(client, db_session):
                 {"field": "amount", "op": "lt", "value": 500},
                 {"field": "comment", "op": "contains", "value": "комиссия"},
             ],
-            "action_json": {"set_category": "cat-fee"},
+            "action_json": {"set_category": category.id},
         },
     )
     assert resp.status_code == 200
     assert isinstance(resp.json()["condition_json"], list)
     assert len(resp.json()["condition_json"]) == 2
+
+
+def test_rule_rejects_category_from_other_company(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    other_company = make_company(db_session, name="Чужая компания")
+    foreign_category = make_category(db_session, company_id=other_company.id)
+
+    resp = client.post(
+        "/automation-rules",
+        headers=auth_headers(admin),
+        json={
+            "condition_json": {"field": "amount", "op": "gt", "value": 1},
+            "action_json": {"set_category": foreign_category.id},
+        },
+    )
+    assert resp.status_code == 404
 
 
 def test_non_admin_cannot_manage_rules(client, db_session):

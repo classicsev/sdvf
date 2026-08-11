@@ -122,6 +122,29 @@ export default function Dashboard() {
           )}
         </div>
       </section>
+
+      {summary.by_company && summary.by_company.length > 1 && (
+        <section className="fp-panel">
+          <div className="fp-panel-head">
+            <h3>По компаниям</h3>
+          </div>
+          <div className="fp-ledger">
+            {summary.by_company.map((row) => (
+              <div className="ledger-row" key={row.company_id}>
+                <span className="label">{row.company_name}</span>
+                <span className="fill" />
+                <span className="value">
+                  {fmt(row.total_balance_rub, "RUB")}
+                  <span className="fp-sub-value">
+                    {" "}
+                    · приход {fmt(row.period_income_rub, "RUB")} · расход {fmt(row.period_expense_rub, "RUB")}
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

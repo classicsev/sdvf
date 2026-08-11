@@ -87,13 +87,16 @@ const BALANCE_COLUMNS = [
   { key: "available", label: "Доступно", type: "number", align: "right" },
 ];
 
-function BalancesPanel({ token }) {
+function BalancesPanel({ token, companyId, companies, showCompanyColumn }) {
   const [hideZero, setHideZero] = useState(false);
   const {
     data: balances,
     loading,
     error,
-  } = useResource(() => api.listWhBalances(token, { include_empty: true }), [token]);
+  } = useResource(
+    () => api.listWhBalances(token, { include_empty: true, company_id: companyId || undefined }),
+    [token, companyId]
+  );
   const [sortKey, setSortKey] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
 
@@ -135,6 +138,7 @@ function BalancesPanel({ token }) {
         <table className="fp-table">
           <thead>
             <tr>
+              {showCompanyColumn && <th>Компания</th>}
               {BALANCE_COLUMNS.map((col) => (
                 <th
                   key={col.key}
@@ -160,6 +164,9 @@ function BalancesPanel({ token }) {
           <tbody>
             {sortedBalances.map((b) => (
               <tr key={`${b.warehouse_id}-${b.product_variant_id}`}>
+                {showCompanyColumn && (
+                  <td>{companies.find((m) => m.company.id === b.company_id)?.company.name || "—"}</td>
+                )}
                 <td>{b.warehouse_name}</td>
                 <td>{b.product_name}</td>
                 <td className="fp-muted">{b.variant_name}</td>
@@ -174,7 +181,7 @@ function BalancesPanel({ token }) {
             ))}
             {sortedBalances.length === 0 && (
               <tr>
-                <td colSpan={6} className="fp-empty">
+                <td colSpan={showCompanyColumn ? 7 : 6} className="fp-empty">
                   Остатков пока нет
                 </td>
               </tr>
@@ -211,8 +218,23 @@ const TRANSFER_FORM_EMPTY = {
   note: "",
 };
 
-function MovementsPanel({ token, canEdit, warehouses, variants, variantsById, warehousesById }) {
-  const { data: movements, loading, error, reload } = useResource(() => api.listWhMovements(token), [token]);
+function MovementsPanel({
+  token,
+  canEdit,
+  warehouses,
+  variants,
+  variantsById,
+  warehousesById,
+  companies,
+  multiCompany,
+  companyId,
+  showCompanyColumn,
+  roleForCompany,
+}) {
+  const { data: movements, loading, error, reload } = useResource(
+    () => api.listWhMovements(token, { company_id: companyId || undefined }),
+    [token, companyId]
+  );
   const { data: employees } = useResource(() => api.listWhEmployees(token), [token]);
 
   const [modalOpen, setModalOpen] = useState(null); // "movement" | "transfer" | null
@@ -220,6 +242,23 @@ function MovementsPanel({ token, canEdit, warehouses, variants, variantsById, wa
   const [transferForm, setTransferForm] = useState(TRANSFER_FORM_EMPTY);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Вариант товара должен принадлежать той же компании, что и выбранный склад.
+  const movementVariants = (variants || []).filter(
+    (v) => !multiCompany || !form.warehouse_id || v.company_id === warehousesById[form.warehouse_id]?.company_id
+  );
+  const transferToWarehouses = (warehouses || []).filter(
+    (w) =>
+      !multiCompany ||
+      !transferForm.from_warehouse_id ||
+      w.company_id === warehousesById[transferForm.from_warehouse_id]?.company_id
+  );
+  const transferVariants = (variants || []).filter(
+    (v) =>
+      !multiCompany ||
+      !transferForm.from_warehouse_id ||
+      v.company_id === warehousesById[transferForm.from_warehouse_id]?.company_id
+  );
 
   function openMovement(direction) {
     setForm({ ...MOVEMENT_FORM_EMPTY, direction });
@@ -318,20 +357,25 @@ function MovementsPanel({ token, canEdit, warehouses, variants, variantsById, wa
           <table className="fp-table">
             <thead>
               <tr>
+                {showCompanyColumn && <th>Компания</th>}
                 <th>Дата</th>
                 <th>Склад</th>
                 <th>Товар / калибр</th>
                 <th>Тип</th>
                 <th className="right">Кол-во</th>
                 <th>Примечание</th>
-                {canEdit && <th className="fp-table-actions-col"></th>}
+                <th className="fp-table-actions-col"></th>
               </tr>
             </thead>
             <tbody>
               {(movements || []).map((m) => {
                 const variant = variantsById[m.product_variant_id];
+                const canEditRow = canEditWarehouse(roleForCompany(m.company_id));
                 return (
                   <tr key={m.id}>
+                    {showCompanyColumn && (
+                      <td>{companies.find((c) => c.company.id === m.company_id)?.company.name || "—"}</td>
+                    )}
                     <td>{fmtDate(m.date)}</td>
                     <td>{warehousesById[m.warehouse_id]?.name || "—"}</td>
                     <td>
@@ -340,19 +384,19 @@ function MovementsPanel({ token, canEdit, warehouses, variants, variantsById, wa
                     <td className="fp-muted">{DIRECTION_LABELS[m.direction] || m.direction}</td>
                     <td className="right">{m.quantity}</td>
                     <td className="fp-muted">{m.note || "—"}</td>
-                    {canEdit && (
-                      <td className="fp-table-actions-col">
+                    <td className="fp-table-actions-col">
+                      {canEditRow && (
                         <button className="fp-icon-btn" onClick={() => handleDelete(m)}>
                           <Trash2 size={14} />
                         </button>
-                      </td>
-                    )}
+                      )}
+                    </td>
                   </tr>
                 );
               })}
               {(movements || []).length === 0 && (
                 <tr>
-                  <td colSpan={7} className="fp-empty">
+                  <td colSpan={showCompanyColumn ? 8 : 7} className="fp-empty">
                     Движений пока нет
                   </td>
                 </tr>
@@ -387,7 +431,7 @@ function MovementsPanel({ token, canEdit, warehouses, variants, variantsById, wa
                 <select
                   required
                   value={form.warehouse_id}
-                  onChange={(e) => setForm((p) => ({ ...p, warehouse_id: e.target.value }))}
+                  onChange={(e) => setForm((p) => ({ ...p, warehouse_id: e.target.value, product_variant_id: "" }))}
                 >
                   <option value="" disabled>
                     Выберите склад
@@ -409,7 +453,7 @@ function MovementsPanel({ token, canEdit, warehouses, variants, variantsById, wa
                   <option value="" disabled>
                     Выберите вариант
                   </option>
-                  {(variants || []).map((v) => (
+                  {movementVariants.map((v) => (
                     <option key={v.id} value={v.id}>
                       {v.productName} · {v.name}
                     </option>
@@ -506,7 +550,7 @@ function MovementsPanel({ token, canEdit, warehouses, variants, variantsById, wa
                   <option value="" disabled>
                     Выберите вариант
                   </option>
-                  {(variants || []).map((v) => (
+                  {transferVariants.map((v) => (
                     <option key={v.id} value={v.id}>
                       {v.productName} · {v.name}
                     </option>
@@ -518,7 +562,14 @@ function MovementsPanel({ token, canEdit, warehouses, variants, variantsById, wa
                 <select
                   required
                   value={transferForm.from_warehouse_id}
-                  onChange={(e) => setTransferForm((p) => ({ ...p, from_warehouse_id: e.target.value }))}
+                  onChange={(e) =>
+                    setTransferForm((p) => ({
+                      ...p,
+                      from_warehouse_id: e.target.value,
+                      to_warehouse_id: "",
+                      product_variant_id: "",
+                    }))
+                  }
                 >
                   <option value="" disabled>
                     Выберите склад
@@ -540,11 +591,13 @@ function MovementsPanel({ token, canEdit, warehouses, variants, variantsById, wa
                   <option value="" disabled>
                     Выберите склад
                   </option>
-                  {(warehouses || []).map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.name}
-                    </option>
-                  ))}
+                  {transferToWarehouses
+                    .filter((w) => w.id !== transferForm.from_warehouse_id)
+                    .map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.name}
+                      </option>
+                    ))}
                 </select>
               </label>
               <label>
@@ -594,8 +647,23 @@ const ORDER_FORM_EMPTY = {
   lines: [{ product_variant_id: "", quantity: "" }],
 };
 
-function OrdersPanel({ token, canEdit, warehouses, variants, variantsById, warehousesById }) {
-  const { data: orders, loading, error, reload } = useResource(() => api.listOrders(token), [token]);
+function OrdersPanel({
+  token,
+  canEdit,
+  warehouses,
+  variants,
+  variantsById,
+  warehousesById,
+  companies,
+  multiCompany,
+  companyId,
+  showCompanyColumn,
+  roleForCompany,
+}) {
+  const { data: orders, loading, error, reload } = useResource(
+    () => api.listOrders(token, { company_id: companyId || undefined }),
+    [token, companyId]
+  );
   const { data: counterparties } = useResource(() => api.listCounterparties(token), [token]);
   const counterpartiesById = useMemo(
     () => Object.fromEntries((counterparties || []).map((c) => [c.id, c])),
@@ -606,6 +674,14 @@ function OrdersPanel({ token, canEdit, warehouses, variants, variantsById, wareh
   const [form, setForm] = useState(ORDER_FORM_EMPTY);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const orderWarehouseCompany = warehousesById[form.warehouse_id]?.company_id;
+  const orderCounterparties = (counterparties || []).filter(
+    (c) => !multiCompany || !form.warehouse_id || c.company_id === orderWarehouseCompany
+  );
+  const orderVariants = (variants || []).filter(
+    (v) => !multiCompany || !form.warehouse_id || v.company_id === orderWarehouseCompany
+  );
 
   // Генерация Счёт/УПД в СДВФ — Склад не хранит цену позиций (только
   // количество), поэтому цена запрашивается у пользователя в момент генерации.
@@ -744,17 +820,23 @@ function OrdersPanel({ token, canEdit, warehouses, variants, variantsById, wareh
           <table className="fp-table">
             <thead>
               <tr>
+                {showCompanyColumn && <th>Компания</th>}
                 <th>Дата</th>
                 <th>Клиент</th>
                 <th>Склад</th>
                 <th>Состав</th>
                 <th className="center">Статус</th>
-                {canEdit && <th className="fp-table-actions-col"></th>}
+                <th className="fp-table-actions-col"></th>
               </tr>
             </thead>
             <tbody>
-              {(orders || []).map((o) => (
+              {(orders || []).map((o) => {
+                const canEditRow = canEditWarehouse(roleForCompany(o.company_id));
+                return (
                 <tr key={o.id}>
+                  {showCompanyColumn && (
+                    <td>{companies.find((c) => c.company.id === o.company_id)?.company.name || "—"}</td>
+                  )}
                   <td>{o.requested_date ? fmtDate(o.requested_date) : fmtDate(o.created_at)}</td>
                   <td>{counterpartiesById[o.counterparty_id]?.name || "—"}</td>
                   <td className="fp-muted">{warehousesById[o.warehouse_id]?.name || "—"}</td>
@@ -771,7 +853,7 @@ function OrdersPanel({ token, canEdit, warehouses, variants, variantsById, wareh
                       {ORDER_STATUS_LABELS[o.status] || o.status}
                     </span>
                   </td>
-                  {canEdit && (
+                  {canEditRow && (
                     <td className="fp-table-actions-col">
                       <span className="fp-row-actions">
                         {o.status === "draft" && (
@@ -827,10 +909,11 @@ function OrdersPanel({ token, canEdit, warehouses, variants, variantsById, wareh
                     </td>
                   )}
                 </tr>
-              ))}
+                );
+              })}
               {(orders || []).length === 0 && (
                 <tr>
-                  <td colSpan={6} className="fp-empty">
+                  <td colSpan={showCompanyColumn ? 7 : 6} className="fp-empty">
                     Заказов пока нет
                   </td>
                 </tr>
@@ -852,6 +935,30 @@ function OrdersPanel({ token, canEdit, warehouses, variants, variantsById, wareh
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmit}>
               <label>
+                Склад
+                <select
+                  required
+                  value={form.warehouse_id}
+                  onChange={(e) =>
+                    setForm((p) => ({
+                      ...p,
+                      warehouse_id: e.target.value,
+                      counterparty_id: "",
+                      lines: [{ product_variant_id: "", quantity: "" }],
+                    }))
+                  }
+                >
+                  <option value="" disabled>
+                    Выберите склад
+                  </option>
+                  {(warehouses || []).map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
                 Клиент
                 <select
                   required
@@ -861,26 +968,9 @@ function OrdersPanel({ token, canEdit, warehouses, variants, variantsById, wareh
                   <option value="" disabled>
                     Выберите клиента
                   </option>
-                  {(counterparties || []).map((c) => (
+                  {orderCounterparties.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Склад
-                <select
-                  required
-                  value={form.warehouse_id}
-                  onChange={(e) => setForm((p) => ({ ...p, warehouse_id: e.target.value }))}
-                >
-                  <option value="" disabled>
-                    Выберите склад
-                  </option>
-                  {(warehouses || []).map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.name}
                     </option>
                   ))}
                 </select>
@@ -912,7 +1002,7 @@ function OrdersPanel({ token, canEdit, warehouses, variants, variantsById, wareh
                         <option value="" disabled>
                           Выберите вариант
                         </option>
-                        {(variants || []).map((v) => (
+                        {orderVariants.map((v) => (
                           <option key={v.id} value={v.id}>
                             {v.productName} · {v.name}
                           </option>
@@ -1049,32 +1139,57 @@ const RUN_FORM_EMPTY = {
   note: "",
 };
 
-function ProductionPanel({ token, canEdit, warehouses, warehousesById, variants, variantsById }) {
+function ProductionPanel({
+  token,
+  canEdit,
+  warehouses,
+  warehousesById,
+  variants,
+  variantsById,
+  companies,
+  multiCompany,
+  companyId,
+  showCompanyColumn,
+  roleForCompany,
+}) {
   const [tab, setTab] = useState("recipes");
   const { data: recipes, loading: recipesLoading, error: recipesError, reload: reloadRecipes } = useResource(
-    () => api.listRecipes(token),
-    [token]
+    () => api.listRecipes(token, { company_id: companyId || undefined }),
+    [token, companyId]
   );
   const { data: runs, loading: runsLoading, error: runsError, reload: reloadRuns } = useResource(
-    () => api.listProductionRuns(token),
-    [token]
+    () => api.listProductionRuns(token, { company_id: companyId || undefined }),
+    [token, companyId]
   );
   const recipesById = useMemo(() => Object.fromEntries((recipes || []).map((r) => [r.id, r])), [recipes]);
+  const editableCompanies = companies.filter((m) => canEditWarehouse(m.role));
 
   const [recipeModalOpen, setRecipeModalOpen] = useState(false);
   const [editingRecipeId, setEditingRecipeId] = useState(null);
   const [recipeForm, setRecipeForm] = useState(RECIPE_FORM_EMPTY);
+  const [recipeFormCompanyId, setRecipeFormCompanyId] = useState("");
   const [recipeError, setRecipeError] = useState("");
   const [savingRecipe, setSavingRecipe] = useState(false);
+
+  const recipeVariants = (variants || []).filter(
+    (v) => !multiCompany || !recipeFormCompanyId || v.company_id === recipeFormCompanyId
+  );
 
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [runForm, setRunForm] = useState(RUN_FORM_EMPTY);
   const [runError, setRunError] = useState("");
   const [savingRun, setSavingRun] = useState(false);
 
+  const runWarehouses = (warehouses || []).filter(
+    (w) =>
+      !multiCompany || !runForm.recipe_id || w.company_id === recipesById[runForm.recipe_id]?.company_id
+  );
+
   function openAddRecipe() {
     setEditingRecipeId(null);
     setRecipeForm(RECIPE_FORM_EMPTY);
+    const preselected = editableCompanies.find((m) => m.company.id === companyId) || editableCompanies[0];
+    setRecipeFormCompanyId(preselected?.company.id || "");
     setRecipeError("");
     setRecipeModalOpen(true);
   }
@@ -1086,6 +1201,7 @@ function ProductionPanel({ token, canEdit, warehouses, warehousesById, variants,
       output_variant_id: recipe.output_variant_id,
       inputs: recipe.inputs.map((i) => ({ input_variant_id: i.input_variant_id, qty_per_unit: i.qty_per_unit })),
     });
+    setRecipeFormCompanyId(recipe.company_id || "");
     setRecipeError("");
     setRecipeModalOpen(true);
   }
@@ -1118,7 +1234,7 @@ function ProductionPanel({ token, canEdit, warehouses, warehousesById, variants,
       if (editingRecipeId) {
         await api.updateRecipe(token, editingRecipeId, payload);
       } else {
-        await api.createRecipe(token, payload);
+        await api.createRecipe(token, payload, recipeFormCompanyId || undefined);
       }
       setRecipeModalOpen(false);
       reloadRecipes();
@@ -1209,16 +1325,22 @@ function ProductionPanel({ token, canEdit, warehouses, warehousesById, variants,
             <table className="fp-table">
               <thead>
                 <tr>
+                  {showCompanyColumn && <th>Компания</th>}
                   <th>Название</th>
                   <th>Выход</th>
                   <th>Состав (норма на 1 ед. выхода)</th>
                   <th>Статус</th>
-                  {canEdit && <th className="fp-table-actions-col"></th>}
+                  <th className="fp-table-actions-col"></th>
                 </tr>
               </thead>
               <tbody>
-                {(recipes || []).map((r) => (
+                {(recipes || []).map((r) => {
+                  const canEditRow = canEditWarehouse(roleForCompany(r.company_id));
+                  return (
                   <tr key={r.id}>
+                    {showCompanyColumn && (
+                      <td>{companies.find((c) => c.company.id === r.company_id)?.company.name || "—"}</td>
+                    )}
                     <td>{r.name}</td>
                     <td>
                       {variantsById[r.output_variant_id]
@@ -1238,7 +1360,7 @@ function ProductionPanel({ token, canEdit, warehouses, warehousesById, variants,
                         {r.is_active === false ? "Неактивна" : "Активна"}
                       </span>
                     </td>
-                    {canEdit && (
+                    {canEditRow && (
                       <td className="fp-table-actions-col">
                         <span className="fp-row-actions">
                           <button className="fp-icon-btn" onClick={() => openEditRecipe(r)}>
@@ -1251,10 +1373,11 @@ function ProductionPanel({ token, canEdit, warehouses, warehousesById, variants,
                       </td>
                     )}
                   </tr>
-                ))}
+                  );
+                })}
                 {(recipes || []).length === 0 && (
                   <tr>
-                    <td colSpan={5} className="fp-empty">
+                    <td colSpan={showCompanyColumn ? 6 : 5} className="fp-empty">
                       Техкарт пока нет
                     </td>
                   </tr>
@@ -1274,21 +1397,27 @@ function ProductionPanel({ token, canEdit, warehouses, warehousesById, variants,
             <table className="fp-table">
               <thead>
                 <tr>
+                  {showCompanyColumn && <th>Компания</th>}
                   <th>Дата</th>
                   <th>Склад</th>
                   <th>Техкарта</th>
                   <th className="right">Кол-во выхода</th>
-                  {canEdit && <th className="fp-table-actions-col"></th>}
+                  <th className="fp-table-actions-col"></th>
                 </tr>
               </thead>
               <tbody>
-                {(runs || []).map((run) => (
+                {(runs || []).map((run) => {
+                  const canEditRow = canEditWarehouse(roleForCompany(run.company_id));
+                  return (
                   <tr key={run.id}>
+                    {showCompanyColumn && (
+                      <td>{companies.find((c) => c.company.id === run.company_id)?.company.name || "—"}</td>
+                    )}
                     <td>{fmtDate(run.date)}</td>
                     <td>{warehousesById[run.warehouse_id]?.name || "—"}</td>
                     <td className="fp-muted">{recipesById[run.recipe_id]?.name || "—"}</td>
                     <td className="right">{run.output_qty}</td>
-                    {canEdit && (
+                    {canEditRow && (
                       <td className="fp-table-actions-col">
                         <button className="fp-icon-btn" onClick={() => handleDeleteRun(run)}>
                           <Trash2 size={14} />
@@ -1296,10 +1425,11 @@ function ProductionPanel({ token, canEdit, warehouses, warehousesById, variants,
                       </td>
                     )}
                   </tr>
-                ))}
+                  );
+                })}
                 {(runs || []).length === 0 && (
                   <tr>
-                    <td colSpan={5} className="fp-empty">
+                    <td colSpan={showCompanyColumn ? 6 : 5} className="fp-empty">
                       Партий пока нет
                     </td>
                   </tr>
@@ -1321,6 +1451,37 @@ function ProductionPanel({ token, canEdit, warehouses, warehousesById, variants,
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmitRecipe}>
+              {multiCompany && (
+                <label className="fp-span-2">
+                  Компания
+                  {editingRecipeId ? (
+                    <input
+                      type="text"
+                      disabled
+                      value={companies.find((m) => m.company.id === recipeFormCompanyId)?.company.name || ""}
+                    />
+                  ) : (
+                    <select
+                      value={recipeFormCompanyId}
+                      onChange={(e) => {
+                        setRecipeFormCompanyId(e.target.value);
+                        setRecipeForm((p) => ({
+                          ...p,
+                          output_variant_id: "",
+                          inputs: [{ input_variant_id: "", qty_per_unit: "" }],
+                        }));
+                      }}
+                      required
+                    >
+                      {editableCompanies.map((m) => (
+                        <option key={m.company.id} value={m.company.id}>
+                          {m.company.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </label>
+              )}
               <label className="fp-span-2">
                 Название
                 <input
@@ -1339,7 +1500,7 @@ function ProductionPanel({ token, canEdit, warehouses, warehousesById, variants,
                   <option value="" disabled>
                     Выберите вариант
                   </option>
-                  {(variants || []).map((v) => (
+                  {recipeVariants.map((v) => (
                     <option key={v.id} value={v.id}>
                       {v.productName} · {v.name}
                     </option>
@@ -1363,7 +1524,7 @@ function ProductionPanel({ token, canEdit, warehouses, warehousesById, variants,
                         <option value="" disabled>
                           Выберите вариант
                         </option>
-                        {(variants || []).map((v) => (
+                        {recipeVariants.map((v) => (
                           <option key={v.id} value={v.id}>
                             {v.productName} · {v.name}
                           </option>
@@ -1426,7 +1587,7 @@ function ProductionPanel({ token, canEdit, warehouses, warehousesById, variants,
                 <select
                   required
                   value={runForm.recipe_id}
-                  onChange={(e) => setRunForm((p) => ({ ...p, recipe_id: e.target.value }))}
+                  onChange={(e) => setRunForm((p) => ({ ...p, recipe_id: e.target.value, warehouse_id: "" }))}
                 >
                   <option value="" disabled>
                     Выберите техкарту
@@ -1450,7 +1611,7 @@ function ProductionPanel({ token, canEdit, warehouses, warehousesById, variants,
                   <option value="" disabled>
                     Выберите склад
                   </option>
-                  {(warehouses || []).map((w) => (
+                  {runWarehouses.map((w) => (
                     <option key={w.id} value={w.id}>
                       {w.name}
                     </option>
@@ -1502,14 +1663,34 @@ function ProductionPanel({ token, canEdit, warehouses, warehousesById, variants,
 // Справочники (склады / товары / варианты)
 // ---------------------------------------------------------------------------
 
-function CatalogPanel({ token, canEdit, warehouses, reloadWarehouses, products, reloadProducts, variants, reloadVariants }) {
+function CatalogPanel({
+  token,
+  canEdit,
+  warehouses,
+  reloadWarehouses,
+  products,
+  reloadProducts,
+  rawVariants,
+  reloadVariants,
+  companies,
+  multiCompany,
+  companyId,
+  showCompanyColumn,
+  roleForCompany,
+}) {
   const [tab, setTab] = useState("warehouses");
+  // Только склады и товары создаются напрямую с выбором компании — вариант
+  // всегда наследует компанию от выбранного товара (см. warehouse.py::create_variant).
+  const NEEDS_COMPANY_FIELD = { warehouses: true, products: true, variants: false };
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
+  const [formCompanyId, setFormCompanyId] = useState("");
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const editableCompanies = companies.filter((m) => canEditWarehouse(m.role));
 
   const config = {
     warehouses: {
@@ -1517,7 +1698,7 @@ function CatalogPanel({ token, canEdit, warehouses, reloadWarehouses, products, 
       items: warehouses,
       reload: reloadWarehouses,
       fields: [{ key: "name", label: "Название склада" }],
-      create: (payload) => api.createWarehouse(token, payload),
+      create: (payload) => api.createWarehouse(token, payload, formCompanyId || undefined),
       update: (id, payload) => api.updateWarehouse(token, id, payload),
       remove: (id) => api.deleteWarehouse(token, id),
     },
@@ -1530,16 +1711,23 @@ function CatalogPanel({ token, canEdit, warehouses, reloadWarehouses, products, 
         { key: "unit", label: "Единица измерения", default: "кг" },
         { key: "category", label: "Категория (опц.)" },
       ],
-      create: (payload) => api.createWhProduct(token, payload),
+      create: (payload) => api.createWhProduct(token, payload, formCompanyId || undefined),
       update: (id, payload) => api.updateWhProduct(token, id, payload),
       remove: (id) => api.deleteWhProduct(token, id),
     },
     variants: {
       label: "Варианты (калибры)",
-      items: variants,
+      items: rawVariants,
       reload: reloadVariants,
       fields: [
-        { key: "product_id", label: "Товар", type: "select", options: (products || []).map((p) => ({ value: p.id, label: p.name })) },
+        {
+          key: "product_id",
+          label: "Товар",
+          type: "select",
+          options: (products || [])
+            .filter((p) => !multiCompany || !companyId || p.company_id === companyId)
+            .map((p) => ({ value: p.id, label: p.name })),
+        },
         { key: "name", label: "Калибр/модификация" },
       ],
       create: (payload) => api.createWhVariant(token, payload),
@@ -1553,6 +1741,8 @@ function CatalogPanel({ token, canEdit, warehouses, reloadWarehouses, products, 
     const empty = {};
     config.fields.forEach((f) => (empty[f.key] = f.default ?? ""));
     setForm(empty);
+    const preselected = editableCompanies.find((m) => m.company.id === companyId) || editableCompanies[0];
+    setFormCompanyId(preselected?.company.id || "");
     setFormError("");
     setModalOpen(true);
   }
@@ -1562,6 +1752,7 @@ function CatalogPanel({ token, canEdit, warehouses, reloadWarehouses, products, 
     const next = {};
     config.fields.forEach((f) => (next[f.key] = item[f.key] ?? ""));
     setForm(next);
+    setFormCompanyId(item.company_id || "");
     setFormError("");
     setModalOpen(true);
   }
@@ -1621,16 +1812,22 @@ function CatalogPanel({ token, canEdit, warehouses, reloadWarehouses, products, 
         <table className="fp-table">
           <thead>
             <tr>
+              {showCompanyColumn && <th>Компания</th>}
               {config.fields.map((f) => (
                 <th key={f.key}>{f.label}</th>
               ))}
               <th>Статус</th>
-              {canEdit && <th className="fp-table-actions-col"></th>}
+              <th className="fp-table-actions-col"></th>
             </tr>
           </thead>
           <tbody>
-            {(config.items || []).map((item) => (
+            {(config.items || []).map((item) => {
+              const canEditRow = canEditWarehouse(roleForCompany(item.company_id));
+              return (
               <tr key={item.id}>
+                {showCompanyColumn && (
+                  <td>{companies.find((c) => c.company.id === item.company_id)?.company.name || "—"}</td>
+                )}
                 {config.fields.map((f) => (
                   <td key={f.key}>
                     {f.key === "product_id" ? productsById[item.product_id]?.name || "—" : item[f.key] || "—"}
@@ -1641,7 +1838,7 @@ function CatalogPanel({ token, canEdit, warehouses, reloadWarehouses, products, 
                     {item.is_active === false ? "Неактивен" : "Активен"}
                   </span>
                 </td>
-                {canEdit && (
+                {canEditRow && (
                   <td className="fp-table-actions-col">
                     <span className="fp-row-actions">
                       <button className="fp-icon-btn" onClick={() => openEdit(item)}>
@@ -1654,10 +1851,11 @@ function CatalogPanel({ token, canEdit, warehouses, reloadWarehouses, products, 
                   </td>
                 )}
               </tr>
-            ))}
+              );
+            })}
             {(config.items || []).length === 0 && (
               <tr>
-                <td colSpan={config.fields.length + 2} className="fp-empty">
+                <td colSpan={config.fields.length + 2 + (showCompanyColumn ? 1 : 0)} className="fp-empty">
                   Список пуст
                 </td>
               </tr>
@@ -1676,6 +1874,26 @@ function CatalogPanel({ token, canEdit, warehouses, reloadWarehouses, products, 
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmit}>
+              {multiCompany && NEEDS_COMPANY_FIELD[tab] && (
+                <label>
+                  Компания
+                  {editingId ? (
+                    <input
+                      type="text"
+                      disabled
+                      value={companies.find((m) => m.company.id === formCompanyId)?.company.name || ""}
+                    />
+                  ) : (
+                    <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
+                      {editableCompanies.map((m) => (
+                        <option key={m.company.id} value={m.company.id}>
+                          {m.company.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </label>
+              )}
               {config.fields.map((f) =>
                 f.type === "select" ? (
                   <label key={f.key}>
@@ -1727,12 +1945,32 @@ function CatalogPanel({ token, canEdit, warehouses, reloadWarehouses, products, 
 
 export default function Warehouse() {
   const { token, user } = useAuth();
-  const canEdit = canEditWarehouse(user.role);
-  const [section, setSection] = useState("balances");
+  const companies = user.companies || [];
+  const multiCompany = companies.length > 1;
+  const roleForCompany = (companyId) => companies.find((m) => m.company.id === companyId)?.role;
+  const canEditAnyCompany = companies.some((m) => canEditWarehouse(m.role));
+  const canEdit = canEditAnyCompany;
 
-  const { data: warehouses, reload: reloadWarehouses } = useResource(() => api.listWarehouses(token), [token]);
-  const { data: products, reload: reloadProducts } = useResource(() => api.listWhProducts(token), [token]);
-  const { data: rawVariants, reload: reloadVariants } = useResource(() => api.listWhVariants(token), [token]);
+  const [section, setSection] = useState("balances");
+  // Один общий фильтр компании на весь раздел "Склад" — все вкладки (Остатки,
+  // Движения, Заказы, Производство, Справочники) используют одни и те же
+  // склады/товары/варианты, поэтому переключать компанию для каждой вкладки
+  // отдельно не имеет смысла (см. план "Мульти-компании").
+  const [companyId, setCompanyId] = useState("");
+  const query = { company_id: companyId || undefined };
+
+  const { data: warehouses, reload: reloadWarehouses } = useResource(
+    () => api.listWarehouses(token, query),
+    [token, companyId]
+  );
+  const { data: products, reload: reloadProducts } = useResource(
+    () => api.listWhProducts(token, query),
+    [token, companyId]
+  );
+  const { data: rawVariants, reload: reloadVariants } = useResource(
+    () => api.listWhVariants(token, query),
+    [token, companyId]
+  );
 
   const productsById = useMemo(() => Object.fromEntries((products || []).map((p) => [p.id, p])), [products]);
   const warehousesById = useMemo(() => Object.fromEntries((warehouses || []).map((w) => [w.id, w])), [warehouses]);
@@ -1741,6 +1979,21 @@ export default function Warehouse() {
     [rawVariants, productsById]
   );
   const variantsById = useMemo(() => Object.fromEntries(variants.map((v) => [v.id, v])), [variants]);
+
+  const showCompanyColumn = multiCompany && !companyId;
+  const shared = {
+    token,
+    companies,
+    multiCompany,
+    companyId,
+    showCompanyColumn,
+    roleForCompany,
+    warehouses,
+    warehousesById,
+    products,
+    variants,
+    variantsById,
+  };
 
   return (
     <div className="fp-dash">
@@ -1753,48 +2006,29 @@ export default function Warehouse() {
             </button>
           ))}
         </div>
+        {multiCompany && (
+          <select value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
+            <option value="">Все компании</option>
+            {companies.map((m) => (
+              <option key={m.company.id} value={m.company.id}>
+                {m.company.name}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
-      {section === "balances" && <BalancesPanel token={token} />}
-      {section === "movements" && (
-        <MovementsPanel
-          token={token}
-          canEdit={canEdit}
-          warehouses={warehouses}
-          variants={variants}
-          variantsById={variantsById}
-          warehousesById={warehousesById}
-        />
-      )}
-      {section === "orders" && (
-        <OrdersPanel
-          token={token}
-          canEdit={canEdit}
-          warehouses={warehouses}
-          variants={variants}
-          variantsById={variantsById}
-          warehousesById={warehousesById}
-        />
-      )}
-      {section === "production" && (
-        <ProductionPanel
-          token={token}
-          canEdit={canEdit}
-          warehouses={warehouses}
-          warehousesById={warehousesById}
-          variants={variants}
-          variantsById={variantsById}
-        />
-      )}
+      {section === "balances" && <BalancesPanel {...shared} />}
+      {section === "movements" && <MovementsPanel {...shared} canEdit={canEdit} />}
+      {section === "orders" && <OrdersPanel {...shared} canEdit={canEdit} />}
+      {section === "production" && <ProductionPanel {...shared} canEdit={canEdit} />}
       {section === "catalog" && (
         <CatalogPanel
-          token={token}
+          {...shared}
           canEdit={canEdit}
-          warehouses={warehouses}
           reloadWarehouses={reloadWarehouses}
-          products={products}
           reloadProducts={reloadProducts}
-          variants={rawVariants}
+          rawVariants={rawVariants}
           reloadVariants={reloadVariants}
         />
       )}

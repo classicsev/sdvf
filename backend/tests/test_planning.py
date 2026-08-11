@@ -70,6 +70,25 @@ def test_planning_feeds_payment_calendar_report(client, db_session):
     assert q1["deviation"] == -23500.0  # fact - plan
 
 
+def test_create_planning_rejects_category_from_other_company(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    resp = client.post("/companies", json={"name": "Компания Б"}, headers=headers)
+    assert resp.status_code == 201, resp.text
+    company_b = resp.json()["company"]["id"]
+
+    # Статья принадлежит основной компании admin, а не company_b.
+    category = make_category(db_session, "Аренда", TxTypeEnum.expense, company_id=admin.company_id)
+
+    resp = client.post(
+        "/planning",
+        params={"company_id": company_b},
+        headers=headers,
+        json={"category_id": category.id, "amount": 1000, "scheduled_date": "2026-07-01"},
+    )
+    assert resp.status_code == 404
+
+
 def test_malformed_uuid_on_planning_returns_404(client, db_session):
     admin = make_user(db_session, RoleEnum.admin)
     resp = client.patch(

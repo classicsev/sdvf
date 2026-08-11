@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.routers import (
@@ -46,6 +49,10 @@ app.include_router(api_keys.router)
 app.include_router(warehouse.router)
 app.include_router(orders.router)
 app.include_router(production.router)
+
+MEDIA_DIR = Path(__file__).resolve().parent.parent / "media"
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
 
 
 @app.get("/health")

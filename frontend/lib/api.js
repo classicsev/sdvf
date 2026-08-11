@@ -95,6 +95,21 @@ export const api = {
   login: (email, password) => request("/auth/login", { method: "POST", body: { email, password } }),
   registerCompany: (payload) => request("/auth/register-company", { method: "POST", body: payload }),
   me: (token) => request("/auth/me", { token }),
+  updateMyProfile: (token, payload) => request("/auth/me/profile", { method: "PATCH", token, body: payload }),
+  uploadMyAvatar: async (token, file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(`${API_BASE}/auth/me/avatar`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new ApiError(data?.detail || `Ошибка запроса (${res.status})`, res.status);
+    }
+    return data;
+  },
   verifyEmail: (token) => request("/auth/verify-email", { query: { token } }),
   resendVerification: (token) => request("/auth/resend-verification", { method: "POST", token }),
 
@@ -107,13 +122,31 @@ export const api = {
   updateCompanyModules: (token, payload) =>
     request("/companies/me/modules", { method: "PATCH", token, body: payload }),
 
-  listUsers: (token) => request("/users", { token }),
-  createUser: (token, payload) => request("/users", { method: "POST", token, body: payload }),
-  updateUser: (token, id, payload) => request(`/users/${id}`, { method: "PATCH", token, body: payload }),
-  deleteUser: (token, id) => request(`/users/${id}`, { method: "DELETE", token }),
+  // Мульти-компании — любая компания пользователя, не только "первая" (см.
+  // план "Мульти-компании"). Список бэкенд уже отдаёт при логине (user.companies),
+  // listCompanies тут для повторного запроса после изменений (создание/приглашение).
+  listCompanies: (token) => request("/companies", { token }),
+  createCompany: (token, payload) => request("/companies", { method: "POST", token, body: payload }),
+  updateCompanyModulesFor: (token, companyId, payload) =>
+    request(`/companies/${companyId}/modules`, { method: "PATCH", token, body: payload }),
+  addCompanyMember: (token, companyId, payload) =>
+    request(`/companies/${companyId}/members`, { method: "POST", token, body: payload }),
+  updateCompanyMember: (token, companyId, userId, payload) =>
+    request(`/companies/${companyId}/members/${userId}`, { method: "PATCH", token, body: payload }),
+  removeCompanyMember: (token, companyId, userId) =>
+    request(`/companies/${companyId}/members/${userId}`, { method: "DELETE", token }),
+
+  listUsers: (token, query) => request("/users", { token, query }),
+  createUser: (token, payload, companyId) =>
+    request("/users", { method: "POST", token, body: payload, query: { company_id: companyId } }),
+  updateUser: (token, id, payload, companyId) =>
+    request(`/users/${id}`, { method: "PATCH", token, body: payload, query: { company_id: companyId } }),
+  deleteUser: (token, id, companyId) =>
+    request(`/users/${id}`, { method: "DELETE", token, query: { company_id: companyId } }),
 
   listTransactions: (token, query) => request("/transactions", { token, query }),
-  createTransaction: (token, payload) => request("/transactions", { method: "POST", token, body: payload }),
+  createTransaction: (token, payload, companyId) =>
+    request("/transactions", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updateTransaction: (token, id, payload) =>
     request(`/transactions/${id}`, { method: "PATCH", token, body: payload }),
   deleteTransaction: (token, id) => request(`/transactions/${id}`, { method: "DELETE", token }),
@@ -123,54 +156,61 @@ export const api = {
   cashflowReport: (token, query) => request("/reports/cashflow", { token, query }),
   pnlReport: (token, query) => request("/reports/pnl", { token, query }),
   balanceReport: (token, query) => request("/reports/balance", { token, query }),
-  debtReport: (token) => request("/reports/debt", { token }),
+  debtReport: (token, query) => request("/reports/debt", { token, query }),
   profitabilityReport: (token, query) => request("/reports/profitability", { token, query }),
   paymentCalendar: (token, query) => request("/reports/payment-calendar", { token, query }),
 
-  listCategories: (token) => request("/categories", { token }),
-  createCategory: (token, payload) => request("/categories", { method: "POST", token, body: payload }),
+  listCategories: (token, query) => request("/categories", { token, query }),
+  createCategory: (token, payload, companyId) =>
+    request("/categories", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updateCategory: (token, id, payload) => request(`/categories/${id}`, { method: "PATCH", token, body: payload }),
   deleteCategory: (token, id) => request(`/categories/${id}`, { method: "DELETE", token }),
 
-  listProjects: (token) => request("/projects", { token }),
-  createProject: (token, payload) => request("/projects", { method: "POST", token, body: payload }),
+  listProjects: (token, query) => request("/projects", { token, query }),
+  createProject: (token, payload, companyId) =>
+    request("/projects", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updateProject: (token, id, payload) => request(`/projects/${id}`, { method: "PATCH", token, body: payload }),
   deleteProject: (token, id) => request(`/projects/${id}`, { method: "DELETE", token }),
 
-  listAccounts: (token) => request("/accounts", { token }),
-  createAccount: (token, payload) => request("/accounts", { method: "POST", token, body: payload }),
+  listAccounts: (token, query) => request("/accounts", { token, query }),
+  createAccount: (token, payload, companyId) =>
+    request("/accounts", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updateAccount: (token, id, payload) => request(`/accounts/${id}`, { method: "PATCH", token, body: payload }),
   deleteAccount: (token, id) => request(`/accounts/${id}`, { method: "DELETE", token }),
 
-  listCounterparties: (token) => request("/counterparties", { token }),
-  createCounterparty: (token, payload) => request("/counterparties", { method: "POST", token, body: payload }),
+  listCounterparties: (token, query) => request("/counterparties", { token, query }),
+  createCounterparty: (token, payload, companyId) =>
+    request("/counterparties", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updateCounterparty: (token, id, payload) =>
     request(`/counterparties/${id}`, { method: "PATCH", token, body: payload }),
   deleteCounterparty: (token, id) => request(`/counterparties/${id}`, { method: "DELETE", token }),
 
   listPlanning: (token, query) => request("/planning", { token, query }),
-  createPlanning: (token, payload) => request("/planning", { method: "POST", token, body: payload }),
+  createPlanning: (token, payload, companyId) =>
+    request("/planning", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updatePlanning: (token, id, payload) => request(`/planning/${id}`, { method: "PATCH", token, body: payload }),
   deletePlanning: (token, id) => request(`/planning/${id}`, { method: "DELETE", token }),
 
-  listEmployees: (token) => request("/payroll/employees", { token }),
-  createEmployee: (token, payload) => request("/payroll/employees", { method: "POST", token, body: payload }),
+  listEmployees: (token, query) => request("/payroll/employees", { token, query }),
+  createEmployee: (token, payload, companyId) =>
+    request("/payroll/employees", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updateEmployee: (token, id, payload) =>
     request(`/payroll/employees/${id}`, { method: "PATCH", token, body: payload }),
   deleteEmployee: (token, id) => request(`/payroll/employees/${id}`, { method: "DELETE", token }),
 
   listAccruals: (token, query) => request("/payroll/accruals", { token, query }),
   createAccrual: (token, payload) => request("/payroll/accruals", { method: "POST", token, body: payload }),
-  listPayments: (token) => request("/payroll/payments", { token }),
+  listPayments: (token, query) => request("/payroll/payments", { token, query }),
   createPayment: (token, payload) => request("/payroll/payments", { method: "POST", token, body: payload }),
   payrollSummary: (token, query) => request("/payroll/summary-for-viewer", { token, query }),
 
-  listAutomationRules: (token) => request("/automation-rules", { token }),
-  createAutomationRule: (token, payload) => request("/automation-rules", { method: "POST", token, body: payload }),
+  listAutomationRules: (token, query) => request("/automation-rules", { token, query }),
+  createAutomationRule: (token, payload, companyId) =>
+    request("/automation-rules", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updateAutomationRule: (token, id, payload) =>
     request(`/automation-rules/${id}`, { method: "PATCH", token, body: payload }),
   deleteAutomationRule: (token, id) => request(`/automation-rules/${id}`, { method: "DELETE", token }),
-  listIntegrations: (token) => request("/integrations", { token }),
+  listIntegrations: (token, query) => request("/integrations", { token, query }),
   connectIntegration: (token, id, payload) =>
     request(`/integrations/${id}/connect`, { method: "POST", token, body: payload }),
   disconnectIntegration: (token, id) => request(`/integrations/${id}/disconnect`, { method: "POST", token }),
@@ -187,14 +227,16 @@ export const api = {
   createApiKey: (token, payload) => request("/api-keys", { method: "POST", token, body: payload }),
   revokeApiKey: (token, id) => request(`/api-keys/${id}`, { method: "DELETE", token }),
 
-  listWarehouses: (token) => request("/warehouse/warehouses", { token }),
-  createWarehouse: (token, payload) => request("/warehouse/warehouses", { method: "POST", token, body: payload }),
+  listWarehouses: (token, query) => request("/warehouse/warehouses", { token, query }),
+  createWarehouse: (token, payload, companyId) =>
+    request("/warehouse/warehouses", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updateWarehouse: (token, id, payload) =>
     request(`/warehouse/warehouses/${id}`, { method: "PATCH", token, body: payload }),
   deleteWarehouse: (token, id) => request(`/warehouse/warehouses/${id}`, { method: "DELETE", token }),
 
-  listWhProducts: (token) => request("/warehouse/products", { token }),
-  createWhProduct: (token, payload) => request("/warehouse/products", { method: "POST", token, body: payload }),
+  listWhProducts: (token, query) => request("/warehouse/products", { token, query }),
+  createWhProduct: (token, payload, companyId) =>
+    request("/warehouse/products", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updateWhProduct: (token, id, payload) =>
     request(`/warehouse/products/${id}`, { method: "PATCH", token, body: payload }),
   deleteWhProduct: (token, id) => request(`/warehouse/products/${id}`, { method: "DELETE", token }),
@@ -228,8 +270,9 @@ export const api = {
     request(`/orders/${id}/generate-utd`, { method: "POST", token, body: payload }),
   openSdvfPdf: (token, id, doc) => openPdf(`/orders/${id}/sdvf-pdf`, { token, query: { doc } }),
 
-  listRecipes: (token) => request("/production/recipes", { token }),
-  createRecipe: (token, payload) => request("/production/recipes", { method: "POST", token, body: payload }),
+  listRecipes: (token, query) => request("/production/recipes", { token, query }),
+  createRecipe: (token, payload, companyId) =>
+    request("/production/recipes", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updateRecipe: (token, id, payload) => request(`/production/recipes/${id}`, { method: "PATCH", token, body: payload }),
   deleteRecipe: (token, id) => request(`/production/recipes/${id}`, { method: "DELETE", token }),
   listProductionRuns: (token, query) => request("/production/runs", { token, query }),

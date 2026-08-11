@@ -21,3 +21,6 @@ frontend/npm-debug.log*
 
 # Claude Code local config (personal, not shared)
 .claude/settings.local.json
+
+# Загруженные пользователями файлы (аватарки и т.п.) — не часть кодовой базы
+backend/media/

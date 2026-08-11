@@ -62,7 +62,12 @@ function describeCondition(condition) {
 
 const AMO_CONNECT_EMPTY = { subdomain: "", client_id: "", client_secret: "", access_token: "", refresh_token: "" };
 
-function IntegrationsPanel({ token, integrations, accounts, reload }) {
+function IntegrationsPanel({ token, integrations, accounts, reload, companyFilter }) {
+  const { user } = useAuth();
+  const companies = user.companies || [];
+  const multiCompany = companies.length > 1;
+  const showCompanyColumn = multiCompany && !companyFilter;
+
   const [connectTarget, setConnectTarget] = useState(null);
   const [connectTokenValue, setConnectTokenValue] = useState("");
   const [amoConnectForm, setAmoConnectForm] = useState(AMO_CONNECT_EMPTY);
@@ -155,6 +160,7 @@ function IntegrationsPanel({ token, integrations, accounts, reload }) {
         <table className="fp-table">
           <thead>
             <tr>
+              {showCompanyColumn && <th>Компания</th>}
               <th>Название</th>
               <th>Тип</th>
               <th className="center">Статус</th>
@@ -165,6 +171,9 @@ function IntegrationsPanel({ token, integrations, accounts, reload }) {
           <tbody>
             {(integrations || []).map((i) => (
               <tr key={i.id}>
+                {showCompanyColumn && (
+                  <td>{companies.find((m) => m.company.id === i.company_id)?.company.name || "—"}</td>
+                )}
                 <td>
                   <Plug size={13} style={{ marginRight: 6, verticalAlign: "middle" }} />
                   {PROVIDER_LABELS[i.provider] || i.provider}
@@ -200,7 +209,7 @@ function IntegrationsPanel({ token, integrations, accounts, reload }) {
             ))}
             {(integrations || []).length === 0 && (
               <tr>
-                <td colSpan={5} className="fp-empty">
+                <td colSpan={showCompanyColumn ? 6 : 5} className="fp-empty">
                   Интеграций пока нет
                 </td>
               </tr>
@@ -316,13 +325,15 @@ function IntegrationsPanel({ token, integrations, accounts, reload }) {
                   <option value="" disabled>
                     Выберите счёт
                   </option>
-                  {(accounts || []).map((a) => (
-                    <option key={a.id} value={a.id} disabled={syncTarget.provider !== "amocrm" && !a.account_number}>
-                      {syncTarget.provider === "amocrm"
-                        ? a.name
-                        : `${a.name} ${a.account_number ? `(${a.account_number})` : "— нет номера счёта"}`}
-                    </option>
-                  ))}
+                  {(accounts || [])
+                    .filter((a) => !multiCompany || a.company_id === syncTarget.company_id)
+                    .map((a) => (
+                      <option key={a.id} value={a.id} disabled={syncTarget.provider !== "amocrm" && !a.account_number}>
+                        {syncTarget.provider === "amocrm"
+                          ? a.name
+                          : `${a.name} ${a.account_number ? `(${a.account_number})` : "— нет номера счёта"}`}
+                      </option>
+                    ))}
                 </select>
               </label>
               <label className={syncTarget.provider === "amocrm" ? "fp-span-2" : ""}>
@@ -392,11 +403,25 @@ function IntegrationsPanel({ token, integrations, accounts, reload }) {
 }
 
 export default function Automation() {
-  const { token } = useAuth();
-  const { data: rules, loading, error, reload } = useResource(() => api.listAutomationRules(token), [token]);
+  const { token, user } = useAuth();
+  const companies = user.companies || [];
+  const multiCompany = companies.length > 1;
+  const roleForCompany = (companyId) => companies.find((m) => m.company.id === companyId)?.role;
+  const editableCompanies = companies.filter((m) => m.role === "admin");
+  const [companyId, setCompanyId] = useState("");
+  const query = { company_id: companyId || undefined };
+  const showCompanyColumn = multiCompany && !companyId;
+
+  const { data: rules, loading, error, reload } = useResource(
+    () => api.listAutomationRules(token, query),
+    [token, companyId]
+  );
   const { data: categories } = useResource(() => api.listCategories(token), [token]);
   const { data: projects } = useResource(() => api.listProjects(token), [token]);
-  const { data: integrations, reload: reloadIntegrations } = useResource(() => api.listIntegrations(token), [token]);
+  const { data: integrations, reload: reloadIntegrations } = useResource(
+    () => api.listIntegrations(token, query),
+    [token, companyId]
+  );
   const { data: accounts } = useResource(() => api.listAccounts(token), [token]);
 
   const categoriesById = useMemo(() => Object.fromEntries((categories || []).map((c) => [c.id, c])), [categories]);
@@ -404,11 +429,21 @@ export default function Automation() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(FORM_EMPTY);
+  const [formCompanyId, setFormCompanyId] = useState("");
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const selectableCategories = (categories || []).filter(
+    (c) => !multiCompany || !formCompanyId || c.company_id === formCompanyId
+  );
+  const selectableProjects = (projects || []).filter(
+    (p) => !multiCompany || !formCompanyId || p.company_id === formCompanyId
+  );
+
   function openAdd() {
     setForm(FORM_EMPTY);
+    const preselected = editableCompanies.find((m) => m.company.id === companyId) || editableCompanies[0];
+    setFormCompanyId(preselected?.company.id || "");
     setFormError("");
     setModalOpen(true);
   }
@@ -443,11 +478,15 @@ export default function Automation() {
         value: c.field === "amount" ? Number(c.value) : c.value,
       }));
 
-      await api.createAutomationRule(token, {
-        condition_json: condition_json.length === 1 ? condition_json[0] : condition_json,
-        action_json,
-        is_active: true,
-      });
+      await api.createAutomationRule(
+        token,
+        {
+          condition_json: condition_json.length === 1 ? condition_json[0] : condition_json,
+          action_json,
+          is_active: true,
+        },
+        formCompanyId || undefined
+      );
       setModalOpen(false);
       reload();
     } catch (err) {
@@ -484,9 +523,21 @@ export default function Automation() {
     <div className="fp-dash">
       <div className="fp-tabs-row">
         <h3 style={{ margin: 0, fontFamily: "'Fraunces', serif" }}>Правила автоматизации</h3>
-        <button type="button" className="fp-btn-tiny" onClick={openAdd}>
-          <Plus size={13} /> Новое правило
-        </button>
+        <div style={{ display: "flex", gap: 10 }}>
+          {multiCompany && (
+            <select value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
+              <option value="">Все компании</option>
+              {companies.map((m) => (
+                <option key={m.company.id} value={m.company.id}>
+                  {m.company.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <button type="button" className="fp-btn-tiny" onClick={openAdd}>
+            <Plus size={13} /> Новое правило
+          </button>
+        </div>
       </div>
 
       {error && <div className="fp-error-banner">{error}</div>}
@@ -498,6 +549,7 @@ export default function Automation() {
           <table className="fp-table">
             <thead>
               <tr>
+                {showCompanyColumn && <th>Компания</th>}
                 <th>Условие</th>
                 <th>Действие</th>
                 <th className="center">Активно</th>
@@ -505,8 +557,13 @@ export default function Automation() {
               </tr>
             </thead>
             <tbody>
-              {(rules || []).map((rule) => (
+              {(rules || []).map((rule) => {
+                const canEditRow = roleForCompany(rule.company_id) === "admin";
+                return (
                 <tr key={rule.id}>
+                  {showCompanyColumn && (
+                    <td>{companies.find((m) => m.company.id === rule.company_id)?.company.name || "—"}</td>
+                  )}
                   <td>{describeCondition(rule.condition_json)}</td>
                   <td className="fp-muted">
                     {rule.action_json?.set_category && `Статья → ${categoriesById[rule.action_json.set_category]?.name || "?"}`}
@@ -515,20 +572,28 @@ export default function Automation() {
                   </td>
                   <td className="center">
                     <label className="fp-mini-switch">
-                      <input type="checkbox" checked={rule.is_active} onChange={() => toggleActive(rule)} />
+                      <input
+                        type="checkbox"
+                        checked={rule.is_active}
+                        disabled={!canEditRow}
+                        onChange={() => toggleActive(rule)}
+                      />
                       <span />
                     </label>
                   </td>
                   <td className="fp-table-actions-col">
-                    <button className="fp-icon-btn" onClick={() => handleDelete(rule)}>
-                      <Trash2 size={14} />
-                    </button>
+                    {canEditRow && (
+                      <button className="fp-icon-btn" onClick={() => handleDelete(rule)}>
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {(rules || []).length === 0 && (
                 <tr>
-                  <td colSpan={4} className="fp-empty">
+                  <td colSpan={showCompanyColumn ? 5 : 4} className="fp-empty">
                     Правил пока нет
                   </td>
                 </tr>
@@ -542,7 +607,13 @@ export default function Automation() {
         </p>
       </div>
 
-      <IntegrationsPanel token={token} integrations={integrations} accounts={accounts} reload={reloadIntegrations} />
+      <IntegrationsPanel
+        token={token}
+        integrations={integrations}
+        accounts={accounts}
+        reload={reloadIntegrations}
+        companyFilter={companyId}
+      />
 
       {modalOpen && (
         <div className="fp-modal-backdrop" onClick={() => setModalOpen(false)}>
@@ -554,6 +625,25 @@ export default function Automation() {
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmit}>
+              {multiCompany && (
+                <label className="fp-span-2">
+                  Компания
+                  <select
+                    value={formCompanyId}
+                    onChange={(e) => {
+                      setFormCompanyId(e.target.value);
+                      setForm((p) => ({ ...p, set_category: "", set_project: "" }));
+                    }}
+                    required
+                  >
+                    {editableCompanies.map((m) => (
+                      <option key={m.company.id} value={m.company.id}>
+                        {m.company.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <div className="fp-span-2">
                 <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>
                   Условия (все должны совпасть)
@@ -615,7 +705,7 @@ export default function Automation() {
                 Установить статью
                 <select value={form.set_category} onChange={(e) => setForm((p) => ({ ...p, set_category: e.target.value }))}>
                   <option value="">— не менять —</option>
-                  {(categories || []).map((c) => (
+                  {selectableCategories.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
                     </option>
@@ -626,7 +716,7 @@ export default function Automation() {
                 Установить проект
                 <select value={form.set_project} onChange={(e) => setForm((p) => ({ ...p, set_project: e.target.value }))}>
                   <option value="">— не менять —</option>
-                  {(projects || []).map((p) => (
+                  {selectableProjects.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
                     </option>

@@ -7,7 +7,7 @@ from app.config import settings
 from app.database import get_db
 from app.integrations import oauth_providers
 from app.integrations.oauth_providers import OAuthError
-from app.models import Company, OAuthAccount, RoleEnum, User
+from app.models import Company, CompanyMember, OAuthAccount, RoleEnum, User
 
 router = APIRouter(prefix="/auth/oauth", tags=["oauth"])
 
@@ -100,16 +100,17 @@ def oauth_callback(
         db.flush()
 
         user = User(
-            company_id=company.id,
             email=profile.get("email"),
             full_name=profile["full_name"],
             hashed_password=None,
-            role=RoleEnum.admin,
             # Провайдер уже подтвердил личность (и email, если он есть) за нас —
             # незачем гонять человека ещё и через self-hosted письмо.
             email_verified=True,
         )
         db.add(user)
+        db.flush()
+        db.add(CompanyMember(user_id=user.id, company_id=company.id, role=RoleEnum.admin))
+        company.owner_user_id = user.id
         db.flush()
 
         oauth_account = OAuthAccount(user_id=user.id, provider=provider, provider_user_id=profile["provider_user_id"])
@@ -117,5 +118,5 @@ def oauth_callback(
         db.commit()
         db.refresh(user)
 
-    token = create_access_token({"sub": user.id, "role": user.role.value})
+    token = create_access_token({"sub": user.id})
     return RedirectResponse(f"{settings.frontend_base_url}/oauth-callback#token={token}")

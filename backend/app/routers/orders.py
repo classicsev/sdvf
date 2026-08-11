@@ -1,15 +1,23 @@
 from datetime import datetime
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.audit import log_action
-from app.auth import get_current_user, require_module, require_roles
+from app.auth import (
+    check_company_role,
+    get_accessible_company_ids,
+    get_current_user,
+    require_module,
+    resolve_company_ids,
+)
 from app.config import settings
 from app.database import get_db
 from app.integrations.sdvf import SdvfClient, SdvfError
 from app.models import (
+    Company,
     Counterparty,
     Order,
     OrderLine,
@@ -22,7 +30,7 @@ from app.models import (
     Warehouse,
 )
 from app.schemas import OrderCreateIn, OrderLineIn, OrderOut, OrderUpdateIn, SdvfDocumentRefOut, SdvfGenerateDocumentIn
-from app.utils import get_or_404
+from app.utils import get_or_404_accessible
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -35,8 +43,8 @@ OPEN_STATUSES = (OrderStatusEnum.draft, OrderStatusEnum.reserved)
 WAREHOUSE_MODULE = Depends(require_module("warehouse"))
 
 
-def _get_order_or_404(db: Session, order_id: str, company_id: str) -> Order:
-    return get_or_404(db, Order, order_id, "Заказ не найден", company_id=company_id)
+def _get_order_or_404(db: Session, user: User, order_id: str) -> Order:
+    return get_or_404_accessible(db, Order, order_id, get_accessible_company_ids(db, user), "Заказ не найден")
 
 
 @router.get("", response_model=list[OrderOut], dependencies=[WAREHOUSE_MODULE])
@@ -44,10 +52,12 @@ def list_orders(
     status_filter: str | None = None,
     warehouse_id: str | None = None,
     counterparty_id: str | None = None,
+    company_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    query = db.query(Order).filter(Order.company_id == user.company_id)
+    company_ids = resolve_company_ids(db, user, company_id)
+    query = db.query(Order).filter(Order.company_id.in_(company_ids))
     if status_filter:
         query = query.filter(Order.status == status_filter)
     if warehouse_id:
@@ -57,19 +67,29 @@ def list_orders(
     return query.order_by(Order.created_at.desc()).all()
 
 
-@router.post("", response_model=OrderOut, dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE])
+@router.post("", response_model=OrderOut, dependencies=[WAREHOUSE_MODULE])
 def create_order(payload: OrderCreateIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    get_or_404(db, Counterparty, payload.counterparty_id, "Контрагент не найден", company_id=user.company_id)
-    get_or_404(db, Warehouse, payload.warehouse_id, "Склад не найден", company_id=user.company_id)
+    # Компания заказа определяется по складу — контрагент и товары должны
+    # принадлежать той же компании.
+    accessible = get_accessible_company_ids(db, user)
+    warehouse = get_or_404_accessible(db, Warehouse, payload.warehouse_id, accessible, "Склад не найден")
+    check_company_role(db, user, warehouse.company_id, WAREHOUSE_EDITORS)
+    counterparty = get_or_404_accessible(db, Counterparty, payload.counterparty_id, accessible, "Контрагент не найден")
+    if counterparty.company_id != warehouse.company_id:
+        raise HTTPException(status_code=400, detail="Контрагент принадлежит другой компании")
     if not payload.lines:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нужна хотя бы одна позиция")
     for line in payload.lines:
-        get_or_404(db, ProductVariant, line.product_variant_id, "Вариант товара не найден", company_id=user.company_id)
+        variant = get_or_404_accessible(
+            db, ProductVariant, line.product_variant_id, accessible, "Вариант товара не найден"
+        )
+        if variant.company_id != warehouse.company_id:
+            raise HTTPException(status_code=400, detail="Вариант товара принадлежит другой компании")
         if line.quantity <= 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Количество должно быть больше нуля")
 
     order = Order(
-        company_id=user.company_id,
+        company_id=warehouse.company_id,
         counterparty_id=payload.counterparty_id,
         warehouse_id=payload.warehouse_id,
         status=OrderStatusEnum.draft,
@@ -78,7 +98,7 @@ def create_order(payload: OrderCreateIn, db: Session = Depends(get_db), user: Us
         created_by=user.id,
     )
     order.lines = [
-        OrderLine(company_id=user.company_id, product_variant_id=l.product_variant_id, quantity=l.quantity)
+        OrderLine(company_id=warehouse.company_id, product_variant_id=l.product_variant_id, quantity=l.quantity)
         for l in payload.lines
     ]
     db.add(order)
@@ -88,25 +108,30 @@ def create_order(payload: OrderCreateIn, db: Session = Depends(get_db), user: Us
     return order
 
 
-@router.patch(
-    "/{order_id}", response_model=OrderOut, dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE]
-)
+@router.patch("/{order_id}", response_model=OrderOut, dependencies=[WAREHOUSE_MODULE])
 def update_order(
     order_id: str, payload: OrderUpdateIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    order = _get_order_or_404(db, order_id, user.company_id)
+    order = _get_order_or_404(db, user, order_id)
+    check_company_role(db, user, order.company_id, WAREHOUSE_EDITORS)
     if order.status not in OPEN_STATUSES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Заказ закрыт, изменения недоступны")
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    if changes.get("counterparty_id"):
+        get_or_404_accessible(
+            db, Counterparty, changes["counterparty_id"], [order.company_id], "Контрагент не найден"
+        )
+    for k, v in changes.items():
         setattr(order, k, v)
     db.commit()
     db.refresh(order)
     return order
 
 
-@router.delete("/{order_id}", dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE])
+@router.delete("/{order_id}", dependencies=[WAREHOUSE_MODULE])
 def delete_order(order_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    order = _get_order_or_404(db, order_id, user.company_id)
+    order = _get_order_or_404(db, user, order_id)
+    check_company_role(db, user, order.company_id, WAREHOUSE_EDITORS)
     if order.status != OrderStatusEnum.draft:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Удалить можно только черновик — остальные отменяйте"
@@ -116,24 +141,25 @@ def delete_order(order_id: str, db: Session = Depends(get_db), user: User = Depe
     return {"deleted": True}
 
 
-@router.post(
-    "/{order_id}/lines",
-    response_model=OrderOut,
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.post("/{order_id}/lines", response_model=OrderOut, dependencies=[WAREHOUSE_MODULE])
 def add_order_line(
     order_id: str, payload: OrderLineIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    order = _get_order_or_404(db, order_id, user.company_id)
+    order = _get_order_or_404(db, user, order_id)
+    check_company_role(db, user, order.company_id, WAREHOUSE_EDITORS)
     if order.status != OrderStatusEnum.draft:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Менять состав можно только в черновике")
-    get_or_404(db, ProductVariant, payload.product_variant_id, "Вариант товара не найден", company_id=user.company_id)
+    variant = get_or_404_accessible(
+        db, ProductVariant, payload.product_variant_id, get_accessible_company_ids(db, user), "Вариант товара не найден"
+    )
+    if variant.company_id != order.company_id:
+        raise HTTPException(status_code=400, detail="Вариант товара принадлежит другой компании")
     if payload.quantity <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Количество должно быть больше нуля")
 
     db.add(
         OrderLine(
-            company_id=user.company_id,
+            company_id=order.company_id,
             order_id=order.id,
             product_variant_id=payload.product_variant_id,
             quantity=payload.quantity,
@@ -144,18 +170,15 @@ def add_order_line(
     return order
 
 
-@router.delete(
-    "/{order_id}/lines/{line_id}",
-    response_model=OrderOut,
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.delete("/{order_id}/lines/{line_id}", response_model=OrderOut, dependencies=[WAREHOUSE_MODULE])
 def remove_order_line(
     order_id: str, line_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    order = _get_order_or_404(db, order_id, user.company_id)
+    order = _get_order_or_404(db, user, order_id)
+    check_company_role(db, user, order.company_id, WAREHOUSE_EDITORS)
     if order.status != OrderStatusEnum.draft:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Менять состав можно только в черновике")
-    line = get_or_404(db, OrderLine, line_id, "Позиция не найдена", company_id=user.company_id)
+    line = get_or_404_accessible(db, OrderLine, line_id, get_accessible_company_ids(db, user), "Позиция не найдена")
     if line.order_id != order.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Позиция не найдена")
 
@@ -178,33 +201,24 @@ def _transition(db: Session, order: Order, allowed: tuple, new_status: OrderStat
     return order
 
 
-@router.post(
-    "/{order_id}/reserve",
-    response_model=OrderOut,
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.post("/{order_id}/reserve", response_model=OrderOut, dependencies=[WAREHOUSE_MODULE])
 def reserve_order(order_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    order = _get_order_or_404(db, order_id, user.company_id)
+    order = _get_order_or_404(db, user, order_id)
+    check_company_role(db, user, order.company_id, WAREHOUSE_EDITORS)
     return _transition(db, order, (OrderStatusEnum.draft,), OrderStatusEnum.reserved, user)
 
 
-@router.post(
-    "/{order_id}/cancel",
-    response_model=OrderOut,
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.post("/{order_id}/cancel", response_model=OrderOut, dependencies=[WAREHOUSE_MODULE])
 def cancel_order(order_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    order = _get_order_or_404(db, order_id, user.company_id)
+    order = _get_order_or_404(db, user, order_id)
+    check_company_role(db, user, order.company_id, WAREHOUSE_EDITORS)
     return _transition(db, order, OPEN_STATUSES, OrderStatusEnum.cancelled, user)
 
 
-@router.post(
-    "/{order_id}/ship",
-    response_model=OrderOut,
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.post("/{order_id}/ship", response_model=OrderOut, dependencies=[WAREHOUSE_MODULE])
 def ship_order(order_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    order = _get_order_or_404(db, order_id, user.company_id)
+    order = _get_order_or_404(db, user, order_id)
+    check_company_role(db, user, order.company_id, WAREHOUSE_EDITORS)
     if order.status not in OPEN_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=f"Нельзя отгрузить заказ из статуса «{order.status.value}»"
@@ -214,7 +228,7 @@ def ship_order(order_id: str, db: Session = Depends(get_db), user: User = Depend
     for line in order.lines:
         db.add(
             StockMovement(
-                company_id=user.company_id,
+                company_id=order.company_id,
                 date=today,
                 warehouse_id=order.warehouse_id,
                 product_variant_id=line.product_variant_id,
@@ -318,30 +332,30 @@ def _build_sdvf_lines(db: Session, order: Order, payload: SdvfGenerateDocumentIn
     return result
 
 
-@router.post(
-    "/{order_id}/generate-invoice",
-    response_model=SdvfDocumentRefOut,
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.post("/{order_id}/generate-invoice", response_model=SdvfDocumentRefOut, dependencies=[WAREHOUSE_MODULE])
 def generate_invoice(
     order_id: str,
     payload: SdvfGenerateDocumentIn,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    order = _get_order_or_404(db, order_id, user.company_id)
-    counterparty = get_or_404(db, Counterparty, order.counterparty_id, "Контрагент не найден", company_id=user.company_id)
+    order = _get_order_or_404(db, user, order_id)
+    check_company_role(db, user, order.company_id, WAREHOUSE_EDITORS)
+    company = db.get(Company, order.company_id)
+    counterparty = get_or_404_accessible(
+        db, Counterparty, order.counterparty_id, get_accessible_company_ids(db, user), "Контрагент не найден"
+    )
 
     # Порядок важен: сначала проверяем, что интеграция вообще настроена (503),
     # затем всю локальную валидацию (400) — состав строк, реквизиты, ИНН —
     # и только потом идём в сеть к СДВФ (502 при сбое там).
     client = _sdvf_client()
     lines = _build_sdvf_lines(db, order, payload)
-    _validate_sdvf_org_details(user.company)
+    _validate_sdvf_org_details(company)
     _validate_counterparty_inn(counterparty)
 
     counterparty_id = _resolve_sdvf_counterparty(client, counterparty)
-    organization_id = _resolve_sdvf_organization(client, user.company)
+    organization_id = _resolve_sdvf_organization(client, company)
 
     try:
         result = client.create_invoice(
@@ -362,30 +376,30 @@ def generate_invoice(
     return result
 
 
-@router.post(
-    "/{order_id}/generate-utd",
-    response_model=SdvfDocumentRefOut,
-    dependencies=[Depends(require_roles(WAREHOUSE_EDITORS)), WAREHOUSE_MODULE],
-)
+@router.post("/{order_id}/generate-utd", response_model=SdvfDocumentRefOut, dependencies=[WAREHOUSE_MODULE])
 def generate_utd(
     order_id: str,
     payload: SdvfGenerateDocumentIn,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    order = _get_order_or_404(db, order_id, user.company_id)
-    counterparty = get_or_404(db, Counterparty, order.counterparty_id, "Контрагент не найден", company_id=user.company_id)
+    order = _get_order_or_404(db, user, order_id)
+    check_company_role(db, user, order.company_id, WAREHOUSE_EDITORS)
+    company = db.get(Company, order.company_id)
+    counterparty = get_or_404_accessible(
+        db, Counterparty, order.counterparty_id, get_accessible_company_ids(db, user), "Контрагент не найден"
+    )
 
     # Порядок важен: сначала проверяем, что интеграция вообще настроена (503),
     # затем всю локальную валидацию (400) — состав строк, реквизиты, ИНН —
     # и только потом идём в сеть к СДВФ (502 при сбое там).
     client = _sdvf_client()
     lines = _build_sdvf_lines(db, order, payload)
-    _validate_sdvf_org_details(user.company)
+    _validate_sdvf_org_details(company)
     _validate_counterparty_inn(counterparty)
 
     counterparty_id = _resolve_sdvf_counterparty(client, counterparty)
-    organization_id = _resolve_sdvf_organization(client, user.company)
+    organization_id = _resolve_sdvf_organization(client, company)
 
     try:
         result = client.create_utd(
@@ -421,7 +435,7 @@ def sdvf_pdf(
     if doc not in ("invoice", "utd"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некорректный тип документа")
 
-    order = _get_order_or_404(db, order_id, user.company_id)
+    order = _get_order_or_404(db, user, order_id)
     ref = order.sdvf_invoice_ref if doc == "invoice" else order.sdvf_utd_ref
     if not ref:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Документ ещё не сформирован")

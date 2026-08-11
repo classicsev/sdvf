@@ -17,16 +17,36 @@ const TABS = [
   { key: "calendar", label: "Платёжный календарь" },
 ];
 
+// Селектор компании для отчётов — общий для всех вкладок (см. план "Мульти-компании").
+// Пусто по умолчанию = сводно по всем доступным компаниям.
+function CompanyFilter({ companyId, onChange }) {
+  const { user } = useAuth();
+  const companies = user.companies || [];
+  if (companies.length <= 1) return null;
+  return (
+    <select value={companyId} onChange={(e) => onChange(e.target.value)} style={{ marginRight: 8 }}>
+      <option value="">Все компании</option>
+      {companies.map((m) => (
+        <option key={m.company.id} value={m.company.id}>
+          {m.company.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function CashflowTab({ token }) {
   const [period, setPeriod] = useState("");
+  const [companyId, setCompanyId] = useState("");
   const { data, loading, error } = useResource(
-    () => api.cashflowReport(token, period ? { period } : undefined),
-    [token, period]
+    () => api.cashflowReport(token, { period: period || undefined, company_id: companyId || undefined }),
+    [token, period, companyId]
   );
 
   return (
     <div>
       <div style={{ marginBottom: 14 }}>
+        <CompanyFilter companyId={companyId} onChange={setCompanyId} />
         <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} />
         {period && (
           <button className="fp-btn-tiny" style={{ marginLeft: 8 }} onClick={() => setPeriod("")}>
@@ -74,14 +94,16 @@ function CashflowTab({ token }) {
 
 function PnlTab({ token }) {
   const [period, setPeriod] = useState("");
+  const [companyId, setCompanyId] = useState("");
   const { data, loading, error } = useResource(
-    () => api.pnlReport(token, period ? { period } : undefined),
-    [token, period]
+    () => api.pnlReport(token, { period: period || undefined, company_id: companyId || undefined }),
+    [token, period, companyId]
   );
 
   return (
     <div>
       <div style={{ marginBottom: 14 }}>
+        <CompanyFilter companyId={companyId} onChange={setCompanyId} />
         <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="Текущий месяц" />
       </div>
       {error && <div className="fp-error-banner">{error}</div>}
@@ -128,14 +150,16 @@ function PnlTab({ token }) {
 
 function BalanceTab({ token }) {
   const [asOf, setAsOf] = useState("");
+  const [companyId, setCompanyId] = useState("");
   const { data, loading, error } = useResource(
-    () => api.balanceReport(token, asOf ? { as_of: asOf } : undefined),
-    [token, asOf]
+    () => api.balanceReport(token, { as_of: asOf || undefined, company_id: companyId || undefined }),
+    [token, asOf, companyId]
   );
 
   return (
     <div>
       <div style={{ marginBottom: 14 }}>
+        <CompanyFilter companyId={companyId} onChange={setCompanyId} />
         <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} placeholder="Сегодня" />
       </div>
       {error && <div className="fp-error-banner">{error}</div>}
@@ -195,10 +219,17 @@ function BalanceTab({ token }) {
 }
 
 function DebtTab({ token }) {
-  const { data, loading, error } = useResource(() => api.debtReport(token), [token]);
+  const [companyId, setCompanyId] = useState("");
+  const { data, loading, error } = useResource(
+    () => api.debtReport(token, { company_id: companyId || undefined }),
+    [token, companyId]
+  );
 
   return (
     <div>
+      <div style={{ marginBottom: 14 }}>
+        <CompanyFilter companyId={companyId} onChange={setCompanyId} />
+      </div>
       {error && <div className="fp-error-banner">{error}</div>}
       {loading ? (
         <div className="fp-loading">Загрузка…</div>
@@ -236,10 +267,17 @@ function DebtTab({ token }) {
 }
 
 function ProfitabilityTab({ token }) {
-  const { data, loading, error } = useResource(() => api.profitabilityReport(token), [token]);
+  const [companyId, setCompanyId] = useState("");
+  const { data, loading, error } = useResource(
+    () => api.profitabilityReport(token, { company_id: companyId || undefined }),
+    [token, companyId]
+  );
 
   return (
     <div>
+      <div style={{ marginBottom: 14 }}>
+        <CompanyFilter companyId={companyId} onChange={setCompanyId} />
+      </div>
       {error && <div className="fp-error-banner">{error}</div>}
       {loading ? (
         <div className="fp-loading">Загрузка…</div>
@@ -288,19 +326,36 @@ const PLAN_EMPTY = {
   scheduled_date: new Date().toISOString().slice(0, 10),
 };
 
-function PlanningPanel({ token, year, categories, projects, planning, reload }) {
+function PlanningPanel({ token, year, categories, projects, planning, reload, companyFilter }) {
+  const { user } = useAuth();
+  const companies = user.companies || [];
+  const multiCompany = companies.length > 1;
+  const roleForCompany = (companyId) => companies.find((m) => m.company.id === companyId)?.role;
+  const editableCompanies = companies.filter((m) => canEditPlanning(m.role));
+  const showCompanyColumn = multiCompany && !companyFilter;
+
   const categoriesById = Object.fromEntries((categories || []).map((c) => [c.id, c]));
   const projectsById = Object.fromEntries((projects || []).map((p) => [p.id, p]));
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(PLAN_EMPTY);
+  const [formCompanyId, setFormCompanyId] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const selectableCategories = (categories || []).filter(
+    (c) => !multiCompany || !formCompanyId || c.company_id === formCompanyId
+  );
+  const selectableProjects = (projects || []).filter(
+    (p) => !multiCompany || !formCompanyId || p.company_id === formCompanyId
+  );
 
   function openAdd() {
     setEditingId(null);
     setForm(PLAN_EMPTY);
+    const preselected = editableCompanies.find((m) => m.company.id === companyFilter) || editableCompanies[0];
+    setFormCompanyId(preselected?.company.id || "");
     setError("");
     setModalOpen(true);
   }
@@ -314,8 +369,14 @@ function PlanningPanel({ token, year, categories, projects, planning, reload }) 
       frequency: row.frequency,
       scheduled_date: row.scheduled_date,
     });
+    setFormCompanyId(row.company_id || "");
     setError("");
     setModalOpen(true);
+  }
+
+  function updateFormCompany(companyId) {
+    setFormCompanyId(companyId);
+    setForm((p) => ({ ...p, category_id: "", project_id: "" }));
   }
 
   async function handleSubmit(e) {
@@ -331,7 +392,7 @@ function PlanningPanel({ token, year, categories, projects, planning, reload }) 
         scheduled_date: form.scheduled_date,
       };
       if (editingId) await api.updatePlanning(token, editingId, payload);
-      else await api.createPlanning(token, payload);
+      else await api.createPlanning(token, payload, formCompanyId || undefined);
       setModalOpen(false);
       reload();
     } catch (err) {
@@ -362,6 +423,7 @@ function PlanningPanel({ token, year, categories, projects, planning, reload }) 
       <table className="fp-table">
         <thead>
           <tr>
+            {showCompanyColumn && <th>Компания</th>}
             <th>Статья</th>
             <th>Проект</th>
             <th>Дата</th>
@@ -371,28 +433,36 @@ function PlanningPanel({ token, year, categories, projects, planning, reload }) 
           </tr>
         </thead>
         <tbody>
-          {(planning || []).map((row) => (
+          {(planning || []).map((row) => {
+            const canEditRow = canEditPlanning(roleForCompany(row.company_id));
+            return (
             <tr key={row.id}>
+              {showCompanyColumn && (
+                <td>{companies.find((m) => m.company.id === row.company_id)?.company.name || "—"}</td>
+              )}
               <td>{categoriesById[row.category_id]?.name || "—"}</td>
               <td>{row.project_id ? projectsById[row.project_id]?.name || "—" : <span className="fp-muted">—</span>}</td>
               <td>{fmtDate(row.scheduled_date)}</td>
               <td className="fp-muted">{row.frequency}</td>
               <td className="right fp-mono">{fmt(row.amount, "RUB")}</td>
               <td className="fp-table-actions-col">
-                <span className="fp-row-actions">
-                  <button className="fp-icon-btn" onClick={() => openEdit(row)}>
-                    <Pencil size={14} />
-                  </button>
-                  <button className="fp-icon-btn" onClick={() => handleDelete(row)}>
-                    <Trash2 size={14} />
-                  </button>
-                </span>
+                {canEditRow && (
+                  <span className="fp-row-actions">
+                    <button className="fp-icon-btn" onClick={() => openEdit(row)}>
+                      <Pencil size={14} />
+                    </button>
+                    <button className="fp-icon-btn" onClick={() => handleDelete(row)}>
+                      <Trash2 size={14} />
+                    </button>
+                  </span>
+                )}
               </td>
             </tr>
-          ))}
+            );
+          })}
           {(planning || []).length === 0 && (
             <tr>
-              <td colSpan={6} className="fp-empty">
+              <td colSpan={showCompanyColumn ? 7 : 6} className="fp-empty">
                 Плановых записей на {year} год пока нет
               </td>
             </tr>
@@ -410,6 +480,26 @@ function PlanningPanel({ token, year, categories, projects, planning, reload }) 
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmit}>
+              {multiCompany && (
+                <label className="fp-span-2">
+                  Компания
+                  {editingId ? (
+                    <input
+                      type="text"
+                      disabled
+                      value={companies.find((m) => m.company.id === formCompanyId)?.company.name || ""}
+                    />
+                  ) : (
+                    <select value={formCompanyId} onChange={(e) => updateFormCompany(e.target.value)} required>
+                      {editableCompanies.map((m) => (
+                        <option key={m.company.id} value={m.company.id}>
+                          {m.company.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </label>
+              )}
               <label className="fp-span-2">
                 Статья
                 <select
@@ -420,7 +510,7 @@ function PlanningPanel({ token, year, categories, projects, planning, reload }) 
                   <option value="" disabled>
                     Выберите статью
                   </option>
-                  {(categories || []).map((c) => (
+                  {selectableCategories.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
                     </option>
@@ -431,7 +521,7 @@ function PlanningPanel({ token, year, categories, projects, planning, reload }) 
                 Проект
                 <select value={form.project_id} onChange={(e) => setForm((p) => ({ ...p, project_id: e.target.value }))}>
                   <option value="">— не указан —</option>
-                  {(projects || []).map((p) => (
+                  {selectableProjects.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
                     </option>
@@ -484,17 +574,22 @@ function PlanningPanel({ token, year, categories, projects, planning, reload }) 
 
 function CalendarTab({ token }) {
   const { user } = useAuth();
+  const canEditAnyCompany = (user.companies || []).some((m) => canEditPlanning(m.role));
   const [year, setYear] = useState(new Date().getFullYear());
+  const [companyId, setCompanyId] = useState("");
   const { data, loading, error, reload: reloadCalendar } = useResource(
-    () => api.paymentCalendar(token, { quarter: String(year) }),
-    [token, year]
+    () => api.paymentCalendar(token, { quarter: String(year), company_id: companyId || undefined }),
+    [token, year, companyId]
   );
   const { data: categories } = useResource(() => api.listCategories(token), [token]);
   const { data: projects } = useResource(() => api.listProjects(token), [token]);
   const {
     data: planning,
     reload: reloadPlanning,
-  } = useResource(() => api.listPlanning(token, { year }), [token, year]);
+  } = useResource(
+    () => api.listPlanning(token, { year, company_id: companyId || undefined }),
+    [token, year, companyId]
+  );
 
   function reloadAll() {
     reloadCalendar();
@@ -504,6 +599,7 @@ function CalendarTab({ token }) {
   return (
     <div>
       <div style={{ marginBottom: 14 }}>
+        <CompanyFilter companyId={companyId} onChange={setCompanyId} />
         <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ width: 100 }} />
       </div>
       {error && <div className="fp-error-banner">{error}</div>}
@@ -557,7 +653,7 @@ function CalendarTab({ token }) {
         </div>
       )}
 
-      {canEditPlanning(user.role) && (
+      {canEditAnyCompany && (
         <PlanningPanel
           token={token}
           year={year}
@@ -565,6 +661,7 @@ function CalendarTab({ token }) {
           projects={projects}
           planning={planning}
           reload={reloadAll}
+          companyFilter={companyId}
         />
       )}
     </div>

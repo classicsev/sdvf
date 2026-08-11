@@ -22,16 +22,26 @@ function KpiCard({ label, value, tone, icon }) {
 
 const EMPLOYEE_EMPTY = { full_name: "", department: "", position: "", employment_type: "", bank_details: "" };
 
-function EmployeesPanel({ token, employees, reload }) {
+function EmployeesPanel({ token, employees, reload, companyFilter }) {
+  const { user } = useAuth();
+  const companies = user.companies || [];
+  const multiCompany = companies.length > 1;
+  const roleForCompany = (companyId) => companies.find((m) => m.company.id === companyId)?.role;
+  const editableCompanies = companies.filter((m) => canEditPayroll(m.role));
+  const showCompanyColumn = multiCompany && !companyFilter;
+
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPLOYEE_EMPTY);
+  const [formCompanyId, setFormCompanyId] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   function openAdd() {
     setEditingId(null);
     setForm(EMPLOYEE_EMPTY);
+    const preselected = editableCompanies.find((m) => m.company.id === companyFilter) || editableCompanies[0];
+    setFormCompanyId(preselected?.company.id || "");
     setError("");
     setModalOpen(true);
   }
@@ -44,6 +54,7 @@ function EmployeesPanel({ token, employees, reload }) {
       employment_type: emp.employment_type || "",
       bank_details: emp.bank_details || "",
     });
+    setFormCompanyId(emp.company_id || "");
     setError("");
     setModalOpen(true);
   }
@@ -54,7 +65,7 @@ function EmployeesPanel({ token, employees, reload }) {
     setError("");
     try {
       if (editingId) await api.updateEmployee(token, editingId, form);
-      else await api.createEmployee(token, form);
+      else await api.createEmployee(token, form, formCompanyId || undefined);
       setModalOpen(false);
       reload();
     } catch (err) {
@@ -85,6 +96,7 @@ function EmployeesPanel({ token, employees, reload }) {
       <table className="fp-table">
         <thead>
           <tr>
+            {showCompanyColumn && <th>Компания</th>}
             <th>ФИО</th>
             <th>Отдел</th>
             <th>Тип занятости</th>
@@ -92,26 +104,34 @@ function EmployeesPanel({ token, employees, reload }) {
           </tr>
         </thead>
         <tbody>
-          {(employees || []).map((emp) => (
+          {(employees || []).map((emp) => {
+            const canEditRow = canEditPayroll(roleForCompany(emp.company_id));
+            return (
             <tr key={emp.id}>
+              {showCompanyColumn && (
+                <td>{companies.find((m) => m.company.id === emp.company_id)?.company.name || "—"}</td>
+              )}
               <td>{emp.full_name}</td>
               <td className="fp-muted">{emp.department || "—"}</td>
               <td className="fp-muted">{emp.employment_type || "—"}</td>
               <td className="fp-table-actions-col">
-                <span className="fp-row-actions">
-                  <button className="fp-icon-btn" onClick={() => openEdit(emp)}>
-                    <Pencil size={14} />
-                  </button>
-                  <button className="fp-icon-btn" onClick={() => handleDelete(emp)}>
-                    <Trash2 size={14} />
-                  </button>
-                </span>
+                {canEditRow && (
+                  <span className="fp-row-actions">
+                    <button className="fp-icon-btn" onClick={() => openEdit(emp)}>
+                      <Pencil size={14} />
+                    </button>
+                    <button className="fp-icon-btn" onClick={() => handleDelete(emp)}>
+                      <Trash2 size={14} />
+                    </button>
+                  </span>
+                )}
               </td>
             </tr>
-          ))}
+            );
+          })}
           {(employees || []).length === 0 && (
             <tr>
-              <td colSpan={4} className="fp-empty">
+              <td colSpan={showCompanyColumn ? 5 : 4} className="fp-empty">
                 Сотрудников пока нет
               </td>
             </tr>
@@ -129,6 +149,26 @@ function EmployeesPanel({ token, employees, reload }) {
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmit}>
+              {multiCompany && (
+                <label className="fp-span-2">
+                  Компания
+                  {editingId ? (
+                    <input
+                      type="text"
+                      disabled
+                      value={companies.find((m) => m.company.id === formCompanyId)?.company.name || ""}
+                    />
+                  ) : (
+                    <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
+                      {editableCompanies.map((m) => (
+                        <option key={m.company.id} value={m.company.id}>
+                          {m.company.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </label>
+              )}
               <label className="fp-span-2">
                 ФИО
                 <input
@@ -179,12 +219,23 @@ function EmployeesPanel({ token, employees, reload }) {
 
 const ACCRUAL_EMPTY = { employee_id: "", project_id: "", period: new Date().toISOString().slice(0, 10), salary: "0", bonus: "0", deductions: "0" };
 
-function AccrualsPanel({ token, employees, projects, accruals, reload }) {
+function AccrualsPanel({ token, employees, projects, accruals, reload, companyFilter }) {
+  const { user } = useAuth();
+  const companies = user.companies || [];
+  const multiCompany = companies.length > 1;
+  const showCompanyColumn = multiCompany && !companyFilter;
+
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(ACCRUAL_EMPTY);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const employeesById = useMemo(() => Object.fromEntries((employees || []).map((e) => [e.id, e])), [employees]);
+
+  // Проект должен принадлежать той же компании, что и выбранный сотрудник.
+  const selectedEmployee = employeesById[form.employee_id];
+  const selectableProjects = (projects || []).filter(
+    (p) => !selectedEmployee || p.company_id === selectedEmployee.company_id
+  );
 
   function openAdd() {
     setForm(ACCRUAL_EMPTY);
@@ -225,6 +276,7 @@ function AccrualsPanel({ token, employees, projects, accruals, reload }) {
       <table className="fp-table">
         <thead>
           <tr>
+            {showCompanyColumn && <th>Компания</th>}
             <th>Сотрудник</th>
             <th>Период</th>
             <th className="right">Оклад</th>
@@ -236,6 +288,9 @@ function AccrualsPanel({ token, employees, projects, accruals, reload }) {
         <tbody>
           {(accruals || []).map((a) => (
             <tr key={a.id}>
+              {showCompanyColumn && (
+                <td>{companies.find((m) => m.company.id === a.company_id)?.company.name || "—"}</td>
+              )}
               <td>{employeesById[a.employee_id]?.full_name || "—"}</td>
               <td>{fmtDate(a.period)}</td>
               <td className="right fp-mono">{fmt(a.salary, "RUB")}</td>
@@ -246,7 +301,7 @@ function AccrualsPanel({ token, employees, projects, accruals, reload }) {
           ))}
           {(accruals || []).length === 0 && (
             <tr>
-              <td colSpan={6} className="fp-empty">
+              <td colSpan={showCompanyColumn ? 7 : 6} className="fp-empty">
                 Начислений пока нет
               </td>
             </tr>
@@ -269,7 +324,7 @@ function AccrualsPanel({ token, employees, projects, accruals, reload }) {
                 <select
                   required
                   value={form.employee_id}
-                  onChange={(e) => setForm((p) => ({ ...p, employee_id: e.target.value }))}
+                  onChange={(e) => setForm((p) => ({ ...p, employee_id: e.target.value, project_id: "" }))}
                 >
                   <option value="" disabled>
                     Выберите сотрудника
@@ -285,7 +340,7 @@ function AccrualsPanel({ token, employees, projects, accruals, reload }) {
                 Проект
                 <select value={form.project_id} onChange={(e) => setForm((p) => ({ ...p, project_id: e.target.value }))}>
                   <option value="">— не указан —</option>
-                  {(projects || []).map((p) => (
+                  {selectableProjects.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
                     </option>
@@ -347,13 +402,23 @@ function AccrualsPanel({ token, employees, projects, accruals, reload }) {
 
 const PAYMENT_EMPTY = { employee_id: "", accrual_id: "", account_id: "", date: new Date().toISOString().slice(0, 10), amount: "0", payment_type: "ЗП" };
 
-function PaymentsPanel({ token, employees, accounts, accruals, payments, reload }) {
+function PaymentsPanel({ token, employees, accounts, accruals, payments, reload, companyFilter }) {
+  const { user } = useAuth();
+  const companies = user.companies || [];
+  const multiCompany = companies.length > 1;
+  const showCompanyColumn = multiCompany && !companyFilter;
+
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(PAYMENT_EMPTY);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const employeesById = useMemo(() => Object.fromEntries((employees || []).map((e) => [e.id, e])), [employees]);
   const accountsById = useMemo(() => Object.fromEntries((accounts || []).map((a) => [a.id, a])), [accounts]);
+
+  const selectedEmployee = employeesById[form.employee_id];
+  const selectableAccounts = (accounts || []).filter(
+    (a) => !selectedEmployee || a.company_id === selectedEmployee.company_id
+  );
 
   function openAdd() {
     setForm(PAYMENT_EMPTY);
@@ -396,6 +461,7 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload 
       <table className="fp-table">
         <thead>
           <tr>
+            {showCompanyColumn && <th>Компания</th>}
             <th>Сотрудник</th>
             <th>Дата</th>
             <th>Счёт</th>
@@ -406,6 +472,9 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload 
         <tbody>
           {(payments || []).map((p) => (
             <tr key={p.id}>
+              {showCompanyColumn && (
+                <td>{companies.find((m) => m.company.id === p.company_id)?.company.name || "—"}</td>
+              )}
               <td>{employeesById[p.employee_id]?.full_name || "—"}</td>
               <td>{fmtDate(p.date)}</td>
               <td>{accountsById[p.account_id]?.name || "—"}</td>
@@ -415,7 +484,7 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload 
           ))}
           {(payments || []).length === 0 && (
             <tr>
-              <td colSpan={5} className="fp-empty">
+              <td colSpan={showCompanyColumn ? 6 : 5} className="fp-empty">
                 Выплат пока нет
               </td>
             </tr>
@@ -438,7 +507,9 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload 
                 <select
                   required
                   value={form.employee_id}
-                  onChange={(e) => setForm((p) => ({ ...p, employee_id: e.target.value, accrual_id: "" }))}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, employee_id: e.target.value, accrual_id: "", account_id: "" }))
+                  }
                 >
                   <option value="" disabled>
                     Выберите сотрудника
@@ -471,7 +542,7 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload 
                   <option value="" disabled>
                     Выберите счёт
                   </option>
-                  {(accounts || []).map((a) => (
+                  {selectableAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.name}
                     </option>
@@ -527,9 +598,24 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload 
 }
 
 function PayrollDetailed({ token }) {
-  const { data: employees, reload: reloadEmployees } = useResource(() => api.listEmployees(token), [token]);
-  const { data: accruals, reload: reloadAccruals } = useResource(() => api.listAccruals(token), [token]);
-  const { data: payments, reload: reloadPayments } = useResource(() => api.listPayments(token), [token]);
+  const { user } = useAuth();
+  const companies = user.companies || [];
+  const multiCompany = companies.length > 1;
+  const [companyId, setCompanyId] = useState("");
+  const query = { company_id: companyId || undefined };
+
+  const { data: employees, reload: reloadEmployees } = useResource(
+    () => api.listEmployees(token, query),
+    [token, companyId]
+  );
+  const { data: accruals, reload: reloadAccruals } = useResource(
+    () => api.listAccruals(token, query),
+    [token, companyId]
+  );
+  const { data: payments, reload: reloadPayments } = useResource(
+    () => api.listPayments(token, query),
+    [token, companyId]
+  );
   const { data: accounts } = useResource(() => api.listAccounts(token), [token]);
   const { data: projects } = useResource(() => api.listProjects(token), [token]);
 
@@ -539,6 +625,18 @@ function PayrollDetailed({ token }) {
 
   return (
     <div className="fp-dash">
+      {multiCompany && (
+        <div style={{ marginBottom: 14 }}>
+          <select value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
+            <option value="">Все компании</option>
+            {companies.map((m) => (
+              <option key={m.company.id} value={m.company.id}>
+                {m.company.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <section className="fp-kpi-row" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         <KpiCard label="Начислено" value={fmt(totalAccrued, "RUB")} tone="neutral" icon={<Wallet size={16} />} />
         <KpiCard label="Выплачено" value={fmt(totalPaid, "RUB")} tone="income" icon={<ArrowUpRight size={16} />} />
@@ -550,9 +648,16 @@ function PayrollDetailed({ token }) {
         />
       </section>
 
-      <EmployeesPanel token={token} employees={employees} reload={reloadEmployees} />
+      <EmployeesPanel token={token} employees={employees} reload={reloadEmployees} companyFilter={companyId} />
       <div style={{ height: 16 }} />
-      <AccrualsPanel token={token} employees={employees} projects={projects} accruals={accruals} reload={reloadAccruals} />
+      <AccrualsPanel
+        token={token}
+        employees={employees}
+        projects={projects}
+        accruals={accruals}
+        reload={reloadAccruals}
+        companyFilter={companyId}
+      />
       <div style={{ height: 16 }} />
       <PaymentsPanel
         token={token}
@@ -561,36 +666,65 @@ function PayrollDetailed({ token }) {
         accruals={accruals}
         payments={payments}
         reload={reloadPayments}
+        companyFilter={companyId}
       />
     </div>
   );
 }
 
 function PayrollSummary({ token }) {
-  const { data, loading, error } = useResource(() => api.payrollSummary(token), [token]);
-
-  if (loading) return <div className="fp-loading">Загрузка…</div>;
-  if (error) return <div className="fp-error-banner">{error}</div>;
-  if (!data) return null;
+  const { user } = useAuth();
+  const companies = user.companies || [];
+  const multiCompany = companies.length > 1;
+  const [companyId, setCompanyId] = useState("");
+  const { data, loading, error } = useResource(
+    () => api.payrollSummary(token, { company_id: companyId || undefined }),
+    [token, companyId]
+  );
 
   return (
     <div className="fp-dash">
-      <section className="fp-kpi-row" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-        <KpiCard label="Начислено" value={fmt(data.total_accrued, "RUB")} tone="neutral" icon={<Wallet size={16} />} />
-        <KpiCard label="Выплачено" value={fmt(data.total_paid, "RUB")} tone="income" icon={<ArrowUpRight size={16} />} />
-        <KpiCard
-          label="Остаток к выплате"
-          value={fmt(data.outstanding, "RUB")}
-          tone={data.outstanding > 0 ? "expense" : "income"}
-          icon={<AlertTriangle size={16} />}
-        />
-      </section>
-      <p className="fp-note">Сводка без ФИО и реквизитов сотрудников · {data.employees_count} сотрудников с начислениями</p>
+      {multiCompany && (
+        <div style={{ marginBottom: 14 }}>
+          <select value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
+            <option value="">Все компании</option>
+            {companies.map((m) => (
+              <option key={m.company.id} value={m.company.id}>
+                {m.company.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {loading ? (
+        <div className="fp-loading">Загрузка…</div>
+      ) : error ? (
+        <div className="fp-error-banner">{error}</div>
+      ) : (
+        data && (
+          <>
+            <section className="fp-kpi-row" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+              <KpiCard label="Начислено" value={fmt(data.total_accrued, "RUB")} tone="neutral" icon={<Wallet size={16} />} />
+              <KpiCard label="Выплачено" value={fmt(data.total_paid, "RUB")} tone="income" icon={<ArrowUpRight size={16} />} />
+              <KpiCard
+                label="Остаток к выплате"
+                value={fmt(data.outstanding, "RUB")}
+                tone={data.outstanding > 0 ? "expense" : "income"}
+                icon={<AlertTriangle size={16} />}
+              />
+            </section>
+            <p className="fp-note">
+              Сводка без ФИО и реквизитов сотрудников · {data.employees_count} сотрудников с начислениями
+            </p>
+          </>
+        )
+      )}
     </div>
   );
 }
 
 export default function Payroll() {
   const { token, user } = useAuth();
-  return canEditPayroll(user.role) ? <PayrollDetailed token={token} /> : <PayrollSummary token={token} />;
+  const canEditAnyCompany = (user.companies || []).some((m) => canEditPayroll(m.role));
+  return canEditAnyCompany ? <PayrollDetailed token={token} /> : <PayrollSummary token={token} />
 }

@@ -13,10 +13,12 @@ import {
   KeyRound,
   Warehouse as WarehouseIcon,
   ToggleLeft,
+  UserCircle,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 import { ROLE_LABELS, ROLE_NAV, NAV_MODULE, isModuleEnabled } from "../lib/roles";
+import ProfileModal from "./ProfileModal";
 import Dashboard from "./Dashboard";
 import Transactions from "./Transactions";
 import Payroll from "./Payroll";
@@ -83,6 +85,7 @@ export default function Shell() {
   ].filter((key) => isModuleEnabled(user.company, NAV_MODULE[key]));
   const [view, setView] = useState(allowed[0] || "dashboard");
   const [resendState, setResendState] = useState("idle"); // idle | busy | sent
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const ActiveView = VIEW_COMPONENTS[view] || (() => null);
   const meta = VIEW_META[view] || {};
@@ -141,11 +144,16 @@ export default function Shell() {
             {user.full_name}
             {user.email ? ` · ${user.email}` : ""}
           </div>
+          <button className="fp-logout-btn" onClick={() => setProfileOpen(true)}>
+            <UserCircle size={14} /> Профиль
+          </button>
           <button className="fp-logout-btn" onClick={logout}>
             <LogOut size={14} /> Выйти
           </button>
         </div>
       </aside>
+
+      {profileOpen && <ProfileModal onClose={() => setProfileOpen(false)} />}
 
       <main className="fp-main">
         <header className="fp-topbar">

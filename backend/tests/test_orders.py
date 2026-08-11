@@ -1,5 +1,5 @@
 from app.models import RoleEnum, StockMovement
-from tests.conftest import auth_headers, make_counterparty, make_user
+from tests.conftest import auth_headers, make_company, make_counterparty, make_user
 
 
 def _setup_catalog(client, headers):
@@ -264,6 +264,30 @@ def test_update_order_note_and_blocked_when_closed(client, db_session):
     client.post(f"/orders/{order['id']}/ship", headers=headers)
     resp = client.patch(f"/orders/{order['id']}", headers=headers, json={"note": "поздно"})
     assert resp.status_code == 400
+
+
+def test_update_order_rejects_counterparty_from_other_company(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    warehouse, product, variant = _setup_catalog(client, headers)
+    cp = make_counterparty(db_session)
+    other_company = make_company(db_session, name="Чужая компания")
+    foreign_cp = make_counterparty(db_session, company_id=other_company.id)
+
+    order = client.post(
+        "/orders",
+        headers=headers,
+        json={
+            "counterparty_id": cp.id,
+            "warehouse_id": warehouse["id"],
+            "lines": [{"product_variant_id": variant["id"], "quantity": 5}],
+        },
+    ).json()
+
+    resp = client.patch(
+        f"/orders/{order['id']}", headers=headers, json={"counterparty_id": foreign_cp.id}
+    )
+    assert resp.status_code == 404
 
 
 def test_create_order_rejects_non_positive_line_quantity(client, db_session):

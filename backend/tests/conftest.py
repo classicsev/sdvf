@@ -9,7 +9,7 @@ from app.auth import create_access_token, hash_password
 from app.config import settings
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, Category, Company, Counterparty, Project, RoleEnum, TxTypeEnum, User
+from app.models import Account, Category, Company, CompanyMember, Counterparty, Project, RoleEnum, TxTypeEnum, User
 
 TEST_DATABASE_URL = settings.database_url.rsplit("/", 1)[0] + "/finance_test_db"
 
@@ -84,22 +84,28 @@ def make_user(
 ):
     email = email or f"{role.value}-{uuid.uuid4().hex[:8]}@test.local"
     user = User(
-        company_id=company_id or _current_company_id,
         email=email,
         full_name=f"Test {role.value}",
         hashed_password=hash_password(password),
-        role=role,
-        project_id=project_id,
         is_active=is_active,
     )
     db_session.add(user)
+    db_session.flush()
+    db_session.add(
+        CompanyMember(
+            user_id=user.id,
+            company_id=company_id or _current_company_id,
+            role=role,
+            project_id=project_id,
+        )
+    )
     db_session.commit()
     db_session.refresh(user)
     return user
 
 
 def auth_headers(user) -> dict:
-    token = create_access_token({"sub": user.id, "role": user.role.value})
+    token = create_access_token({"sub": user.id})
     return {"Authorization": f"Bearer {token}"}
 
 

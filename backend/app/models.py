@@ -75,6 +75,13 @@ class Company(Base):
     sdvf_org_ogrn: Mapped[str] = mapped_column(String(20), nullable=True)
     sdvf_org_address: Mapped[str] = mapped_column(Text, nullable=True)
     sdvf_org_phone: Mapped[str] = mapped_column(String(50), nullable=True)
+    # Кто создал/владеет компанией — задел под будущие лимиты тарифа
+    # ("сколько компаний на плане"), сам лимит пока не считается нигде.
+    owner_user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=True)
+    # 'legal_entity' (ООО/ИП, с реквизитами) | 'individual' — личные счета
+    # физлица, участвуют в той же отчётности наравне с компаниями, без
+    # обязательных юридических реквизитов.
+    company_type: Mapped[str] = mapped_column(String(20), default="legal_entity")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -145,7 +152,6 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
-    company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
     # email уникален глобально, не в рамках компании — логин ищет пользователя
     # только по email без выбора компании, composite-уникальность сделала бы
     # логин неоднозначным между разными компаниями. Nullable — у пользователей,
@@ -154,18 +160,79 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(300))
     # Nullable — у чисто-OAuth пользователей пароля нет вообще, вход только через провайдера
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=True)
-    role: Mapped[RoleEnum] = mapped_column(Enum(RoleEnum))
-    project_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("projects.id"), nullable=True
-    )  # только для project_manager
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Не блокирует доступ (аккаунт активен сразу) — используется только для баннера-
     # напоминания на фронте. У пользователей через OAuth ставится True сразу —
     # провайдер (VK/Яндекс/Sber) уже подтвердил личность за нас.
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     phone: Mapped[str] = mapped_column(String(30), nullable=True)  # без проверки в этой версии
+    avatar_url: Mapped[str] = mapped_column(String(500), nullable=True)
+    telegram: Mapped[str] = mapped_column(String(100), nullable=True)
+    max_messenger: Mapped[str] = mapped_column(String(100), nullable=True)
+    # 'M' / 'F' / NULL — используется для согласования рода в истории задач
+    # ("сделал"/"сделала"), не обязательно к заполнению.
+    gender: Mapped[str] = mapped_column(String(1), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+    company_memberships = relationship(
+        "CompanyMember", order_by="CompanyMember.created_at", back_populates="user"
+    )
+
+    # --- Обратная совместимость на время перехода (см. план "Мульти-компании") ---
+    # Роутеры, ещё не переведённые на company_memberships/accessible_company_ids
+    # (Фаза 2), продолжают работать как раньше — в терминах "первой" компании
+    # пользователя. Новый код (routers/companies.py, дашборд) должен использовать
+    # company_memberships/auth.get_accessible_company_ids напрямую, а не эти свойства.
+    @property
+    def _primary_membership(self) -> "CompanyMember | None":
+        return self.company_memberships[0] if self.company_memberships else None
+
+    @property
+    def company_id(self) -> str | None:
+        m = self._primary_membership
+        return m.company_id if m else None
+
+    @property
+    def role(self) -> "RoleEnum | None":
+        m = self._primary_membership
+        return m.role if m else None
+
+    @property
+    def project_id(self) -> str | None:
+        m = self._primary_membership
+        return m.project_id if m else None
+
+    @property
+    def company(self) -> "Company | None":
+        m = self._primary_membership
+        return m.company if m else None
+
+    @property
+    def companies(self) -> list["CompanyMember"]:
+        """Алиас для схемы UserOut.companies — сама связь называется
+        company_memberships (чтобы не путать с company/company_id-заглушками выше)."""
+        return self.company_memberships
+
+
+class CompanyMember(Base):
+    """Доступ пользователя к конкретной компании — многие-ко-многим вместо
+    прежнего одиночного User.company_id. Роль и project_id теперь per-company:
+    один и тот же пользователь может быть admin в одной компании и viewer в
+    другой. См. план "Мульти-компании" для контекста."""
+
+    __tablename__ = "company_members"
+    __table_args__ = (UniqueConstraint("user_id", "company_id", name="uq_company_member_user_company"),)
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"))
+    company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id", ondelete="CASCADE"))
+    role: Mapped[RoleEnum] = mapped_column(Enum(RoleEnum))
+    project_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("projects.id"), nullable=True
+    )  # только для role=project_manager, скоуп внутри этой компании
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="company_memberships")
     company = relationship("Company")
 
 

@@ -6,16 +6,8 @@ def test_login_oauth_only_account_returns_401_not_500(client, db_session):
     # Пользователь, заведённый через VK ID/Яндекс ID — hashed_password=None.
     # verify_password() падает на None-хэше, а не возвращает False — важно,
     # чтобы login() перехватывал это раньше, иначе был бы 500 вместо 401.
-    from tests.conftest import _current_company_id
-
-    user = User(
-        company_id=_current_company_id,
-        email="oauth-only@test.local",
-        full_name="OAuth User",
-        hashed_password=None,
-        role=RoleEnum.admin,
-    )
-    db_session.add(user)
+    user = make_user(db_session, RoleEnum.admin, email="oauth-only@test.local")
+    user.hashed_password = None
     db_session.commit()
 
     resp = client.post("/auth/login", json={"email": "oauth-only@test.local", "password": "anything"})

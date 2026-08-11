@@ -1,5 +1,5 @@
 from app.models import RoleEnum
-from tests.conftest import auth_headers, make_account, make_user
+from tests.conftest import auth_headers, make_account, make_company, make_project, make_user
 
 
 def test_employee_bank_details_roundtrip_and_not_stored_plaintext(client, db_session):
@@ -167,3 +167,44 @@ def test_payments_list(client, db_session):
     assert resp.status_code == 200
     assert len(resp.json()) == 1
     assert resp.json()[0]["amount"] == 5000.0
+
+
+def test_create_payment_rejects_account_from_other_company(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    other_company = make_company(db_session, name="Чужая компания")
+    # Счёт принадлежит другой компании, а не той, где заведён сотрудник.
+    foreign_account = make_account(db_session, company_id=other_company.id)
+    employee = client.post("/payroll/employees", headers=headers, json={"full_name": "Тест"}).json()
+
+    resp = client.post(
+        "/payroll/payments",
+        headers=headers,
+        json={
+            "employee_id": employee["id"],
+            "account_id": foreign_account.id,
+            "date": "2026-06-05",
+            "amount": 1000,
+        },
+    )
+    assert resp.status_code == 404
+
+
+def test_create_accrual_rejects_project_from_other_company(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    other_company = make_company(db_session, name="Чужая компания 2")
+    foreign_project = make_project(db_session, company_id=other_company.id)
+    employee = client.post("/payroll/employees", headers=headers, json={"full_name": "Тест"}).json()
+
+    resp = client.post(
+        "/payroll/accruals",
+        headers=headers,
+        json={
+            "employee_id": employee["id"],
+            "project_id": foreign_project.id,
+            "period": "2026-06-01",
+            "salary": 1000,
+        },
+    )
+    assert resp.status_code == 404

@@ -1,5 +1,6 @@
 import hashlib
 import secrets
+import uuid
 from datetime import datetime, timedelta
 from typing import Iterable, Optional
 
@@ -171,13 +172,107 @@ def scope_project_filter(user: User) -> str | None:
 
 
 def scope_company_filter(user: User) -> str:
-    """Row-level security helper — мультитенантность.
-
-    В отличие от scope_project_filter не Optional: у пользователя всегда ровно
-    одна компания. Возвращаемое значение всегда берётся из user (из БД по токену),
-    никогда из query-параметра запроса — та же логика, что и у scope_project_filter.
-    """
+    """Row-level security helper — используется роутерами, ещё не переведёнными
+    на мульти-компании (см. план "Мульти-компании"). Возвращает company_id
+    "первой" (по дате создания) компании пользователя через User.company_id —
+    свойство-заглушку на модели, а не колонку. Новый код должен использовать
+    get_accessible_company_ids/check_company_role."""
     return user.company_id
+
+
+def get_accessible_company_ids(db: Session, user: User) -> list[str]:
+    """Все компании, к которым у пользователя есть доступ (через
+    company_members) — в отличие от scope_company_filter не одна, а список.
+    Используется списочными эндпоинтами, которые должны показывать данные
+    сразу по всем компаниям пользователя без переключения контекста."""
+    from app.models import CompanyMember
+
+    return [
+        row.company_id
+        for row in db.query(CompanyMember.company_id).filter(CompanyMember.user_id == user.id).all()
+    ]
+
+
+def get_company_role(db: Session, user: User, company_id: str) -> Optional[RoleEnum]:
+    """Роль пользователя в конкретной компании, или None, если доступа нет вовсе."""
+    from app.models import CompanyMember
+
+    try:
+        uuid.UUID(str(company_id))
+    except (ValueError, AttributeError):
+        return None
+    row = (
+        db.query(CompanyMember)
+        .filter(CompanyMember.user_id == user.id, CompanyMember.company_id == company_id)
+        .first()
+    )
+    return row.role if row else None
+
+
+def check_company_role(db: Session, user: User, company_id: str, allowed: Iterable[RoleEnum]) -> RoleEnum:
+    """Поднимает 403/404, если у пользователя нет одной из допустимых ролей
+    именно в этой компании. Не Depends-фабрика (в отличие от require_roles) —
+    company_id обычно приходит из path/body конкретного эндпоинта, а не
+    доступен на этапе объявления зависимостей."""
+    role = get_company_role(db, user, company_id)
+    if role is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Компания не найдена")
+    if role not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Недостаточно прав для этого действия в этой компании",
+        )
+    return role
+
+
+def resolve_company_ids(db: Session, user: User, company_id: Optional[str]) -> list[str]:
+    """Для списочных/отчётных эндпоинтов (см. план "Мульти-компании"): без
+    ?company_id= — все доступные компании (сводно, без переключения контекста);
+    с ?company_id= — сужение до одной, если у пользователя есть к ней доступ
+    (иначе 404, а не пустой список — не подсказываем, какие company_id валидны)."""
+    accessible = get_accessible_company_ids(db, user)
+    if company_id is None:
+        return accessible
+    if company_id not in accessible:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Компания не найдена")
+    return [company_id]
+
+
+def resolve_company_ids_with_role(
+    db: Session, user: User, company_id: Optional[str], allowed: Iterable[RoleEnum]
+) -> list[str]:
+    """Как resolve_company_ids, но только компании, где роль пользователя
+    входит в allowed — для чувствительных данных (зарплата и т.п.), где
+    "есть доступ к компании вообще" недостаточно: payroll_operator в одной
+    компании не должен видеть детальные записи ФОТ компании, где он viewer."""
+    from app.models import CompanyMember
+
+    query = db.query(CompanyMember.company_id).filter(
+        CompanyMember.user_id == user.id, CompanyMember.role.in_(list(allowed))
+    )
+    if company_id is not None:
+        query = query.filter(CompanyMember.company_id == company_id)
+    ids = [row.company_id for row in query.all()]
+    if not ids:
+        if company_id is not None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Компания не найдена")
+        # Ни в одной компании нет нужной роли — это не "пусто", а "нет доступа
+        # вовсе" (как раньше — единый require_roles на весь эндпоинт).
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав для этого действия"
+        )
+    return ids
+
+
+def resolve_write_company_id(
+    db: Session, user: User, company_id: Optional[str], allowed: Iterable[RoleEnum]
+) -> str:
+    """Для создания записей: явный company_id (пользователь выбрал компанию —
+    проверяем роль в ней) или, если не передан, "первая" компания пользователя
+    (обратная совместимость с формами, ещё не умеющими выбирать компанию)."""
+    target = company_id or user.company_id
+    check_company_role(db, user, target, allowed)
+    return target
 
 
 SSO_IDENTITY_CODE_PURPOSE = "sso_identity_code"
