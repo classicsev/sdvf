@@ -204,7 +204,7 @@ def list_users(
     # к одной компании (без затрагивания остальных) — через
     # DELETE /companies/{id}/members (routers/companies.py).
     company_ids = resolve_company_ids_with_role(db, current_user, company_id, ADMIN_ONLY)
-    user_ids = db.query(CompanyMember.user_id).filter(CompanyMember.company_id.in_(company_ids)).subquery()
+    user_ids = db.query(CompanyMember.user_id).filter(CompanyMember.company_id.in_(company_ids)).scalar_subquery()
     return db.query(User).filter(User.id.in_(user_ids)).all()
 
 
