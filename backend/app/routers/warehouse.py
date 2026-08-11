@@ -479,7 +479,7 @@ def create_movement(
 
     db.commit()
     db.refresh(movement)
-    log_action(db, user, action="create", entity_type="stock_movement", entity_id=movement.id)
+    log_action(db, user, action="create", entity_type="stock_movement", entity_id=movement.id, company_id=warehouse.company_id)
     return movement
 
 
@@ -508,7 +508,7 @@ def delete_movement(movement_id: str, db: Session = Depends(get_db), user: User 
     if accrual:
         db.delete(accrual)
     db.commit()
-    log_action(db, user, action="delete", entity_type="stock_movement", entity_id=movement_id)
+    log_action(db, user, action="delete", entity_type="stock_movement", entity_id=movement_id, company_id=movement.company_id)
     return {"deleted": True}
 
 
@@ -562,5 +562,6 @@ def transfer_stock(payload: StockTransferIn, db: Session = Depends(get_db), user
         entity_type="stock_movement",
         entity_id=out_movement.id,
         details={"to_movement_id": in_movement.id, "quantity": payload.quantity},
+        company_id=from_wh.company_id,
     )
     return [out_movement, in_movement]

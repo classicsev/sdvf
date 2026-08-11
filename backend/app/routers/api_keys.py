@@ -80,6 +80,7 @@ def create_api_key(
     log_action(
         db, current_user, "create_api_key", "api_key", key.id,
         {"name": key.name, "user_id": target_user.id},
+        company_id=target_company_id,
     )
 
     return ApiKeyCreated(
@@ -104,7 +105,8 @@ def revoke_api_key(
         db, ApiKey, key_id, get_accessible_company_ids(db, current_user), "Ключ не найден"
     )
     check_company_role(db, current_user, key.company_id, ADMIN_ONLY)
+    key_company_id = key.company_id
     db.delete(key)
     db.commit()
-    log_action(db, current_user, "revoke_api_key", "api_key", key_id, {"name": key.name})
+    log_action(db, current_user, "revoke_api_key", "api_key", key_id, {"name": key.name}, company_id=key_company_id)
     return {"deleted": True}

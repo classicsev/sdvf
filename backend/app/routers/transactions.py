@@ -147,7 +147,7 @@ def create_transaction(
     db.add(tx)
     db.commit()
     db.refresh(tx)
-    log_action(db, user, action="create", entity_type="transaction", entity_id=tx.id)
+    log_action(db, user, action="create", entity_type="transaction", entity_id=tx.id, company_id=target)
     return tx
 
 
@@ -191,7 +191,7 @@ def update_transaction(
     tx.updated_by = user.id
     db.commit()
     db.refresh(tx)
-    log_action(db, user, action="update", entity_type="transaction", entity_id=tx.id, details=changes)
+    log_action(db, user, action="update", entity_type="transaction", entity_id=tx.id, details=changes, company_id=tx.company_id)
     return tx
 
 
@@ -207,10 +207,11 @@ def delete_transaction(
     tx = _get_transaction_or_404(db, user, transaction_id)
     role = check_company_role(db, user, tx.company_id, EDITORS)
     _check_can_edit(user, tx, role)
+    tx_company_id = tx.company_id
 
     db.delete(tx)
     db.commit()
-    log_action(db, user, action="delete", entity_type="transaction", entity_id=transaction_id)
+    log_action(db, user, action="delete", entity_type="transaction", entity_id=transaction_id, company_id=tx_company_id)
     return {"deleted": True}
 
 

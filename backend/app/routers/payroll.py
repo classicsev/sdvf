@@ -161,7 +161,7 @@ def create_accrual(
     db.add(accrual)
     db.commit()
     db.refresh(accrual)
-    log_action(db, user, action="create", entity_type="payroll_accrual", entity_id=accrual.id)
+    log_action(db, user, action="create", entity_type="payroll_accrual", entity_id=accrual.id, company_id=employee.company_id)
     return accrual
 
 
@@ -196,7 +196,7 @@ def create_payment(
     db.add(payment)
     db.commit()
     db.refresh(payment)
-    log_action(db, user, action="create", entity_type="payroll_payment", entity_id=payment.id)
+    log_action(db, user, action="create", entity_type="payroll_payment", entity_id=payment.id, company_id=employee.company_id)
     return payment
 
 

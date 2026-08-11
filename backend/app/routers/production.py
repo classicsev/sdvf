@@ -191,7 +191,7 @@ def create_run(payload: ProductionRunIn, db: Session = Depends(get_db), user: Us
     )
     db.commit()
     db.refresh(run)
-    log_action(db, user, action="create", entity_type="production_run", entity_id=run.id)
+    log_action(db, user, action="create", entity_type="production_run", entity_id=run.id, company_id=recipe.company_id)
     return run
 
 
@@ -201,8 +201,9 @@ def delete_run(run_id: str, db: Session = Depends(get_db), user: User = Depends(
         db, ProductionRun, run_id, get_accessible_company_ids(db, user), "Партия производства не найдена"
     )
     check_company_role(db, user, run.company_id, WAREHOUSE_EDITORS)
+    run_company_id = run.company_id
     db.query(StockMovement).filter(StockMovement.production_run_id == run.id).delete()
     db.delete(run)
     db.commit()
-    log_action(db, user, action="delete", entity_type="production_run", entity_id=run_id)
+    log_action(db, user, action="delete", entity_type="production_run", entity_id=run_id, company_id=run_company_id)
     return {"deleted": True}

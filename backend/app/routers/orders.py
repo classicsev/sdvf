@@ -104,7 +104,7 @@ def create_order(payload: OrderCreateIn, db: Session = Depends(get_db), user: Us
     db.add(order)
     db.commit()
     db.refresh(order)
-    log_action(db, user, action="create", entity_type="order", entity_id=order.id)
+    log_action(db, user, action="create", entity_type="order", entity_id=order.id, company_id=warehouse.company_id)
     return order
 
 
@@ -197,7 +197,7 @@ def _transition(db: Session, order: Order, allowed: tuple, new_status: OrderStat
     order.status = new_status
     db.commit()
     db.refresh(order)
-    log_action(db, user, action=f"order_{new_status.value}", entity_type="order", entity_id=order.id)
+    log_action(db, user, action=f"order_{new_status.value}", entity_type="order", entity_id=order.id, company_id=order.company_id)
     return order
 
 
@@ -242,7 +242,7 @@ def ship_order(order_id: str, db: Session = Depends(get_db), user: User = Depend
     order.status = OrderStatusEnum.shipped
     db.commit()
     db.refresh(order)
-    log_action(db, user, action="order_shipped", entity_type="order", entity_id=order.id)
+    log_action(db, user, action="order_shipped", entity_type="order", entity_id=order.id, company_id=order.company_id)
     return order
 
 
@@ -372,7 +372,7 @@ def generate_invoice(
 
     order.sdvf_invoice_ref = result
     db.commit()
-    log_action(db, user, action="order_generate_invoice", entity_type="order", entity_id=order.id)
+    log_action(db, user, action="order_generate_invoice", entity_type="order", entity_id=order.id, company_id=order.company_id)
     return result
 
 
@@ -417,7 +417,7 @@ def generate_utd(
 
     order.sdvf_utd_ref = result
     db.commit()
-    log_action(db, user, action="order_generate_utd", entity_type="order", entity_id=order.id)
+    log_action(db, user, action="order_generate_utd", entity_type="order", entity_id=order.id, company_id=order.company_id)
     return result
 
 

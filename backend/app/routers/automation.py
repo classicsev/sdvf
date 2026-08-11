@@ -309,6 +309,7 @@ def sync_integration(
         entity_type="integration",
         entity_id=integration.id,
         details={"created": created, "skipped": skipped, "account_id": account.id},
+        company_id=company_id,
     )
     return IntegrationSyncResult(
         created=created,
@@ -462,6 +463,7 @@ def sync_amocrm(
         entity_type="integration",
         entity_id=integration.id,
         details={"contacts_created": contacts_created, "deals_created": deals_created, "account_id": account.id},
+        company_id=company_id,
     )
     return AmoCrmSyncResult(
         contacts_created=contacts_created,
