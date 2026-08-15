@@ -4,12 +4,14 @@ from app.models import RoleEnum
 from tests.conftest import auth_headers, make_user
 
 REDIRECT_URI = "https://sdvf.ru/auth/sso/callback"
+LINK_REDIRECT_URI = "https://sdvf.ru/auth/sso/link-callback"
 CLIENT_SECRET = "test-sso-secret"
 
 
 def _configure_sso(monkeypatch):
     monkeypatch.setattr(settings, "sdvf_sso_redirect_uri", REDIRECT_URI)
     monkeypatch.setattr(settings, "sdvf_sso_client_secret", CLIENT_SECRET)
+    monkeypatch.setattr(settings, "sdvf_sso_link_redirect_uri", LINK_REDIRECT_URI)
 
 
 def test_authorize_503_when_not_configured(client):
@@ -33,6 +35,34 @@ def test_authorize_redirects_to_consent_page(client, monkeypatch):
     assert location.startswith(f"{settings.frontend_base_url}/sso-consent?")
     assert "state=s1" in location
     assert "client=sdvf" in location
+    # По умолчанию (без ?purpose=) — обычный вход, не привязка
+    assert "purpose=login" in location
+
+
+def test_authorize_accepts_link_redirect_uri_with_purpose(client, monkeypatch):
+    # Второй доверенный колбэк — для привязки аккаунта (см. LINK_REDIRECT_URI),
+    # тот же allowlist, что и для входа, но отдельное значение.
+    _configure_sso(monkeypatch)
+    resp = client.get(
+        "/oauth/authorize",
+        params={"redirect_uri": LINK_REDIRECT_URI, "state": "s1", "purpose": "link"},
+        follow_redirects=False,
+    )
+    assert resp.status_code in (302, 307)
+    location = resp.headers["location"]
+    assert f"redirect_uri={LINK_REDIRECT_URI}".replace(":", "%3A").replace("/", "%2F") in location or LINK_REDIRECT_URI in location
+    assert "purpose=link" in location
+
+
+def test_authorize_rejects_link_uri_when_not_configured(client, monkeypatch):
+    # Настроен только обычный вход, привязка ещё не настроена (sdvf_sso_link_redirect_uri="")
+    monkeypatch.setattr(settings, "sdvf_sso_redirect_uri", REDIRECT_URI)
+    monkeypatch.setattr(settings, "sdvf_sso_client_secret", CLIENT_SECRET)
+    monkeypatch.setattr(settings, "sdvf_sso_link_redirect_uri", "")
+    resp = client.get(
+        "/oauth/authorize", params={"redirect_uri": LINK_REDIRECT_URI, "state": "s1", "purpose": "link"}
+    )
+    assert resp.status_code == 400
 
 
 def test_consent_requires_auth(client, monkeypatch):

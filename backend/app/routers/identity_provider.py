@@ -39,19 +39,26 @@ def _sso_configured() -> bool:
     return bool(settings.sdvf_sso_redirect_uri and settings.sdvf_sso_client_secret)
 
 
+def _allowed_redirect_uris() -> set[str]:
+    # Реестр доверенных клиентов — ровно два колбэка одного и того же партнёра
+    # (СДВФ): вход и привязка аккаунта. Пустые значения (не настроено) не
+    # попадают в набор, чтобы пустая строка redirect_uri не проходила валидацию.
+    return {uri for uri in (settings.sdvf_sso_redirect_uri, settings.sdvf_sso_link_redirect_uri) if uri}
+
+
 def _validate_redirect_uri(redirect_uri: str) -> None:
     if not _sso_configured():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="SSO не настроен")
-    # Точное совпадение со значением из настроек — не префикс/паттерн — это и
-    # есть весь "реестр клиентов": ровно один доверенный redirect_uri.
-    if redirect_uri != settings.sdvf_sso_redirect_uri:
+    if redirect_uri not in _allowed_redirect_uris():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Недопустимый redirect_uri")
 
 
 @router.get("/authorize")
-def authorize(redirect_uri: str = Query(...), state: str = Query(...)):
+def authorize(redirect_uri: str = Query(...), state: str = Query(...), purpose: str = Query("login")):
     _validate_redirect_uri(redirect_uri)
-    query = urlencode({"redirect_uri": redirect_uri, "state": state, "client": "sdvf"})
+    # purpose — только для текста экрана согласия на фронте (login/link), на
+    # выдачу кода не влияет: что делать с личностью после колбэка, решает СДВФ.
+    query = urlencode({"redirect_uri": redirect_uri, "state": state, "client": "sdvf", "purpose": purpose})
     return RedirectResponse(f"{settings.frontend_base_url}/sso-consent?{query}")
 
 

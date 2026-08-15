@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # произвольный параметр запроса) — защита от open redirect. Пусто = выключено.
     sdvf_sso_redirect_uri: str = ""
     sdvf_sso_client_secret: str = ""
+    # Отдельный колбэк для привязки аккаунтов (в отличие от входа) — см.
+    # identity_provider.py. Тот же client_secret и тот же /oauth/token, разный
+    # redirect_uri и разная логика на приёмной стороне (СДВФ).
+    sdvf_sso_link_redirect_uri: str = ""
 
     # DaData — автозаполнение реквизитов по ИНН (ЕГРЮЛ/ЕГРИП), тот же ключ, что
     # и в СДВФ. Только через бэкенд-прокси (routers/dadata.py): ключ на фронт не

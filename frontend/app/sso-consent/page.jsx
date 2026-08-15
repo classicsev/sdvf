@@ -10,7 +10,7 @@ const CLIENT_NAMES = {
   sdvf: "СДВФ",
 };
 
-function ConsentScreen({ redirectUri, state, clientName }) {
+function ConsentScreen({ redirectUri, state, clientName, isLink }) {
   const { token } = useAuth();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -41,11 +41,21 @@ function ConsentScreen({ redirectUri, state, clientName }) {
           ₽
         </div>
         <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, margin: "0 0 10px" }}>
-          Вход через Учёт Движения
+          {isLink ? "Привязка аккаунта СДВФ" : "Вход через Учёт Движения"}
         </h2>
         <p style={{ fontSize: 13, color: "#5B6472", marginBottom: 18 }}>
-          <b>{clientName}</b> хочет получить доступ к вашему email и имени, чтобы войти под тем же
-          аккаунтом.
+          {isLink ? (
+            <>
+              <b>{clientName}</b> запрашивает подтверждение, что вы владеете этим аккаунтом Учёта, чтобы
+              связать его с вашим уже открытым аккаунтом в {clientName}. Ссылка появится, только если вы
+              подтвердите вход и там, и здесь.
+            </>
+          ) : (
+            <>
+              <b>{clientName}</b> хочет получить доступ к вашему email и имени, чтобы войти под тем же
+              аккаунтом.
+            </>
+          )}
         </p>
         {error && <div className="fp-form-error" style={{ marginBottom: 12 }}>{error}</div>}
         <button
@@ -76,6 +86,7 @@ function SsoConsentInner() {
   const redirectUri = searchParams.get("redirect_uri");
   const state = searchParams.get("state");
   const clientKey = searchParams.get("client");
+  const isLink = searchParams.get("purpose") === "link";
 
   if (!redirectUri || !state) {
     return (
@@ -90,7 +101,14 @@ function SsoConsentInner() {
   if (loading) return <div className="fp-login-page">Загрузка…</div>;
   if (!user) return <Login />;
 
-  return <ConsentScreen redirectUri={redirectUri} state={state} clientName={CLIENT_NAMES[clientKey] || "Внешний сервис"} />;
+  return (
+    <ConsentScreen
+      redirectUri={redirectUri}
+      state={state}
+      clientName={CLIENT_NAMES[clientKey] || "Внешний сервис"}
+      isLink={isLink}
+    />
+  );
 }
 
 export default function SsoConsentPage() {
