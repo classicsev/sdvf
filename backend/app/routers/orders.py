@@ -292,9 +292,19 @@ def _resolve_sdvf_organization(client: SdvfClient, company) -> int:
     return org["id"]
 
 
-def _resolve_sdvf_counterparty(client: SdvfClient, counterparty: Counterparty) -> int:
+def _resolve_sdvf_counterparty(client: SdvfClient, counterparty: Counterparty, company) -> int:
+    """Карточка контрагента в СДВФ. organization_inn — чтобы она появилась в
+    аккаунте клиента (владельца организации), а не у служебного пользователя."""
     try:
-        buyer = client.get_or_create_counterparty(inn=counterparty.inn, naming=counterparty.name)
+        buyer = client.get_or_create_counterparty(
+            inn=counterparty.inn,
+            naming=counterparty.name,
+            kpp=counterparty.kpp,
+            ogrn=counterparty.ogrn,
+            address=counterparty.address,
+            phone=counterparty.phone,
+            organization_inn=company.sdvf_org_inn,
+        )
     except SdvfError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
     return buyer["id"]
@@ -354,7 +364,7 @@ def generate_invoice(
     _validate_sdvf_org_details(company)
     _validate_counterparty_inn(counterparty)
 
-    counterparty_id = _resolve_sdvf_counterparty(client, counterparty)
+    counterparty_id = _resolve_sdvf_counterparty(client, counterparty, company)
     organization_id = _resolve_sdvf_organization(client, company)
 
     try:
@@ -398,7 +408,7 @@ def generate_utd(
     _validate_sdvf_org_details(company)
     _validate_counterparty_inn(counterparty)
 
-    counterparty_id = _resolve_sdvf_counterparty(client, counterparty)
+    counterparty_id = _resolve_sdvf_counterparty(client, counterparty, company)
     organization_id = _resolve_sdvf_organization(client, company)
 
     try:

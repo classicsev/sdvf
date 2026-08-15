@@ -93,11 +93,33 @@ class AccountOut(AccountIn):
     is_active: bool
 
 
+class CounterpartyContactIn(BaseModel):
+    full_name: str
+    position: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    is_primary: bool = False
+
+
+class CounterpartyContactOut(CounterpartyContactIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    counterparty_id: str
+    company_id: str
+    amocrm_contact_id: Optional[int] = None
+
+
 class CounterpartyIn(BaseModel):
     name: str
     type: str = "debtor"
     inn: Optional[str] = None
     is_active: bool = True
+    kpp: Optional[str] = None
+    ogrn: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
 
 
 class CounterpartyOut(CounterpartyIn):
@@ -106,6 +128,40 @@ class CounterpartyOut(CounterpartyIn):
     id: str
     company_id: str
     is_active: bool
+    # sdvf_buyer_id пустой = карточки нет в СДВФ; фронт помечает такие и
+    # предлагает привязать к существующей или создать новую (см. routers/reference.py).
+    sdvf_buyer_id: Optional[int] = None
+    sdvf_synced_at: Optional[datetime] = None
+    amocrm_company_id: Optional[int] = None
+    contacts: list[CounterpartyContactOut] = []
+
+
+class SdvfCounterpartyOut(BaseModel):
+    """Карточка контрагента на стороне СДВФ — для выбора при ручной привязке."""
+
+    id: int
+    naming: str
+    inn: str
+    kpp: Optional[str] = None
+    ogrn: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    # Уже привязана к какой-то карточке в Учёте — фронт показывает такие
+    # неактивными, чтобы одну карточку СДВФ не привязали к двум контрагентам.
+    linked_counterparty_id: Optional[str] = None
+
+
+class CounterpartySdvfLinkIn(BaseModel):
+    sdvf_buyer_id: int
+
+
+class CounterpartySyncResult(BaseModel):
+    linked_by_inn: int = 0
+    created_in_sdvf: int = 0
+    updated_from_sdvf: int = 0
+    skipped_no_inn: int = 0
+    failed: int = 0
+    errors: list[str] = []
 
 
 class EmployeeIn(BaseModel):
@@ -261,6 +317,20 @@ class CompanyModulesIn(BaseModel):
     sdvf_org_phone: Optional[str] = None
 
 
+class DadataPartyOut(BaseModel):
+    """Реквизиты из ЕГРЮЛ/ЕГРИП для автозаполнения форм (см. routers/dadata.py).
+    Пустые строки вместо None — фронт подставляет значения прямо в поля формы."""
+
+    name: str
+    inn: str
+    kpp: str
+    ogrn: str
+    address: str
+    party_type: str  # legal_entity | individual
+    supervisor: str
+    supervisor_position: str
+
+
 class CompanyRegisterIn(BaseModel):
     company_name: str
     admin_email: str
@@ -404,6 +474,11 @@ class AmoCrmSyncResult(BaseModel):
     contacts_matched: int
     deals_created: int
     deals_skipped: int
+    # Компании amoCRM → карточки контрагентов (компания первична, контакты под ней).
+    companies_created: int = 0
+    companies_matched: int = 0
+    # Реквизиты не перезаписаны, потому что карточка привязана к СДВФ — он первичен.
+    kept_sdvf_data: int = 0
 
 
 # ---------------------------------------------------------------------------

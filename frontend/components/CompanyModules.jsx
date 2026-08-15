@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
+import { ROLE_LABELS, ROLE_DESCRIPTIONS } from "../lib/roles";
 
 const MODULES = [
   {
@@ -26,15 +27,6 @@ const SDVF_FIELDS = [
   { key: "sdvf_org_phone", label: "Телефон" },
 ];
 
-const ROLE_LABELS = {
-  admin: "Администратор",
-  operator: "Оператор",
-  payroll_operator: "Оператор зарплаты",
-  project_manager: "Руководитель проекта",
-  viewer: "Наблюдатель",
-  warehouse_operator: "Оператор склада",
-};
-
 export default function CompanyModules() {
   const { token, user, refreshUser } = useAuth();
   const [busyKey, setBusyKey] = useState(null);
@@ -51,6 +43,21 @@ export default function CompanyModules() {
   const [inviteForm, setInviteForm] = useState({ email: "", role: "viewer", full_name: "", password: "" });
   const [inviteSaving, setInviteSaving] = useState(false);
   const [inviteError, setInviteError] = useState("");
+  const [rolesHelpOpen, setRolesHelpOpen] = useState(false);
+
+  function cancelNewCompany() {
+    setNewCompanyOpen(false);
+    setNewCompanyName("");
+    setNewCompanyType("legal_entity");
+    setError("");
+  }
+
+  function cancelInvite() {
+    setInviteOpenFor(null);
+    setInviteForm({ email: "", role: "viewer", full_name: "", password: "" });
+    setInviteError("");
+    setRolesHelpOpen(false);
+  }
 
   async function refreshCompanies() {
     const list = await api.listCompanies(token);
@@ -99,6 +106,35 @@ export default function CompanyModules() {
   );
   const [sdvfSaving, setSdvfSaving] = useState(false);
   const [sdvfSaved, setSdvfSaved] = useState(false);
+  const [innLookup, setInnLookup] = useState({ loading: false, message: "", error: "" });
+
+  // Автозаполнение реквизитов по ИНН из ЕГРЮЛ/ЕГРИП — тот же источник (DaData),
+  // что и в СДВФ, чтобы реквизиты в двух сервисах совпадали до буквы.
+  async function fillFromInn() {
+    const inn = (sdvfForm.sdvf_org_inn || "").trim();
+    setInnLookup({ loading: true, message: "", error: "" });
+    try {
+      const found = await api.findPartyByInn(token, inn);
+      setSdvfForm((p) => ({
+        ...p,
+        sdvf_org_naming: found.name || p.sdvf_org_naming,
+        sdvf_org_inn: found.inn || p.sdvf_org_inn,
+        sdvf_org_kpp: found.kpp || p.sdvf_org_kpp,
+        sdvf_org_ogrn: found.ogrn || p.sdvf_org_ogrn,
+        sdvf_org_address: found.address || p.sdvf_org_address,
+      }));
+      setSdvfSaved(false);
+      setInnLookup({
+        loading: false,
+        message: `Найдено: ${found.name}. Проверьте и нажмите «Сохранить».`,
+        error: "",
+      });
+    } catch (err) {
+      setInnLookup({ loading: false, message: "", error: err.message || "Не удалось найти по ИНН" });
+    }
+  }
+
+  const innIsValid = /^(\d{10}|\d{12})$/.test((sdvfForm.sdvf_org_inn || "").trim());
 
   async function toggle(moduleKey, value) {
     setError("");
@@ -175,6 +211,9 @@ export default function CompanyModules() {
               <button type="submit" className="fp-btn-primary" disabled={companySaving}>
                 {companySaving ? "Создаём…" : "Создать"}
               </button>
+              <button type="button" className="fp-btn-ghost" onClick={cancelNewCompany} disabled={companySaving}>
+                Отмена
+              </button>
             </div>
           </form>
         )}
@@ -238,6 +277,52 @@ export default function CompanyModules() {
                       ))}
                     </select>
                   </label>
+
+                  {/* Пояснение к выбранной роли — сразу под селектом, плюс раскрывающийся
+                      список всех ролей: без него выбор роли вслепую (см. живые тесты). */}
+                  <div className="fp-span-2" style={{ marginTop: -4 }}>
+                    <div className="fp-muted" style={{ fontSize: 12.5 }}>
+                      {ROLE_DESCRIPTIONS[inviteForm.role]}
+                    </div>
+                    <button
+                      type="button"
+                      className="fp-link-btn"
+                      onClick={() => setRolesHelpOpen((v) => !v)}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        padding: "4px 0 0",
+                        color: "var(--accent, #2f7d63)",
+                        cursor: "pointer",
+                        fontSize: 12.5,
+                        textDecoration: "underline",
+                      }}
+                    >
+                      {rolesHelpOpen ? "Скрыть описание ролей" : "Что даёт каждая роль?"}
+                    </button>
+                    {rolesHelpOpen && (
+                      <div
+                        style={{
+                          marginTop: 8,
+                          padding: 10,
+                          border: "1px solid var(--line)",
+                          borderRadius: 8,
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 8,
+                        }}
+                      >
+                        {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                          <div key={value}>
+                            <div style={{ fontWeight: 600, fontSize: 12.5 }}>{label}</div>
+                            <div className="fp-muted" style={{ fontSize: 12.5 }}>
+                              {ROLE_DESCRIPTIONS[value]}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div className="fp-span-2 fp-note" style={{ margin: 0 }}>
                     Если у этого email уже есть аккаунт в Учёте — просто получит доступ. Если нет —
                     укажите имя и пароль, чтобы создать новый.
@@ -261,6 +346,9 @@ export default function CompanyModules() {
                   <div className="fp-modal-foot fp-span-2" style={{ justifyContent: "flex-start" }}>
                     <button type="submit" className="fp-btn-primary" disabled={inviteSaving}>
                       {inviteSaving ? "Добавляем…" : "Добавить"}
+                    </button>
+                    <button type="button" className="fp-btn-ghost" onClick={cancelInvite} disabled={inviteSaving}>
+                      Отмена
                     </button>
                   </div>
                 </form>
@@ -314,19 +402,54 @@ export default function CompanyModules() {
           </p>
         </div>
         <form className="fp-form-grid" onSubmit={saveSdvfForm}>
-          {SDVF_FIELDS.map((f) => (
-            <label key={f.key}>
-              {f.label}
-              <input
-                required={f.required}
-                value={sdvfForm[f.key]}
-                onChange={(e) => {
-                  setSdvfSaved(false);
-                  setSdvfForm((p) => ({ ...p, [f.key]: e.target.value }));
-                }}
-              />
-            </label>
-          ))}
+          {SDVF_FIELDS.map((f) =>
+            f.key === "sdvf_org_inn" ? (
+              <label key={f.key}>
+                {f.label}
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input
+                    required={f.required}
+                    value={sdvfForm[f.key]}
+                    inputMode="numeric"
+                    onChange={(e) => {
+                      setSdvfSaved(false);
+                      setInnLookup({ loading: false, message: "", error: "" });
+                      setSdvfForm((p) => ({ ...p, [f.key]: e.target.value }));
+                    }}
+                    style={{ flex: 1, minWidth: 0 }}
+                  />
+                  <button
+                    type="button"
+                    className="fp-btn-ghost"
+                    onClick={fillFromInn}
+                    disabled={!innIsValid || innLookup.loading}
+                    title={innIsValid ? "Подставить реквизиты из ЕГРЮЛ/ЕГРИП" : "Введите ИНН: 10 цифр или 12 для ИП"}
+                    style={{ whiteSpace: "nowrap" }}
+                  >
+                    {innLookup.loading ? "Ищем…" : "Заполнить по ИНН"}
+                  </button>
+                </div>
+              </label>
+            ) : (
+              <label key={f.key}>
+                {f.label}
+                <input
+                  required={f.required}
+                  value={sdvfForm[f.key]}
+                  onChange={(e) => {
+                    setSdvfSaved(false);
+                    setSdvfForm((p) => ({ ...p, [f.key]: e.target.value }));
+                  }}
+                />
+              </label>
+            )
+          )}
+          {innLookup.message && (
+            <div className="fp-span-2 fp-muted" style={{ fontSize: 12.5 }}>
+              {innLookup.message}
+            </div>
+          )}
+          {innLookup.error && <div className="fp-form-error fp-span-2">{innLookup.error}</div>}
           <div className="fp-modal-foot fp-span-2" style={{ justifyContent: "flex-start" }}>
             <button type="submit" className="fp-btn-primary" disabled={sdvfSaving}>
               {sdvfSaving ? "Сохраняем…" : "Сохранить"}

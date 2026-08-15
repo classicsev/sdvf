@@ -103,10 +103,28 @@ class AmoCrmClient:
             raise AmoCrmError(f"amoCRM API вернул {resp.status_code}: {resp.text[:300]}")
         return resp.json()
 
-    def fetch_all_contacts(self) -> Iterator[dict]:
+    def fetch_all_companies(self) -> Iterator[dict]:
+        """Компании amoCRM — именно они становятся карточками контрагентов
+        (компания первична, контакты подвязываются к ней)."""
         page = 1
         while page <= MAX_PAGES:
-            data = self._get("/api/v4/contacts", params={"page": page, "limit": 250})
+            data = self._get("/api/v4/companies", params={"page": page, "limit": 250})
+            if not data:
+                break
+            items = (data.get("_embedded") or {}).get("companies") or []
+            for company in items:
+                yield company
+            if not items or "next" not in (data.get("_links") or {}):
+                break
+            page += 1
+            time.sleep(self.page_delay)
+
+    def fetch_all_contacts(self) -> Iterator[dict]:
+        # with=companies — иначе в ответе не будет связи контакта с компанией,
+        # и мы не сможем подвязать его к нужной карточке контрагента.
+        page = 1
+        while page <= MAX_PAGES:
+            data = self._get("/api/v4/contacts", params={"page": page, "limit": 250, "with": "companies"})
             if not data:
                 break
             items = (data.get("_embedded") or {}).get("contacts") or []
@@ -139,12 +157,52 @@ class AmoCrmClient:
             time.sleep(self.page_delay)
 
 
+def _custom_field_value(raw: dict, field_code: str) -> Optional[str]:
+    """Значение поля по коду (PHONE/EMAIL/POSITION). У amoCRM это не плоские
+    атрибуты, а список custom_fields_values с вложенными values."""
+    for field in raw.get("custom_fields_values") or []:
+        if field.get("field_code") != field_code:
+            continue
+        values = field.get("values") or []
+        if values and values[0].get("value"):
+            return str(values[0]["value"])
+    return None
+
+
 def map_contact(raw: dict) -> Optional[dict]:
     contact_id = raw.get("id")
     name = raw.get("name")
     if not contact_id or not name:
         return None
-    return {"id": contact_id, "name": name}
+
+    # Компания, к которой привязан контакт (fetch_all_contacts запрашивает
+    # with=companies). Без неё контакт "висит в воздухе" — тогда карточкой
+    # контрагента становится он сам (физлицо).
+    companies = (raw.get("_embedded") or {}).get("companies") or []
+    return {
+        "id": contact_id,
+        "name": name,
+        "company_id": companies[0]["id"] if companies else None,
+        "phone": _custom_field_value(raw, "PHONE"),
+        "email": _custom_field_value(raw, "EMAIL"),
+        "position": _custom_field_value(raw, "POSITION"),
+    }
+
+
+def map_company(raw: dict) -> Optional[dict]:
+    """Компания amoCRM → карточка контрагента. ИНН у amoCRM в стандартных полях
+    нет — он приходит только из СДВФ или вводится руками, поэтому None."""
+    company_id = raw.get("id")
+    name = raw.get("name")
+    if not company_id or not name:
+        return None
+    return {
+        "id": company_id,
+        "name": name,
+        "phone": _custom_field_value(raw, "PHONE"),
+        "email": _custom_field_value(raw, "EMAIL"),
+        "address": _custom_field_value(raw, "ADDRESS"),
+    }
 
 
 def map_lead(raw: dict) -> Optional[dict]:

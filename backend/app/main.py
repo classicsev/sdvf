@@ -10,6 +10,7 @@ from app.routers import (
     audit,
     automation,
     companies,
+    dadata,
     identity_provider,
     oauth,
     orders,
@@ -46,6 +47,7 @@ app.include_router(planning.router)
 app.include_router(automation.router)
 app.include_router(audit.router)
 app.include_router(api_keys.router)
+app.include_router(dadata.router)
 app.include_router(warehouse.router)
 app.include_router(orders.router)
 app.include_router(production.router)

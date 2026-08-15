@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { fmt } from "../lib/format";
 import { canEditReference } from "../lib/roles";
+import Counterparties from "./Counterparties";
 
 const STATUS_COLUMN = {
   key: "is_active",
@@ -88,35 +89,15 @@ const TABS = {
       STATUS_COLUMN,
     ],
   },
-  counterparties: {
-    label: "Контрагенты",
-    icon: Contact,
-    noun: "контрагента",
-    list: (token, companyId) => api.listCounterparties(token, { company_id: companyId }),
-    create: (token, payload, companyId) => api.createCounterparty(token, payload, companyId),
-    update: (token, id, payload) => api.updateCounterparty(token, id, payload),
-    remove: (token, id) => api.deleteCounterparty(token, id),
-    fields: [
-      { key: "name", label: "Название контрагента", type: "text", required: true },
-      {
-        key: "type",
-        label: "Тип",
-        type: "select",
-        options: [
-          { value: "debtor", label: "Дебитор" },
-          { value: "creditor", label: "Кредитор" },
-        ],
-      },
-      { key: "inn", label: "ИНН", type: "text" },
-    ],
-    columns: [
-      { key: "name", label: "Контрагент" },
-      { key: "type", label: "Тип", render: (v) => (v === "debtor" ? "Дебитор" : "Кредитор") },
-      { key: "inn", label: "ИНН", render: (v) => v || "—" },
-      STATUS_COLUMN,
-    ],
-  },
 };
+
+// Контрагенты живут в отдельном компоненте: карточка организации с реквизитами,
+// контактными лицами и связью с СДВФ уже не укладывается в generic-таблицу выше.
+const COUNTERPARTIES_TAB = "counterparties";
+const TAB_BUTTONS = [
+  ...Object.entries(TABS).map(([key, meta]) => ({ key, label: meta.label, icon: meta.icon })),
+  { key: COUNTERPARTIES_TAB, label: "Контрагенты", icon: Contact },
+];
 
 function defaultFormFor(fields) {
   const form = {};
@@ -134,13 +115,16 @@ export default function Reference() {
   const canEditAny = companies.some((m) => canEditReference(m.role));
 
   const [tab, setTab] = useState("categories");
-  const config = TABS[tab];
+  // Для вкладки контрагентов generic-конфига нет — она рендерится отдельным
+  // компонентом ниже; TABS.categories тут только чтобы хуки ниже не падали.
+  const config = TABS[tab] || TABS.categories;
+  const isCounterparties = tab === COUNTERPARTIES_TAB;
 
   // "" = все доступные компании сразу (сводный список); иначе — id конкретной.
   const [companyFilter, setCompanyFilter] = useState("");
 
   const { data: items, loading, error, reload } = useResource(
-    () => config.list(token, companyFilter || undefined),
+    () => (isCounterparties ? Promise.resolve([]) : config.list(token, companyFilter || undefined)),
     [token, tab, companyFilter]
   );
 
@@ -231,17 +215,30 @@ export default function Reference() {
   const showCompanyColumn = multiCompany && !companyFilter;
   const editableCompanies = companies.filter((m) => canEditReference(m.role));
 
+  const tabsRow = (
+    <div className="fp-tabs">
+      {TAB_BUTTONS.map((meta) => (
+        <button key={meta.key} className={tab === meta.key ? "active" : ""} onClick={() => switchTab(meta.key)}>
+          <meta.icon size={14} />
+          {meta.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (isCounterparties) {
+    return (
+      <div className="fp-dash">
+        <div className="fp-tabs-row">{tabsRow}</div>
+        <Counterparties />
+      </div>
+    );
+  }
+
   return (
     <div className="fp-dash">
       <div className="fp-tabs-row">
-        <div className="fp-tabs">
-          {Object.entries(TABS).map(([key, meta]) => (
-            <button key={key} className={tab === key ? "active" : ""} onClick={() => switchTab(key)}>
-              <meta.icon size={14} />
-              {meta.label}
-            </button>
-          ))}
-        </div>
+        {tabsRow}
         {multiCompany && (
           <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>
             <option value="">Все компании</option>

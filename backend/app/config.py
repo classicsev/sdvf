@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     sdvf_sso_redirect_uri: str = ""
     sdvf_sso_client_secret: str = ""
 
+    # DaData — автозаполнение реквизитов по ИНН (ЕГРЮЛ/ЕГРИП), тот же ключ, что
+    # и в СДВФ. Только через бэкенд-прокси (routers/dadata.py): ключ на фронт не
+    # отдаём, иначе его вычитают из исходников страницы и потратят наш лимит.
+    dadata_api_key: str = ""
+
     class Config:
         env_file = ".env"
 

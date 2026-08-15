@@ -118,6 +118,10 @@ export const api = {
 
   ssoConsent: (token, payload) => request("/oauth/consent", { method: "POST", token, body: payload }),
 
+  // Реквизиты из ЕГРЮЛ/ЕГРИП по ИНН (через бэкенд-прокси — ключ DaData на фронт
+  // не отдаётся). 404 = не найдено, 503 = автозаполнение не настроено.
+  findPartyByInn: (token, inn) => request("/dadata/party", { token, query: { inn } }),
+
   getMyCompany: (token) => request("/companies/me", { token }),
   updateCompanyModules: (token, payload) =>
     request("/companies/me/modules", { method: "PATCH", token, body: payload }),
@@ -184,6 +188,27 @@ export const api = {
   updateCounterparty: (token, id, payload) =>
     request(`/counterparties/${id}`, { method: "PATCH", token, body: payload }),
   deleteCounterparty: (token, id) => request(`/counterparties/${id}`, { method: "DELETE", token }),
+
+  // Контактные лица контрагента — карточка организации первична, контакты под ней
+  createContact: (token, counterpartyId, payload) =>
+    request(`/counterparties/${counterpartyId}/contacts`, { method: "POST", token, body: payload }),
+  updateContact: (token, id, payload) =>
+    request(`/counterparty-contacts/${id}`, { method: "PATCH", token, body: payload }),
+  deleteContact: (token, id) => request(`/counterparty-contacts/${id}`, { method: "DELETE", token }),
+
+  // Синхронизация с СДВФ (он первичен по реквизитам)
+  listSdvfCounterparties: (token, companyId) =>
+    request("/sdvf/counterparties", { token, query: { company_id: companyId } }),
+  linkCounterpartyToSdvf: (token, id, sdvfBuyerId) =>
+    request(`/counterparties/${id}/link-sdvf`, { method: "POST", token, body: { sdvf_buyer_id: sdvfBuyerId } }),
+  createCounterpartyInSdvf: (token, id) =>
+    request(`/counterparties/${id}/create-in-sdvf`, { method: "POST", token }),
+  syncCounterpartiesWithSdvf: (token, companyId, createMissing) =>
+    request("/counterparties/sync-sdvf", {
+      method: "POST",
+      token,
+      query: { company_id: companyId, create_missing: createMissing },
+    }),
 
   listPlanning: (token, query) => request("/planning", { token, query }),
   createPlanning: (token, payload, companyId) =>

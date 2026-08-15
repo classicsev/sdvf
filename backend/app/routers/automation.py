@@ -18,13 +18,14 @@ from app.config import settings
 from app.crypto import decrypt_field, encrypt_field
 from app.database import get_db
 from app.fx import convert_to_rub
-from app.integrations.amocrm import AmoCrmClient, AmoCrmError, map_contact, map_lead
+from app.integrations.amocrm import AmoCrmClient, AmoCrmError, map_company, map_contact, map_lead
 from app.integrations.tbank import TBankClient, TBankError, map_operation
 from app.models import (
     Account,
     AutomationRule,
     Category,
     Counterparty,
+    CounterpartyContact,
     Integration,
     Project,
     RoleEnum,
@@ -380,27 +381,103 @@ def sync_amocrm(
 
     contacts_created = 0
     contacts_matched = 0
+    companies_created = 0
+    companies_matched = 0
+    kept_sdvf_data = 0
     deals_created = 0
     deals_skipped = 0
-    contact_names_by_id: dict[int, str] = {}
+    # amoCRM company id -> наша карточка контрагента, чтобы подвязать контакты
+    counterparty_by_amo_company: dict[int, Counterparty] = {}
+    # amoCRM contact id -> карточка контрагента, к которой относится этот контакт.
+    # Сделка приходит со ссылкой на контакт, а платит всегда организация — по этой
+    # карте транзакция ложится на компанию контакта, а не на само физлицо.
+    counterparty_by_amo_contact: dict[int, Counterparty] = {}
 
     try:
+        # 1) Компании amoCRM → карточки контрагентов. Компания первична: контакты
+        # ниже вешаются на неё, а не заводятся отдельными контрагентами.
+        for raw_company in client.fetch_all_companies():
+            mapped = map_company(raw_company)
+            if mapped is None:
+                continue
+
+            counterparty = (
+                db.query(Counterparty)
+                .filter(Counterparty.company_id == company_id, Counterparty.amocrm_company_id == mapped["id"])
+                .first()
+            )
+            if counterparty is None:
+                # Совпадение по названию — карточка могла быть заведена руками
+                # или прийти из СДВФ раньше; связываем, а не плодим дубль.
+                counterparty = (
+                    db.query(Counterparty)
+                    .filter(Counterparty.company_id == company_id, Counterparty.name == mapped["name"])
+                    .first()
+                )
+                if counterparty is None:
+                    counterparty = Counterparty(company_id=company_id, name=mapped["name"])
+                    db.add(counterparty)
+                    companies_created += 1
+                else:
+                    companies_matched += 1
+                counterparty.amocrm_company_id = mapped["id"]
+            else:
+                companies_matched += 1
+
+            # СДВФ первичен: если карточка уже связана с ним, реквизиты из амо
+            # не перетираем — иначе документы уйдут с данными из CRM, а не из ЕГРЮЛ.
+            if counterparty.sdvf_buyer_id:
+                kept_sdvf_data += 1
+            else:
+                counterparty.phone = mapped["phone"] or counterparty.phone
+                counterparty.email = mapped["email"] or counterparty.email
+                counterparty.address = mapped["address"] or counterparty.address
+
+            db.flush()
+            counterparty_by_amo_company[mapped["id"]] = counterparty
+
+        # 2) Контакты amoCRM → контактные лица своей компании. Контакт без
+        # компании становится карточкой-физлицом (иначе он потеряется).
         for raw_contact in client.fetch_all_contacts():
             mapped = map_contact(raw_contact)
             if mapped is None:
                 continue
-            contact_names_by_id[mapped["id"]] = mapped["name"]
-            already_existed = (
-                db.query(Counterparty)
-                .filter(Counterparty.company_id == company_id, Counterparty.name == mapped["name"])
+
+            parent = counterparty_by_amo_company.get(mapped["company_id"]) if mapped["company_id"] else None
+            if parent is None:
+                parent = _get_or_create_counterparty(db, mapped["name"], company_id)
+                if mapped["company_id"]:
+                    counterparty_by_amo_company[mapped["company_id"]] = parent
+            counterparty_by_amo_contact[mapped["id"]] = parent
+
+            contact = (
+                db.query(CounterpartyContact)
+                .filter(
+                    CounterpartyContact.company_id == company_id,
+                    CounterpartyContact.amocrm_contact_id == mapped["id"],
+                )
                 .first()
-                is not None
             )
-            _get_or_create_counterparty(db, mapped["name"], company_id)
-            if already_existed:
-                contacts_matched += 1
-            else:
+            if contact is None:
+                db.add(
+                    CounterpartyContact(
+                        company_id=company_id,
+                        counterparty_id=parent.id,
+                        full_name=mapped["name"],
+                        position=mapped["position"],
+                        phone=mapped["phone"],
+                        email=mapped["email"],
+                        amocrm_contact_id=mapped["id"],
+                    )
+                )
                 contacts_created += 1
+            else:
+                contact.counterparty_id = parent.id
+                contact.full_name = mapped["name"]
+                contact.position = mapped["position"] or contact.position
+                contact.phone = mapped["phone"] or contact.phone
+                contact.email = mapped["email"] or contact.email
+                contacts_matched += 1
         db.flush()
 
         for raw_lead in client.fetch_all_leads(date_from=payload.date_from):
@@ -423,10 +500,10 @@ def sync_amocrm(
                 continue
 
             category = _get_or_create_import_category(db, TxTypeEnum.income, company_id)
-            counterparty_id = None
-            contact_name = contact_names_by_id.get(mapped["contact_id"])
-            if contact_name:
-                counterparty_id = _get_or_create_counterparty(db, contact_name, company_id).id
+            # Контрагент сделки — организация контакта (или он сам, если контакт
+            # без компании); см. counterparty_by_amo_contact выше.
+            parent = counterparty_by_amo_contact.get(mapped["contact_id"])
+            counterparty_id = parent.id if parent else None
 
             db.add(
                 Transaction(
@@ -468,6 +545,9 @@ def sync_amocrm(
     return AmoCrmSyncResult(
         contacts_created=contacts_created,
         contacts_matched=contacts_matched,
+        companies_created=companies_created,
+        companies_matched=companies_matched,
+        kept_sdvf_data=kept_sdvf_data,
         deals_created=deals_created,
         deals_skipped=deals_skipped,
     )

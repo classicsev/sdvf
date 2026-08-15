@@ -3,11 +3,13 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Date,
     DateTime,
     Enum,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -124,6 +126,11 @@ class Project(Base):
 
 
 class Counterparty(Base):
+    """Карточка контрагента-организации. Первична именно организация, контакты
+    (физлица) подвязываются к ней — см. CounterpartyContact. Источник истины по
+    реквизитам — СДВФ: если карточка связана с Buyer в СДВФ (sdvf_buyer_id), при
+    синхронизации его данные перетирают пришедшие из amoCRM."""
+
     __tablename__ = "counterparties"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
@@ -132,6 +139,48 @@ class Counterparty(Base):
     type: Mapped[str] = mapped_column(String(20), default="debtor")  # debtor / creditor
     inn: Mapped[str] = mapped_column(String(20), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Реквизиты — те же поля, что у Buyer в СДВФ, чтобы карточки совпадали
+    # один в один и документы уходили с верными данными.
+    kpp: Mapped[str] = mapped_column(String(20), nullable=True)
+    ogrn: Mapped[str] = mapped_column(String(20), nullable=True)
+    address: Mapped[str] = mapped_column(Text, nullable=True)
+    phone: Mapped[str] = mapped_column(String(50), nullable=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=True)
+
+    # Связи с внешними системами. sdvf_buyer_id пустой = карточка ещё не заведена
+    # в СДВФ (на фронте помечается как несинхронизированная, с кнопками
+    # "привязать к существующей" / "создать в СДВФ").
+    sdvf_buyer_id: Mapped[int] = mapped_column(Integer, nullable=True)
+    sdvf_synced_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    amocrm_company_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
+
+    contacts: Mapped[list["CounterpartyContact"]] = relationship(
+        back_populates="counterparty", cascade="all, delete-orphan"
+    )
+
+
+class CounterpartyContact(Base):
+    """Контактное лицо в организации-контрагенте (как в amoCRM: контакт всегда
+    принадлежит компании). Контакт из amoCRM без компании контрагентом не
+    становится — заводится карточка-физлицо, а контакт вешается на неё."""
+
+    __tablename__ = "counterparty_contacts"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
+    counterparty_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("counterparties.id", ondelete="CASCADE"), index=True
+    )
+    full_name: Mapped[str] = mapped_column(String(300))
+    position: Mapped[str] = mapped_column(String(150), nullable=True)
+    phone: Mapped[str] = mapped_column(String(50), nullable=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    amocrm_contact_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    counterparty: Mapped["Counterparty"] = relationship(back_populates="contacts")
 
 
 class Employee(Base):

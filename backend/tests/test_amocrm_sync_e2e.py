@@ -1,4 +1,4 @@
-from app.models import Counterparty, Integration, RoleEnum, Transaction
+from app.models import Counterparty, CounterpartyContact, Integration, RoleEnum, Transaction
 from app.routers import automation as automation_router
 from tests.conftest import auth_headers, make_account, make_user
 
@@ -18,10 +18,26 @@ class _FakeAmoCrmClient:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
 
+    def fetch_all_companies(self):
+        return iter(
+            [
+                {
+                    "id": 500,
+                    "name": "ООО Мидии Омск",
+                    "custom_fields_values": [
+                        {"field_code": "PHONE", "values": [{"value": "+73812000000"}]},
+                    ],
+                },
+                {"id": 501},  # без имени — map_company вернёт None, пропускается
+            ]
+        )
+
     def fetch_all_contacts(self):
         return iter(
             [
-                {"id": 1, "name": "ООО Мидии Омск"},
+                # Контакт с компанией — становится контактным лицом ООО Мидии Омск
+                {"id": 1, "name": "Иванов Иван", "_embedded": {"companies": [{"id": 500}]}},
+                # Контакт без компании — сам становится карточкой контрагента (физлицо)
                 {"id": 2, "name": "ИП Мальшин"},
                 {"id": 3},  # без имени — map_contact вернёт None, должен быть пропущен
             ]
@@ -93,18 +109,31 @@ def test_sync_amocrm_creates_contacts_and_won_deal_transaction(client, db_sessio
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["contacts_created"] == 2
+    assert body["companies_created"] == 1  # ООО Мидии Омск
+    assert body["contacts_created"] == 2  # Иванов Иван + ИП Мальшин (контакт без компании)
     assert body["contacts_matched"] == 0
     assert body["deals_created"] == 1
     assert body["deals_skipped"] == 2  # не "успешно реализовано" + без суммы
 
     cp_names = {c.name for c in db_session.query(Counterparty).all()}
+    # Карточка контрагента — компания из амо; контакт без компании тоже становится карточкой
     assert {"ООО Мидии Омск", "ИП Мальшин"} <= cp_names
+    # Контакт с компанией контрагентом НЕ становится — он контактное лицо
+    assert "Иванов Иван" not in cp_names
+
+    company_cp = db_session.query(Counterparty).filter(Counterparty.name == "ООО Мидии Омск").first()
+    assert company_cp.amocrm_company_id == 500
+    assert company_cp.phone == "+73812000000"
+    contacts = db_session.query(CounterpartyContact).filter(
+        CounterpartyContact.counterparty_id == company_cp.id
+    ).all()
+    assert [c.full_name for c in contacts] == ["Иванов Иван"]
 
     tx = db_session.query(Transaction).filter(Transaction.external_ref == "amocrm:100").first()
     assert tx is not None
     assert tx.type.value == "income"
     assert float(tx.amount) == 21000.0
+    # Сделка пришла со ссылкой на контакт — платит организация этого контакта
     counterparty = db_session.get(Counterparty, tx.counterparty_id)
     assert counterparty.name == "ООО Мидии Омск"
 
@@ -128,9 +157,14 @@ def test_sync_amocrm_dedupes_on_rerun(client, db_session, monkeypatch):
     assert body["deals_skipped"] == 3  # дубль + не-выигранная + без суммы
     assert body["contacts_created"] == 0
     assert body["contacts_matched"] == 2
+    assert body["companies_created"] == 0
+    assert body["companies_matched"] == 1
 
     total_tx = db_session.query(Transaction).filter(Transaction.external_ref.like("amocrm:%")).count()
     assert total_tx == 1
+    # Повторный синк не должен плодить ни карточки, ни контакты
+    assert db_session.query(Counterparty).filter(Counterparty.name == "ООО Мидии Омск").count() == 1
+    assert db_session.query(CounterpartyContact).count() == 2
 
 
 def test_sync_amocrm_requires_connected_integration(client, db_session):
@@ -165,8 +199,11 @@ def test_sync_amocrm_fails_cleanly_on_api_error(client, db_session, monkeypatch)
         def __init__(self, **kwargs):
             pass
 
-        def fetch_all_contacts(self):
+        def fetch_all_companies(self):
             raise AmoCrmError("amoCRM API вернул 401: токен недействителен")
+
+        def fetch_all_contacts(self):
+            return iter([])
 
         def fetch_all_leads(self, date_from=None):
             return iter([])

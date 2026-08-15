@@ -4,7 +4,7 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from app.integrations.amocrm import AmoCrmClient, AmoCrmError, map_contact, map_lead
+from app.integrations.amocrm import AmoCrmClient, AmoCrmError, map_company, map_contact, map_lead
 
 
 class _FakeResponse:
@@ -152,9 +152,53 @@ def test_get_raises_on_non_200_non_401(monkeypatch):
 
 
 def test_map_contact_valid_and_invalid():
-    assert map_contact({"id": 1, "name": "ООО Мидии Омск"}) == {"id": 1, "name": "ООО Мидии Омск"}
+    assert map_contact({"id": 1, "name": "ООО Мидии Омск"}) == {
+        "id": 1,
+        "name": "ООО Мидии Омск",
+        "company_id": None,
+        "phone": None,
+        "email": None,
+        "position": None,
+    }
     assert map_contact({"id": 1}) is None
     assert map_contact({"name": "x"}) is None
+
+
+def test_map_contact_extracts_company_and_custom_fields():
+    raw = {
+        "id": 77,
+        "name": "Иванов Иван",
+        "_embedded": {"companies": [{"id": 500}]},
+        "custom_fields_values": [
+            {"field_code": "PHONE", "values": [{"value": "+79990000000"}]},
+            {"field_code": "EMAIL", "values": [{"value": "ivanov@example.com"}]},
+            {"field_code": "POSITION", "values": [{"value": "Закупщик"}]},
+        ],
+    }
+    mapped = map_contact(raw)
+    assert mapped["company_id"] == 500
+    assert mapped["phone"] == "+79990000000"
+    assert mapped["email"] == "ivanov@example.com"
+    assert mapped["position"] == "Закупщик"
+
+
+def test_map_company_valid_and_invalid():
+    raw = {
+        "id": 500,
+        "name": 'ООО "Тихоокеанская Фактория"',
+        "custom_fields_values": [
+            {"field_code": "PHONE", "values": [{"value": "+74230000000"}]},
+            {"field_code": "ADDRESS", "values": [{"value": "г Владивосток"}]},
+        ],
+    }
+    mapped = map_company(raw)
+    assert mapped["id"] == 500
+    assert mapped["phone"] == "+74230000000"
+    assert mapped["address"] == "г Владивосток"
+    assert mapped["email"] is None
+
+    assert map_company({"id": 1}) is None
+    assert map_company({"name": "x"}) is None
 
 
 def test_map_lead_won_deal():

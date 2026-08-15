@@ -33,6 +33,23 @@ class SdvfClient:
         except httpx.HTTPError as exc:
             raise SdvfError(f"Ошибка соединения с СДВФ: {exc}") from exc
 
+        return self._parse(resp)
+
+    def _get(self, path: str, params: dict) -> dict:
+        try:
+            resp = httpx.get(
+                f"{self.base_url}{path}",
+                params=params,
+                headers={"X-API-Key": self.api_key},
+                timeout=self.timeout,
+            )
+        except httpx.HTTPError as exc:
+            raise SdvfError(f"Ошибка соединения с СДВФ: {exc}") from exc
+
+        return self._parse(resp)
+
+    @staticmethod
+    def _parse(resp: httpx.Response) -> dict:
         if resp.status_code != 200:
             detail = resp.text[:300]
             try:
@@ -41,6 +58,15 @@ class SdvfClient:
                 pass
             raise SdvfError(f"СДВФ вернул {resp.status_code}: {detail}")
         return resp.json()
+
+    def list_counterparties(self, organization_inn: str, inn: Optional[str] = None) -> list[dict]:
+        """Контрагенты аккаунта, которому принадлежит организация с этим ИНН.
+        organization_inn обязателен: без него СДВФ отдаст карточки служебного
+        пользователя интеграции, а не реального клиента (см. integration_api)."""
+        params = {"organization_inn": organization_inn}
+        if inn:
+            params["inn"] = inn
+        return self._get("/api/integration/counterparties/list/", params).get("items") or []
 
     def get_or_create_organization(
         self,
@@ -66,10 +92,21 @@ class SdvfClient:
         ogrn: Optional[str] = None,
         address: Optional[str] = None,
         phone: Optional[str] = None,
+        organization_inn: Optional[str] = None,
     ) -> dict:
+        # organization_inn определяет, в чьём аккаунте СДВФ появится карточка —
+        # без него она уйдёт служебному пользователю и клиент её не увидит.
         return self._post(
             "/api/integration/counterparties/",
-            {"inn": inn, "naming": naming, "kpp": kpp, "ogrn": ogrn, "address": address, "phone": phone},
+            {
+                "inn": inn,
+                "naming": naming,
+                "kpp": kpp,
+                "ogrn": ogrn,
+                "address": address,
+                "phone": phone,
+                "organization_inn": organization_inn,
+            },
         )
 
     def create_invoice(
