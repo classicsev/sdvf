@@ -339,7 +339,7 @@ html, body {
 .fp-register-notice .fp-brand-mark { margin: 0 auto 14px; }
 .fp-register-notice h2 { font-family: 'Fraunces', serif; font-size: 18px; margin: 0 0 10px; }
 .fp-register-notice p { font-size: 13px; color: #5B6472; line-height: 1.55; margin: 0 0 10px; }
-.fp-register-notice .fp-spam-hint {
+.fp-spam-hint {
   background: #FBF3E3; color: #8A6A1F; border-radius: 8px; padding: 10px 12px; font-size: 12.5px;
   text-align: left; margin: 14px 0;
 }
