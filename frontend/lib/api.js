@@ -131,6 +131,9 @@ export const api = {
   // listCompanies тут для повторного запроса после изменений (создание/приглашение).
   listCompanies: (token) => request("/companies", { token }),
   createCompany: (token, payload) => request("/companies", { method: "POST", token, body: payload }),
+  updateCompany: (token, companyId, payload) =>
+    request(`/companies/${companyId}`, { method: "PATCH", token, body: payload }),
+  deleteCompany: (token, companyId) => request(`/companies/${companyId}`, { method: "DELETE", token }),
   updateCompanyModulesFor: (token, companyId, payload) =>
     request(`/companies/${companyId}/modules`, { method: "PATCH", token, body: payload }),
   addCompanyMember: (token, companyId, payload) =>

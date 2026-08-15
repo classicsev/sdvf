@@ -288,6 +288,11 @@ class CompanyCreate(BaseModel):
     company_type: str = "legal_entity"
 
 
+class CompanyUpdate(BaseModel):
+    name: Optional[str] = None
+    company_type: Optional[str] = None
+
+
 class CompanyMemberCreate(BaseModel):
     email: str
     role: RoleEnum

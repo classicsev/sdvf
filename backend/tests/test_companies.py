@@ -261,3 +261,83 @@ def test_modules_page_reachable_even_when_module_disabled(client, db_session):
     )
     assert turn_on.status_code == 200
     assert turn_on.json()["module_finance_enabled"] is True
+
+
+# ---------------------------------------------------------------------------
+# Редактирование / удаление компании (не только "первой" — любой, где admin)
+# ---------------------------------------------------------------------------
+
+
+def test_admin_can_rename_second_company(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    resp = client.post("/companies", json={"name": "Черновик", "company_type": "legal_entity"}, headers=auth_headers(admin))
+    assert resp.status_code == 201, resp.text
+    company_id = resp.json()["company"]["id"]
+
+    resp = client.patch(
+        f"/companies/{company_id}",
+        json={"name": 'ООО "Тихоокеанская Фактория"', "company_type": "legal_entity"},
+        headers=auth_headers(admin),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["name"] == 'ООО "Тихоокеанская Фактория"'
+
+
+def test_update_company_rejects_invalid_type(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    resp = client.post("/companies", json={"name": "Х"}, headers=auth_headers(admin))
+    company_id = resp.json()["company"]["id"]
+
+    resp = client.patch(
+        f"/companies/{company_id}", json={"company_type": "not_a_real_type"}, headers=auth_headers(admin)
+    )
+    assert resp.status_code == 400
+
+
+def test_non_admin_cannot_rename_company(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    resp = client.post("/companies", json={"name": "Черновик"}, headers=auth_headers(admin))
+    company_id = resp.json()["company"]["id"]
+    viewer = make_user(db_session, RoleEnum.viewer, company_id=company_id)
+
+    resp = client.patch(f"/companies/{company_id}", json={"name": "Взлом"}, headers=auth_headers(viewer))
+    assert resp.status_code == 403
+
+
+def test_admin_can_delete_empty_company(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    resp = client.post("/companies", json={"name": "Удалить меня"}, headers=auth_headers(admin))
+    company_id = resp.json()["company"]["id"]
+
+    resp = client.delete(f"/companies/{company_id}", headers=auth_headers(admin))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["deleted"] is True
+
+    # Компании больше нет в списке доступных
+    resp = client.get("/companies", headers=auth_headers(admin))
+    assert company_id not in [m["company"]["id"] for m in resp.json()]
+
+
+def test_delete_company_with_data_is_rejected(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    resp = client.post("/companies", json={"name": "С данными"}, headers=auth_headers(admin))
+    company_id = resp.json()["company"]["id"]
+    make_counterparty(db_session, name="Есть контрагент", company_id=company_id)
+
+    resp = client.delete(f"/companies/{company_id}", headers=auth_headers(admin))
+    assert resp.status_code == 400
+    assert "данные" in resp.json()["detail"]
+
+    # Компания осталась на месте
+    resp = client.get("/companies", headers=auth_headers(admin))
+    assert company_id in [m["company"]["id"] for m in resp.json()]
+
+
+def test_non_admin_cannot_delete_company(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    resp = client.post("/companies", json={"name": "Черновик"}, headers=auth_headers(admin))
+    company_id = resp.json()["company"]["id"]
+    viewer = make_user(db_session, RoleEnum.viewer, company_id=company_id)
+
+    resp = client.delete(f"/companies/{company_id}", headers=auth_headers(viewer))
+    assert resp.status_code == 403

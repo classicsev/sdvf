@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import check_company_role, get_current_user, hash_password, require_roles
@@ -13,6 +14,7 @@ from app.schemas import (
     CompanyMembershipOut,
     CompanyModulesIn,
     CompanyOut,
+    CompanyUpdate,
 )
 from app.utils import get_or_404
 
@@ -97,6 +99,54 @@ def create_company(payload: CompanyCreate, db: Session = Depends(get_db), user: 
     db.commit()
     db.refresh(membership)
     return membership
+
+
+@router.patch("/{company_id}", response_model=CompanyOut)
+def update_company(
+    company_id: str,
+    payload: CompanyUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    check_company_role(db, user, company_id, [RoleEnum.admin])
+    company = get_or_404(db, Company, company_id, "Компания не найдена")
+    changes = payload.model_dump(exclude_unset=True)
+    if changes.get("company_type") is not None and changes["company_type"] not in VALID_COMPANY_TYPES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некорректный тип компании")
+    for field, value in changes.items():
+        setattr(company, field, value)
+    db.commit()
+    db.refresh(company)
+    return company
+
+
+@router.delete("/{company_id}")
+def delete_company(
+    company_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    check_company_role(db, user, company_id, [RoleEnum.admin])
+    company = get_or_404(db, Company, company_id, "Компания не найдена")
+
+    # Компанию можно удалить только "пустой" — как только в ней появляются
+    # реальные данные (счета, операции, контрагенты и т.д.), FK на company_id
+    # без ondelete=CASCADE у этих таблиц остановит удаление IntegrityError —
+    # это и есть защита от случайной потери финансовых данных. Для компании
+    # с историей — деактивация модулей, а не удаление.
+    db.delete(company)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "В компании уже есть данные (счета, операции, контрагенты и т.п.) — "
+                "удалить нельзя, чтобы не потерять историю. Отключите модули вместо удаления."
+            ),
+        )
+    return {"deleted": True}
 
 
 @router.patch("/{company_id}/modules", response_model=CompanyOut)
