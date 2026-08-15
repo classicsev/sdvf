@@ -26,6 +26,7 @@ const TABS = {
     create: (token, payload, companyId) => api.createCategory(token, payload, companyId),
     update: (token, id, payload) => api.updateCategory(token, id, payload),
     remove: (token, id) => api.deleteCategory(token, id),
+    moveCompany: (token, id, companyId) => api.moveCategoryCompany(token, id, companyId),
     fields: [
       { key: "name", label: "Название статьи", type: "text", required: true },
       { key: "group_name", label: "Группа", type: "text" },
@@ -54,6 +55,7 @@ const TABS = {
     create: (token, payload, companyId) => api.createProject(token, payload, companyId),
     update: (token, id, payload) => api.updateProject(token, id, payload),
     remove: (token, id) => api.deleteProject(token, id),
+    moveCompany: (token, id, companyId) => api.moveProjectCompany(token, id, companyId),
     fields: [{ key: "name", label: "Название проекта", type: "text", required: true }],
     columns: [{ key: "name", label: "Проект" }, STATUS_COLUMN],
   },
@@ -65,6 +67,7 @@ const TABS = {
     create: (token, payload, companyId) => api.createAccount(token, payload, companyId),
     update: (token, id, payload) => api.updateAccount(token, id, payload),
     remove: (token, id) => api.deleteAccount(token, id),
+    moveCompany: (token, id, companyId) => api.moveAccountCompany(token, id, companyId),
     fields: [
       { key: "name", label: "Название счёта", type: "text", required: true },
       {
@@ -132,6 +135,7 @@ export default function Reference() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(defaultFormFor(config.fields));
   const [formCompanyId, setFormCompanyId] = useState("");
+  const [originalCompanyId, setOriginalCompanyId] = useState("");
   const [formIsActive, setFormIsActive] = useState(true);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -142,6 +146,7 @@ export default function Reference() {
     const editableCompanies = companies.filter((m) => canEditReference(m.role));
     const preselected = editableCompanies.find((m) => m.company.id === companyFilter) || editableCompanies[0];
     setFormCompanyId(preselected?.company.id || "");
+    setOriginalCompanyId("");
     setFormIsActive(true);
     setFormError("");
     setModalOpen(true);
@@ -153,6 +158,7 @@ export default function Reference() {
     config.fields.forEach((f) => (next[f.key] = item[f.key] ?? ""));
     setForm(next);
     setFormCompanyId(item.company_id || "");
+    setOriginalCompanyId(item.company_id || "");
     setFormIsActive(item.is_active !== false);
     setFormError("");
     setModalOpen(true);
@@ -172,6 +178,13 @@ export default function Reference() {
         if (f.type === "number") payload[f.key] = Number(payload[f.key] || 0);
       });
       if (editingId) {
+        // Перенос в другую компанию — отдельным вызовом (бэкенд блокирует его,
+        // если запись уже где-то используется, см. move_to_company) и раньше
+        // остальных правок, чтобы не сохранить их в исходной компании, если
+        // перенос не удался.
+        if (multiCompany && formCompanyId && formCompanyId !== originalCompanyId) {
+          await config.moveCompany(token, editingId, formCompanyId);
+        }
         await config.update(token, editingId, payload);
       } else {
         await config.create(token, payload, formCompanyId || undefined);
@@ -325,20 +338,29 @@ export default function Reference() {
               {multiCompany && (
                 <label className="fp-span-2">
                   Компания
-                  {editingId ? (
-                    <input
-                      type="text"
-                      disabled
-                      value={companies.find((m) => m.company.id === formCompanyId)?.company.name || ""}
-                    />
-                  ) : (
-                    <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
-                      {editableCompanies.map((m) => (
-                        <option key={m.company.id} value={m.company.id}>
-                          {m.company.name}
-                        </option>
-                      ))}
-                    </select>
+                  <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
+                    {/* Текущая компания записи может быть уже недоступна для
+                        переноса (не admin) — всё равно показываем её в списке,
+                        иначе выбранное значение "потеряется" при открытии формы. */}
+                    {!editableCompanies.some((m) => m.company.id === originalCompanyId) &&
+                      originalCompanyId &&
+                      companies
+                        .filter((m) => m.company.id === originalCompanyId)
+                        .map((m) => (
+                          <option key={m.company.id} value={m.company.id}>
+                            {m.company.name}
+                          </option>
+                        ))}
+                    {editableCompanies.map((m) => (
+                      <option key={m.company.id} value={m.company.id}>
+                        {m.company.name}
+                      </option>
+                    ))}
+                  </select>
+                  {editingId && formCompanyId !== originalCompanyId && (
+                    <span className="fp-muted" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+                      Перенос сработает, только если запись ещё нигде не используется.
+                    </span>
                   )}
                 </label>
               )}

@@ -172,18 +172,24 @@ export const api = {
     request("/categories", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updateCategory: (token, id, payload) => request(`/categories/${id}`, { method: "PATCH", token, body: payload }),
   deleteCategory: (token, id) => request(`/categories/${id}`, { method: "DELETE", token }),
+  moveCategoryCompany: (token, id, companyId) =>
+    request(`/categories/${id}/company`, { method: "PATCH", token, body: { company_id: companyId } }),
 
   listProjects: (token, query) => request("/projects", { token, query }),
   createProject: (token, payload, companyId) =>
     request("/projects", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updateProject: (token, id, payload) => request(`/projects/${id}`, { method: "PATCH", token, body: payload }),
   deleteProject: (token, id) => request(`/projects/${id}`, { method: "DELETE", token }),
+  moveProjectCompany: (token, id, companyId) =>
+    request(`/projects/${id}/company`, { method: "PATCH", token, body: { company_id: companyId } }),
 
   listAccounts: (token, query) => request("/accounts", { token, query }),
   createAccount: (token, payload, companyId) =>
     request("/accounts", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updateAccount: (token, id, payload) => request(`/accounts/${id}`, { method: "PATCH", token, body: payload }),
   deleteAccount: (token, id) => request(`/accounts/${id}`, { method: "DELETE", token }),
+  moveAccountCompany: (token, id, companyId) =>
+    request(`/accounts/${id}/company`, { method: "PATCH", token, body: { company_id: companyId } }),
 
   listCounterparties: (token, query) => request("/counterparties", { token, query }),
   createCounterparty: (token, payload, companyId) =>
@@ -191,6 +197,8 @@ export const api = {
   updateCounterparty: (token, id, payload) =>
     request(`/counterparties/${id}`, { method: "PATCH", token, body: payload }),
   deleteCounterparty: (token, id) => request(`/counterparties/${id}`, { method: "DELETE", token }),
+  moveCounterpartyCompany: (token, id, companyId) =>
+    request(`/counterparties/${id}/company`, { method: "PATCH", token, body: { company_id: companyId } }),
 
   // Контактные лица контрагента — карточка организации первична, контакты под ней
   createContact: (token, counterpartyId, payload) =>

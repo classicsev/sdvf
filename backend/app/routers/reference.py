@@ -41,11 +41,12 @@ from app.schemas import (
     CounterpartyOut,
     CounterpartySdvfLinkIn,
     CounterpartySyncResult,
+    MoveCompanyIn,
     ProjectIn,
     ProjectOut,
     SdvfCounterpartyOut,
 )
-from app.utils import delete_or_deactivate, get_or_404_accessible
+from app.utils import delete_or_deactivate, get_or_404_accessible, move_to_company
 
 router = APIRouter(tags=["reference"])
 
@@ -54,6 +55,18 @@ ADMIN_ONLY = [RoleEnum.admin]
 
 def _get_or_404(db: Session, user: User, model, entity_id: str):
     return get_or_404_accessible(db, model, entity_id, get_accessible_company_ids(db, user))
+
+
+def _move_to_company(db, user, obj, payload: MoveCompanyIn, references: list[tuple[type, str]]):
+    """Перенос справочной записи в другую компанию — только между компаниями,
+    где пользователь admin (и в исходной, и в целевой: иначе можно было бы
+    "подарить" запись в компанию, которой не управляешь, или наоборот забрать
+    чужую), и только пока запись ничем не используется (см. move_to_company)."""
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
+    check_company_role(db, user, payload.company_id, ADMIN_ONLY)
+    move_to_company(db, obj, payload.company_id, references)
+    db.refresh(obj)
+    return obj
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +118,21 @@ def delete_category(category_id: str, db: Session = Depends(get_db), user: User 
     check_company_role(db, user, obj.company_id, ADMIN_ONLY)
     deleted = delete_or_deactivate(db, obj, [(Transaction, "category_id"), (Planning, "category_id")])
     return {"deleted": deleted, "deactivated": not deleted}
+
+
+@router.patch(
+    "/categories/{category_id}/company",
+    response_model=CategoryOut,
+    dependencies=[Depends(require_module("finance"))],
+)
+def move_category_company(
+    category_id: str,
+    payload: MoveCompanyIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    obj = _get_or_404(db, user, Category, category_id)
+    return _move_to_company(db, user, obj, payload, [(Transaction, "category_id"), (Planning, "category_id")])
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +195,30 @@ def delete_project(project_id: str, db: Session = Depends(get_db), user: User = 
     return {"deleted": deleted, "deactivated": not deleted}
 
 
+@router.patch(
+    "/projects/{project_id}/company", response_model=ProjectOut, dependencies=[Depends(require_module("finance"))]
+)
+def move_project_company(
+    project_id: str,
+    payload: MoveCompanyIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    obj = _get_or_404(db, user, Project, project_id)
+    return _move_to_company(
+        db,
+        user,
+        obj,
+        payload,
+        [
+            (Transaction, "project_id"),
+            (Planning, "project_id"),
+            (PayrollAccrual, "project_id"),
+            (CompanyMember, "project_id"),
+        ],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Счета
 # ---------------------------------------------------------------------------
@@ -216,6 +268,21 @@ def delete_account(account_id: str, db: Session = Depends(get_db), user: User = 
     check_company_role(db, user, obj.company_id, ADMIN_ONLY)
     deleted = delete_or_deactivate(db, obj, [(Transaction, "account_id"), (PayrollPayment, "account_id")])
     return {"deleted": deleted, "deactivated": not deleted}
+
+
+@router.patch(
+    "/accounts/{account_id}/company", response_model=AccountOut, dependencies=[Depends(require_module("finance"))]
+)
+def move_account_company(
+    account_id: str,
+    payload: MoveCompanyIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    obj = _get_or_404(db, user, Account, account_id)
+    return _move_to_company(
+        db, user, obj, payload, [(Transaction, "account_id"), (PayrollPayment, "account_id")]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +350,26 @@ def delete_counterparty(counterparty_id: str, db: Session = Depends(get_db), use
     check_company_role(db, user, obj.company_id, ADMIN_ONLY)
     deleted = delete_or_deactivate(db, obj, [(Transaction, "counterparty_id")])
     return {"deleted": deleted, "deactivated": not deleted}
+
+
+@router.patch(
+    "/counterparties/{counterparty_id}/company",
+    response_model=CounterpartyOut,
+    dependencies=[Depends(require_module("finance", "warehouse"))],
+)
+def move_counterparty_company(
+    counterparty_id: str,
+    payload: MoveCompanyIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    obj = _get_or_404(db, user, Counterparty, counterparty_id)
+    # CounterpartyContact хранит свой собственный company_id (не наследует его
+    # от контрагента) — перенос "потерял" бы контакты в старой компании, поэтому
+    # блокируем, пока они есть, так же как и при наличии операций.
+    return _move_to_company(
+        db, user, obj, payload, [(Transaction, "counterparty_id"), (CounterpartyContact, "counterparty_id")]
+    )
 
 
 # ---------------------------------------------------------------------------

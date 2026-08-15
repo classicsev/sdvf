@@ -93,6 +93,10 @@ class AccountOut(AccountIn):
     is_active: bool
 
 
+class MoveCompanyIn(BaseModel):
+    company_id: str
+
+
 class CounterpartyContactIn(BaseModel):
     full_name: str
     position: Optional[str] = None

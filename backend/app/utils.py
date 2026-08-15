@@ -24,6 +24,24 @@ def delete_or_deactivate(db: Session, obj: ModelT, references: list[tuple[Type, 
     return True
 
 
+def move_to_company(
+    db: Session, obj: ModelT, target_company_id: str, references: list[tuple[Type, str]]
+) -> None:
+    """Переносит справочную запись в другую компанию — только если на неё
+    нигде нет ссылок (тот же список references, что и у delete_or_deactivate):
+    у операции/начисления/заказа и т.п. свой собственный company_id, и перенос
+    только самой записи оставил бы их рассинхронизированными с её новой
+    компанией. Пустая (ещё неиспользуемая) запись переносится свободно."""
+    for model, fk_field in references:
+        if db.query(model).filter(getattr(model, fk_field) == obj.id).first() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Запись уже используется — перенести в другую компанию нельзя, пока есть связанные данные",
+            )
+    obj.company_id = target_company_id
+    db.commit()
+
+
 def get_or_404(
     db: Session,
     model: Type[ModelT],

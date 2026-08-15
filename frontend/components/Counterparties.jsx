@@ -74,6 +74,7 @@ export default function Counterparties() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(FORM_EMPTY);
   const [formCompanyId, setFormCompanyId] = useState("");
+  const [originalCompanyId, setOriginalCompanyId] = useState("");
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [innLookup, setInnLookup] = useState({ loading: false, message: "", error: "" });
@@ -83,6 +84,7 @@ export default function Counterparties() {
     setForm(FORM_EMPTY);
     const preselected = editableCompanies.find((m) => m.company.id === companyFilter) || editableCompanies[0];
     setFormCompanyId(preselected?.company.id || "");
+    setOriginalCompanyId("");
     setFormError("");
     setInnLookup({ loading: false, message: "", error: "" });
     setModalOpen(true);
@@ -101,6 +103,7 @@ export default function Counterparties() {
       email: item.email || "",
     });
     setFormCompanyId(item.company_id || "");
+    setOriginalCompanyId(item.company_id || "");
     setFormError("");
     setInnLookup({ loading: false, message: "", error: "" });
     setModalOpen(true);
@@ -132,6 +135,12 @@ export default function Counterparties() {
     try {
       const payload = { ...form, is_active: editing ? editing.is_active !== false : true };
       if (editing) {
+        // Тем же порядком, что и в Reference.jsx: перенос компании — отдельным
+        // вызовом раньше остальных правок (бэкенд блокирует его, если карточка
+        // уже используется или у неё есть контактные лица).
+        if (multiCompany && formCompanyId && formCompanyId !== originalCompanyId) {
+          await api.moveCounterpartyCompany(token, editing.id, formCompanyId);
+        }
         await api.updateCounterparty(token, editing.id, payload);
       } else {
         await api.createCounterparty(token, payload, formCompanyId || undefined);
@@ -394,16 +403,30 @@ export default function Counterparties() {
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmit}>
-              {multiCompany && !editing && (
+              {multiCompany && (
                 <label className="fp-span-2">
                   Компания
                   <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
+                    {editing &&
+                      !editableCompanies.some((m) => m.company.id === originalCompanyId) &&
+                      companies
+                        .filter((m) => m.company.id === originalCompanyId)
+                        .map((m) => (
+                          <option key={m.company.id} value={m.company.id}>
+                            {m.company.name}
+                          </option>
+                        ))}
                     {editableCompanies.map((m) => (
                       <option key={m.company.id} value={m.company.id}>
                         {m.company.name}
                       </option>
                     ))}
                   </select>
+                  {editing && formCompanyId !== originalCompanyId && (
+                    <span className="fp-muted" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+                      Перенос сработает, только если у карточки нет операций и контактных лиц.
+                    </span>
+                  )}
                 </label>
               )}
               <label>
