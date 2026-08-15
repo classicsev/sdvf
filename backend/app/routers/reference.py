@@ -371,6 +371,15 @@ def _company_org_inn_or_400(db: Session, company_id: str) -> str:
     return company.sdvf_org_inn
 
 
+def _normalized_name(value: Optional[str]) -> str:
+    """Название для сопоставления карточек: без кавычек, регистра и лишних
+    пробелов. 'ООО "АЗИЗИ"' и 'ООО АЗИЗИ' — одна и та же организация."""
+    text = (value or "").lower()
+    for ch in ('"', "«", "»", "'", ".", ","):
+        text = text.replace(ch, " ")
+    return " ".join(text.split())
+
+
 def _apply_sdvf_data(counterparty: Counterparty, buyer: dict) -> None:
     """СДВФ первичен: заполненные поля оттуда затирают локальные. Пустые в СДВФ
     не стирают уже известные нам данные (частичная карточка не должна обеднять)."""
@@ -527,6 +536,13 @@ def sync_counterparties_with_sdvf(
 
     local = db.query(Counterparty).filter(Counterparty.company_id == target).all()
     local_by_inn = {c.inn: c for c in local if c.inn}
+    # Карточки без ИНН (типично для пришедших из amoCRM) — сводим по названию,
+    # иначе синк создал бы рядом второй экземпляр той же организации. Только без
+    # ИНН: если ИНН есть и он другой — это разные юрлица с похожим названием.
+    local_by_name = {}
+    for c in local:
+        if not c.inn and not c.sdvf_buyer_id:
+            local_by_name.setdefault(_normalized_name(c.name), c)
     result = CounterpartySyncResult()
 
     for buyer in sdvf_items:
@@ -537,6 +553,12 @@ def sync_counterparties_with_sdvf(
 
         existing = local_by_inn.get(inn)
         if existing is None:
+            # pop — одна локальная карточка достаётся только одному контрагенту
+            # СДВФ: в самом СДВФ встречаются тёзки-дубли, и без этого второй
+            # перехватил бы уже занятую карточку.
+            existing = local_by_name.pop(_normalized_name(buyer["naming"]), None)
+
+        if existing is None:
             created = Counterparty(company_id=target, name=buyer["naming"], inn=inn, type="debtor")
             _apply_sdvf_data(created, buyer)
             db.add(created)
@@ -544,6 +566,7 @@ def sync_counterparties_with_sdvf(
             result.linked_by_inn += 1
         else:
             _apply_sdvf_data(existing, buyer)
+            local_by_inn[inn] = existing
             result.updated_from_sdvf += 1
 
     if create_missing:

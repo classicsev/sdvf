@@ -237,6 +237,65 @@ def test_sync_does_not_touch_other_company(client, db_session, monkeypatch):
     assert other_cp.sdvf_buyer_id is None
 
 
+def test_sync_merges_amocrm_card_without_inn_by_name(client, db_session, monkeypatch):
+    """Карточки из amoCRM приходят без ИНН — сводим их по названию, иначе синк
+    заведёт рядом второй экземпляр той же организации (реальный случай на проде)."""
+    _configure_sdvf(monkeypatch)
+    admin = _setup_company_with_inn(db_session)
+    from_amo = make_counterparty(db_session, name="ООО ДАЛЬРЫБА")  # без ИНН, кавычки опущены
+
+    with patch("app.integrations.sdvf.SdvfClient.list_counterparties", return_value=SDVF_ITEMS):
+        resp = client.post("/counterparties/sync-sdvf", headers=auth_headers(admin))
+
+    assert resp.status_code == 200, resp.text
+    db_session.refresh(from_amo)
+    assert from_amo.sdvf_buyer_id == 7
+    assert from_amo.inn == "2536000001"
+    assert from_amo.name == 'ООО "Дальрыба"'  # название приезжает из СДВФ — он первичен
+    # Дубля не появилось
+    assert db_session.query(Counterparty).filter(Counterparty.inn == "2536000001").count() == 1
+
+
+def test_sync_does_not_merge_by_name_when_inn_differs(client, db_session, monkeypatch):
+    """Совпало название, но у местной карточки СВОЙ ИНН — это разные юрлица,
+    сводить нельзя."""
+    _configure_sdvf(monkeypatch)
+    admin = _setup_company_with_inn(db_session)
+    local = make_counterparty(db_session, name='ООО "Дальрыба"')
+    local.inn = "9999999999"
+    db_session.commit()
+
+    with patch("app.integrations.sdvf.SdvfClient.list_counterparties", return_value=SDVF_ITEMS):
+        resp = client.post("/counterparties/sync-sdvf", headers=auth_headers(admin))
+
+    assert resp.status_code == 200
+    db_session.refresh(local)
+    assert local.sdvf_buyer_id is None  # осталась нетронутой
+    assert db_session.query(Counterparty).filter(Counterparty.inn == "2536000001").count() == 1
+
+
+def test_sync_duplicate_names_in_sdvf_do_not_grab_same_local_card(client, db_session, monkeypatch):
+    """В самом СДВФ встречаются тёзки-дубли — второй не должен перехватывать
+    карточку, уже отданную первому."""
+    _configure_sdvf(monkeypatch)
+    admin = _setup_company_with_inn(db_session)
+    make_counterparty(db_session, name='ООО "Дальрыба"')  # без ИНН
+
+    twins = [
+        SDVF_ITEMS[1],
+        {**SDVF_ITEMS[1], "id": 9, "inn": "2536000002"},  # тёзка с другим ИНН
+    ]
+    with patch("app.integrations.sdvf.SdvfClient.list_counterparties", return_value=twins):
+        resp = client.post("/counterparties/sync-sdvf", headers=auth_headers(admin))
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["updated_from_sdvf"] == 1  # первый занял карточку
+    assert body["linked_by_inn"] == 1  # второй завёл свою
+    linked_ids = {c.sdvf_buyer_id for c in db_session.query(Counterparty).all() if c.sdvf_buyer_id}
+    assert linked_ids == {7, 9}
+
+
 # --- контактные лица ---
 
 
