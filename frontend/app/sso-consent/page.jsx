@@ -14,17 +14,49 @@ function ConsentScreen({ redirectUri, state, clientName, isLink }) {
   const { token } = useAuth();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [emailSentTo, setEmailSentTo] = useState("");
 
   async function handleContinue() {
     setBusy(true);
     setError("");
     try {
-      const { redirect_url } = await api.ssoConsent(token, { redirect_uri: redirectUri, state });
+      const purpose = isLink ? "link" : "login";
+      const { redirect_url, email_sent_to } = await api.ssoConsent(token, {
+        redirect_uri: redirectUri,
+        state,
+        purpose,
+      });
+      if (email_sent_to) {
+        // purpose=link: активной сессии в браузере недостаточно (могла остаться
+        // от другого человека) — код придёт только по ссылке из письма.
+        setEmailSentTo(email_sent_to);
+        setBusy(false);
+        return;
+      }
       window.location.href = redirect_url;
     } catch (err) {
       setError(err.message || "Не удалось подтвердить вход");
       setBusy(false);
     }
+  }
+
+  if (emailSentTo) {
+    return (
+      <div className="fp-login-page">
+        <div className="fp-login-card" style={{ textAlign: "center" }}>
+          <div className="fp-brand-mark" style={{ margin: "0 auto 14px" }}>
+            ₽
+          </div>
+          <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, margin: "0 0 10px" }}>
+            Проверьте почту
+          </h2>
+          <p style={{ fontSize: 13, color: "#5B6472" }}>
+            Письмо со ссылкой для подтверждения привязки отправлено на <b>{emailSentTo}</b>. Перейдите по
+            ней, чтобы завершить привязку к {clientName} — ссылка действует 30 минут.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   function handleCancel() {
@@ -46,9 +78,9 @@ function ConsentScreen({ redirectUri, state, clientName, isLink }) {
         <p style={{ fontSize: 13, color: "#5B6472", marginBottom: 18 }}>
           {isLink ? (
             <>
-              <b>{clientName}</b> запрашивает подтверждение, что вы владеете этим аккаунтом Учёта, чтобы
-              связать его с вашим уже открытым аккаунтом в {clientName}. Ссылка появится, только если вы
-              подтвердите вход и там, и здесь.
+              <b>{clientName}</b> запрашивает привязку этого аккаунта Учёта к вашему аккаунту в{" "}
+              {clientName}. Мы отправим письмо на ваш подтверждённый email — привязка завершится только
+              после перехода по ссылке из письма.
             </>
           ) : (
             <>

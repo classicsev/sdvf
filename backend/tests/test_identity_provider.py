@@ -1,4 +1,9 @@
-from app.auth import create_access_token, create_email_verification_token, decode_sso_identity_code
+from app.auth import (
+    create_access_token,
+    create_email_verification_token,
+    create_sso_link_confirm_token,
+    decode_sso_identity_code,
+)
 from app.config import settings
 from app.models import RoleEnum
 from tests.conftest import auth_headers, make_user
@@ -160,3 +165,123 @@ def test_token_happy_path_returns_identity(client, db_session, monkeypatch):
 def test_token_503_when_not_configured(client):
     resp = client.post("/oauth/token", json={"code": "x", "client_secret": "y"})
     assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# purpose=link — привязка аккаунта: code не выдаётся сразу (в отличие от
+# входа), а только после перехода по ссылке из письма. Активной сессии в
+# браузере недостаточно — она могла остаться от другого человека на этом
+# устройстве (см. docstring модуля).
+# ---------------------------------------------------------------------------
+
+
+def test_consent_link_purpose_sends_email_instead_of_redirect(client, db_session, monkeypatch):
+    _configure_sso(monkeypatch)
+    sent = {}
+    monkeypatch.setattr(
+        "app.routers.identity_provider.send_sso_link_confirmation_email",
+        lambda to_email, token, client_name: sent.update(to=to_email, token=token) or True,
+    )
+    user = make_user(db_session, RoleEnum.admin, email="linker@test.local")
+    user.email_verified = True
+    db_session.commit()
+
+    resp = client.post(
+        "/oauth/consent",
+        headers=auth_headers(user),
+        json={"redirect_uri": LINK_REDIRECT_URI, "state": "s1", "purpose": "link"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["email_sent_to"] == "linker@test.local"
+    assert body["redirect_url"] is None
+    assert sent["to"] == "linker@test.local"
+
+
+def test_consent_link_purpose_requires_verified_email(client, db_session, monkeypatch):
+    _configure_sso(monkeypatch)
+    user = make_user(db_session, RoleEnum.admin, email="unverified@test.local")
+    user.email_verified = False
+    db_session.commit()
+
+    resp = client.post(
+        "/oauth/consent",
+        headers=auth_headers(user),
+        json={"redirect_uri": LINK_REDIRECT_URI, "state": "s1", "purpose": "link"},
+    )
+    assert resp.status_code == 400
+
+
+def test_link_confirm_redirects_with_code_for_valid_token(client, db_session, monkeypatch):
+    _configure_sso(monkeypatch)
+    user = make_user(db_session, RoleEnum.admin)
+    token = create_sso_link_confirm_token(user.id, LINK_REDIRECT_URI, "s1")
+
+    resp = client.get("/oauth/link-confirm", params={"token": token}, follow_redirects=False)
+    assert resp.status_code in (302, 307)
+    location = resp.headers["location"]
+    assert location.startswith(f"{LINK_REDIRECT_URI}?")
+    assert "state=s1" in location
+
+    code = location.split("code=")[1].split("&")[0]
+    assert decode_sso_identity_code(code) == user.id
+
+
+def test_link_confirm_rejects_expired_or_invalid_token(client, monkeypatch):
+    _configure_sso(monkeypatch)
+    resp = client.get("/oauth/link-confirm", params={"token": "not-a-real-token"})
+    assert resp.status_code == 400
+
+
+def test_link_confirm_rejects_wrong_purpose_token(client, db_session, monkeypatch):
+    # Ссылка подтверждения email из /auth/register — валидный JWT, но не тот
+    # purpose, что нужен для завершения привязки.
+    _configure_sso(monkeypatch)
+    user = make_user(db_session, RoleEnum.admin)
+    wrong_purpose_token = create_email_verification_token(user.id)
+
+    resp = client.get("/oauth/link-confirm", params={"token": wrong_purpose_token})
+    assert resp.status_code == 400
+
+
+def test_link_confirm_revalidates_redirect_uri_allowlist(client, db_session, monkeypatch):
+    # Токен подписан на редирект, который был в allowlist на момент отправки
+    # письма — если allowlist с тех пор сузился, ссылка больше не должна работать.
+    _configure_sso(monkeypatch)
+    user = make_user(db_session, RoleEnum.admin)
+    token = create_sso_link_confirm_token(user.id, LINK_REDIRECT_URI, "s1")
+
+    monkeypatch.setattr(settings, "sdvf_sso_link_redirect_uri", "")
+    resp = client.get("/oauth/link-confirm", params={"token": token})
+    assert resp.status_code == 400
+
+
+def test_full_link_flow_end_to_end(client, db_session, monkeypatch):
+    """Полный путь: consent(purpose=link) -> письмо -> переход по ссылке ->
+    code -> /oauth/token отдаёт ту же личность, что и обычный вход."""
+    _configure_sso(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(
+        "app.routers.identity_provider.send_sso_link_confirmation_email",
+        lambda to_email, token, client_name: captured.update(token=token) or True,
+    )
+    user = make_user(db_session, RoleEnum.admin, email="e2e@test.local")
+    user.email_verified = True
+    db_session.commit()
+
+    consent_resp = client.post(
+        "/oauth/consent",
+        headers=auth_headers(user),
+        json={"redirect_uri": LINK_REDIRECT_URI, "state": "s1", "purpose": "link"},
+    )
+    assert consent_resp.status_code == 200
+
+    confirm_resp = client.get(
+        "/oauth/link-confirm", params={"token": captured["token"]}, follow_redirects=False
+    )
+    code = confirm_resp.headers["location"].split("code=")[1].split("&")[0]
+
+    token_resp = client.post("/oauth/token", json={"code": code, "client_secret": CLIENT_SECRET})
+    assert token_resp.status_code == 200
+    assert token_resp.json()["user_id"] == user.id
+    assert token_resp.json()["email"] == "e2e@test.local"

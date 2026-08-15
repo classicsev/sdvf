@@ -299,6 +299,37 @@ def decode_sso_identity_code(code: str) -> Optional[str]:
     return payload.get("sub")
 
 
+SSO_LINK_CONFIRM_PURPOSE = "sso_link_confirm"
+SSO_LINK_CONFIRM_EXPIRE_MINUTES = 30
+
+
+def create_sso_link_confirm_token(user_id: str, redirect_uri: str, state: str) -> str:
+    """Привязка аккаунта к внешнему сервису (СДВФ) — действие чувствительнее
+    обычного SSO-входа: простого клика в уже открытой сессии недостаточно
+    (сессия может быть чужой/старой на том же браузере), нужно реальное
+    подтверждение владения почтой. redirect_uri/state едут внутри подписанного
+    токена, а не через отдельное хранилище состояния — секрет не даёт их подменить."""
+    expire = datetime.utcnow() + timedelta(minutes=SSO_LINK_CONFIRM_EXPIRE_MINUTES)
+    payload = {
+        "sub": user_id,
+        "purpose": SSO_LINK_CONFIRM_PURPOSE,
+        "redirect_uri": redirect_uri,
+        "state": state,
+        "exp": expire,
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def decode_sso_link_confirm_token(token: str) -> Optional[dict]:
+    try:
+        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+    except JWTError:
+        return None
+    if payload.get("purpose") != SSO_LINK_CONFIRM_PURPOSE:
+        return None
+    return payload
+
+
 def require_module(*modules: str):
     """Dependency factory: 403, если ни один из перечисленных модулей не куплен
     компанией пользователя. Несколько модулей — через ИЛИ (нужно для общих

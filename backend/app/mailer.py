@@ -33,6 +33,21 @@ def _send(to_email: str, subject: str, body: str) -> bool:
         return False
 
 
+def send_sso_link_confirmation_email(to_email: str, token: str, client_name: str) -> bool:
+    # Ссылка ведёт сразу на бэкенд (не на фронтенд-SPA) — конечное действие тут
+    # просто редирект с кодом на колбэк СДВФ, промежуточный экран не нужен.
+    link = f"{settings.backend_base_url}/oauth/link-confirm?token={token}"
+    body = (
+        "Здравствуйте!\n\n"
+        f"Кто-то запросил привязку вашего аккаунта «Учёт Движения» к аккаунту {client_name}.\n"
+        "Если это вы — подтвердите привязку, перейдя по ссылке:\n"
+        f"{link}\n\n"
+        "Ссылка действует 30 минут. Если вы не запрашивали привязку — просто "
+        "проигнорируйте это письмо, аккаунты не будут связаны."
+    )
+    return _send(to_email, f"Подтверждение привязки аккаунта — {client_name}", body)
+
+
 def send_verification_email(to_email: str, token: str) -> bool:
     link = f"{settings.frontend_base_url}/verify-email?token={token}"
     body = (
