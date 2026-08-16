@@ -357,6 +357,7 @@ html, body {
 
 /* Combobox — select с поиском */
 .fp-combobox-container { position: relative; width: 100%; }
+.fp-filter-combobox { width: 160px; min-width: 160px; }
 .fp-combobox-trigger {
   width: 100%; text-align: left; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
   background: var(--surface); font-family: 'IBM Plex Sans', sans-serif; font-size: 13.5px; color: var(--ink);

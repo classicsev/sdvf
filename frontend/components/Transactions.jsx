@@ -264,31 +264,39 @@ export default function Transactions() {
       <div className="fp-tabs-row">
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {multiCompany && (
-            <Combobox
-              value={filters.company}
-              onChange={(val) => setFilters((f) => ({ ...f, company: val }))}
-              options={companies.map((m) => ({ id: m.company.id, name: m.company.name }))}
-              placeholder="Все компании"
-            />
+            <div className="fp-filter-combobox">
+              <Combobox
+                value={filters.company}
+                onChange={(val) => setFilters((f) => ({ ...f, company: val }))}
+                options={companies.map((m) => ({ id: m.company.id, name: m.company.name }))}
+                placeholder="Все компании"
+              />
+            </div>
           )}
-          <Combobox
-            value={filters.project}
-            onChange={(val) => setFilters((f) => ({ ...f, project: val }))}
-            options={(projects || []).map((p) => ({ id: p.id, name: p.name }))}
-            placeholder="Все проекты"
-          />
-          <Combobox
-            value={filters.account}
-            onChange={(val) => setFilters((f) => ({ ...f, account: val }))}
-            options={(accounts || []).map((a) => ({ id: a.id, name: `${a.name} (${a.currency})` }))}
-            placeholder="Все счета"
-          />
-          <Combobox
-            value={filters.category}
-            onChange={(val) => setFilters((f) => ({ ...f, category: val }))}
-            options={(categories || []).map((c) => ({ id: c.id, name: c.name }))}
-            placeholder="Все статьи"
-          />
+          <div className="fp-filter-combobox">
+            <Combobox
+              value={filters.project}
+              onChange={(val) => setFilters((f) => ({ ...f, project: val }))}
+              options={(projects || []).map((p) => ({ id: p.id, name: p.name }))}
+              placeholder="Все проекты"
+            />
+          </div>
+          <div className="fp-filter-combobox">
+            <Combobox
+              value={filters.account}
+              onChange={(val) => setFilters((f) => ({ ...f, account: val }))}
+              options={(accounts || []).map((a) => ({ id: a.id, name: `${a.name} (${a.currency})` }))}
+              placeholder="Все счета"
+            />
+          </div>
+          <div className="fp-filter-combobox">
+            <Combobox
+              value={filters.category}
+              onChange={(val) => setFilters((f) => ({ ...f, category: val }))}
+              options={(categories || []).map((c) => ({ id: c.id, name: c.name }))}
+              placeholder="Все статьи"
+            />
+          </div>
           <input
             type="date"
             value={filters.date_from}
