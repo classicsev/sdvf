@@ -104,6 +104,7 @@ def list_transactions(
     date_to: Optional[date] = None,
     limit: int = 50,
     skip: int = 0,
+    all_records: bool = False,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -111,7 +112,11 @@ def list_transactions(
     Список операций с пагинацией.
     - limit: размер страницы (по умолчанию 50, максимум 1000)
     - skip: количество пропускаемых записей (по умолчанию 0)
+    - all_records: вернуть все записи без пагинации (игнорирует limit и skip)
     """
+    if all_records:
+        return _filtered_query(db, user, company_id, project, account, category, date_from, date_to).all()
+
     # Валидация limit
     if limit < 1 or limit > 1000:
         limit = 50

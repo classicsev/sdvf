@@ -62,6 +62,7 @@ export default function Transactions() {
   const [exporting, setExporting] = useState(false);
   const [pageSize, setPageSize] = useState(50);
   const [currentPage, setCurrentPage] = useState(0);
+  const [useAllForDates, setUseAllForDates] = useState(false);
   const [selectedTransactionIds, setSelectedTransactionIds] = useState(new Set());
   const [deleting, setDeleting] = useState(false);
 
@@ -77,8 +78,9 @@ export default function Transactions() {
     category: filters.category || undefined,
     date_from: filters.date_from || undefined,
     date_to: filters.date_to || undefined,
-    limit: pageSize,
-    skip: currentPage * pageSize,
+    limit: useAllForDates ? undefined : pageSize,
+    skip: useAllForDates ? undefined : currentPage * pageSize,
+    all_records: useAllForDates || undefined,
   };
   const {
     data: transactions,
@@ -95,11 +97,14 @@ export default function Transactions() {
     [counterparties]
   );
 
+  const hasDateFilter = !!(filters.date_from || filters.date_to);
+
   // Сброс выбора и страницы при изменении фильтров
   useEffect(() => {
     setSelectedTransactionIds(new Set());
     setCurrentPage(0);
-  }, [JSON.stringify(filters), pageSize]);
+    if (!hasDateFilter) setUseAllForDates(false);
+  }, [JSON.stringify(filters), pageSize, hasDateFilter]);
 
   function openAdd() {
     setEditing(null);
@@ -338,9 +343,14 @@ export default function Transactions() {
           <label style={{ fontSize: "13px", color: "var(--ink-soft)" }}>
             Строк на странице:
             <select
-              value={pageSize}
+              value={useAllForDates ? "dates" : String(pageSize)}
               onChange={(e) => {
-                setPageSize(Number(e.target.value));
+                if (e.target.value === "dates") {
+                  setUseAllForDates(true);
+                } else {
+                  setUseAllForDates(false);
+                  setPageSize(Number(e.target.value));
+                }
                 setCurrentPage(0);
               }}
               style={{
@@ -354,6 +364,7 @@ export default function Transactions() {
               <option value="20">20</option>
               <option value="50">50</option>
               <option value="100">100</option>
+              {hasDateFilter && <option value="dates">Выбранные даты</option>}
             </select>
           </label>
         </div>
@@ -474,24 +485,28 @@ export default function Transactions() {
         {(transactions || []).length > 0 && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderTop: "1px solid var(--line)" }}>
             <div style={{ fontSize: "13px", color: "var(--ink-soft)" }}>
-              Страница {currentPage + 1} • {(transactions || []).length} результатов на странице
+              {useAllForDates
+                ? `Все ${(transactions || []).length} результатов за выбранный период`
+                : `Страница ${currentPage + 1} • ${(transactions || []).length} результатов на странице`}
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                className="fp-btn-ghost"
-                onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
-                disabled={currentPage === 0 || loading}
-              >
-                ← Предыдущая
-              </button>
-              <button
-                className="fp-btn-ghost"
-                onClick={() => setCurrentPage(currentPage + 1)}
-                disabled={(transactions || []).length < pageSize || loading}
-              >
-                Следующая →
-              </button>
-            </div>
+            {!useAllForDates && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="fp-btn-ghost"
+                  onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
+                  disabled={currentPage === 0 || loading}
+                >
+                  ← Предыдущая
+                </button>
+                <button
+                  className="fp-btn-ghost"
+                  onClick={() => setCurrentPage(currentPage + 1)}
+                  disabled={(transactions || []).length < pageSize || loading}
+                >
+                  Следующая →
+                </button>
+              </div>
+            )}
           </div>
         )}
         {!canEdit && (
