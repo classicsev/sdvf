@@ -605,6 +605,8 @@ export default function Transactions() {
                   }))}
                   placeholder="— не указан —"
                 />
+              </label>
+
               <label>
                 Валюта
                 <input value={form.currency} onChange={(e) => updateField("currency", e.target.value.toUpperCase())} />
