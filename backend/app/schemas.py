@@ -49,6 +49,11 @@ class TransactionUpdate(BaseModel):
     comment: Optional[str] = None
 
 
+class TransactionBatchDelete(BaseModel):
+    """Пакетное удаление операций — массив ID"""
+    transaction_ids: list[str] = Field(..., min_items=1, max_items=1000)
+
+
 class CategoryIn(BaseModel):
     name: str
     type: TxTypeEnum

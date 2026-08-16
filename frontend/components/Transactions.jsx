@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Plus, Download, X, Pencil, Trash2, Lock } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { fmt, fmtDate } from "../lib/format";
 import { canEditTransactions } from "../lib/roles";
+import { Combobox } from "./Combobox";
 
 const SOURCE_LABELS = { tbank: "Т-Банк", amocrm: "amoCRM", alfabank: "Альфа-Банк" };
 
@@ -59,6 +60,10 @@ export default function Transactions() {
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [pageSize, setPageSize] = useState(50);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [selectedTransactionIds, setSelectedTransactionIds] = useState(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   const { data: accounts } = useResource(() => api.listAccounts(token), [token]);
   const { data: categories } = useResource(() => api.listCategories(token), [token]);
@@ -72,6 +77,8 @@ export default function Transactions() {
     category: filters.category || undefined,
     date_from: filters.date_from || undefined,
     date_to: filters.date_to || undefined,
+    limit: pageSize,
+    skip: currentPage * pageSize,
   };
   const {
     data: transactions,
@@ -88,6 +95,12 @@ export default function Transactions() {
     [counterparties]
   );
 
+  // Сброс выбора и страницы при изменении фильтров
+  useEffect(() => {
+    setSelectedTransactionIds(new Set());
+    setCurrentPage(0);
+  }, [JSON.stringify(filters), pageSize]);
+
   function openAdd() {
     setEditing(null);
     setForm(EMPTY_FORM);
@@ -96,6 +109,8 @@ export default function Transactions() {
     setFormCompanyId(preselected?.company.id || "");
     setFormError("");
     setModalOpen(true);
+    // Сбросить выбор при добавлении новой операции
+    setSelectedTransactionIds(new Set());
   }
 
   function openEdit(tx) {
@@ -163,6 +178,8 @@ export default function Transactions() {
     } finally {
       setSaving(false);
     }
+    // Сбросить выбор после сохранения
+    setSelectedTransactionIds(new Set());
   }
 
   async function handleDelete(tx) {
@@ -172,6 +189,50 @@ export default function Transactions() {
       reload();
     } catch (err) {
       window.alert(err.message);
+    }
+  }
+
+  function toggleTransactionSelection(txId) {
+    setSelectedTransactionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(txId)) {
+        next.delete(txId);
+      } else {
+        next.add(txId);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedTransactionIds.size === transactions.length) {
+      // Если все выбраны — отменяем выбор
+      setSelectedTransactionIds(new Set());
+    } else {
+      // Выбираем все на текущей странице
+      setSelectedTransactionIds(new Set((transactions || []).map((t) => t.id)));
+    }
+  }
+
+  async function handleBatchDelete() {
+    if (selectedTransactionIds.size === 0) {
+      window.alert("Выберите операции для удаления");
+      return;
+    }
+
+    const count = selectedTransactionIds.size;
+    if (!window.confirm(`Удалить ${count} операций?`)) return;
+
+    setDeleting(true);
+    try {
+      const result = await api.batchDeleteTransactions(token, Array.from(selectedTransactionIds));
+      setSelectedTransactionIds(new Set());
+      reload();
+      window.alert(`Удалено ${result.deleted} операций`);
+    } catch (err) {
+      window.alert(err.message);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -203,39 +264,31 @@ export default function Transactions() {
       <div className="fp-tabs-row">
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {multiCompany && (
-            <select value={filters.company} onChange={(e) => setFilters((f) => ({ ...f, company: e.target.value }))}>
-              <option value="">Все компании</option>
-              {companies.map((m) => (
-                <option key={m.company.id} value={m.company.id}>
-                  {m.company.name}
-                </option>
-              ))}
-            </select>
+            <Combobox
+              value={filters.company}
+              onChange={(val) => setFilters((f) => ({ ...f, company: val }))}
+              options={companies.map((m) => ({ id: m.company.id, name: m.company.name }))}
+              placeholder="Все компании"
+            />
           )}
-          <select value={filters.project} onChange={(e) => setFilters((f) => ({ ...f, project: e.target.value }))}>
-            <option value="">Все проекты</option>
-            {(projects || []).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <select value={filters.account} onChange={(e) => setFilters((f) => ({ ...f, account: e.target.value }))}>
-            <option value="">Все счета</option>
-            {(accounts || []).map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-          <select value={filters.category} onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value }))}>
-            <option value="">Все статьи</option>
-            {(categories || []).map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <Combobox
+            value={filters.project}
+            onChange={(val) => setFilters((f) => ({ ...f, project: val }))}
+            options={(projects || []).map((p) => ({ id: p.id, name: p.name }))}
+            placeholder="Все проекты"
+          />
+          <Combobox
+            value={filters.account}
+            onChange={(val) => setFilters((f) => ({ ...f, account: val }))}
+            options={(accounts || []).map((a) => ({ id: a.id, name: `${a.name} (${a.currency})` }))}
+            placeholder="Все счета"
+          />
+          <Combobox
+            value={filters.category}
+            onChange={(val) => setFilters((f) => ({ ...f, category: val }))}
+            options={(categories || []).map((c) => ({ id: c.id, name: c.name }))}
+            placeholder="Все статьи"
+          />
           <input
             type="date"
             value={filters.date_from}
@@ -248,10 +301,20 @@ export default function Transactions() {
           />
         </div>
 
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button className="fp-btn-ghost" onClick={handleExport} disabled={exporting}>
             <Download size={15} /> {exporting ? "Экспорт…" : "Экспорт в Excel"}
           </button>
+          {canEdit && selectedTransactionIds.size > 0 && (
+            <button
+              className="fp-btn-danger"
+              onClick={handleBatchDelete}
+              disabled={deleting}
+              title={`Удалить ${selectedTransactionIds.size} операций`}
+            >
+              <Trash2 size={16} /> {deleting ? "Удаляем…" : `Удалить (${selectedTransactionIds.size})`}
+            </button>
+          )}
           {canEdit && (
             <button className="fp-btn-primary" onClick={openAdd}>
               <Plus size={16} /> Новая операция
@@ -262,6 +325,37 @@ export default function Transactions() {
 
       {error && <div className="fp-error-banner">{error}</div>}
 
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <label style={{ fontSize: "13px", color: "var(--ink-soft)" }}>
+            Строк на странице:
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setCurrentPage(0);
+              }}
+              style={{
+                marginLeft: 8,
+                padding: "4px 8px",
+                border: "1px solid var(--line)",
+                borderRadius: "4px",
+                cursor: "pointer",
+              }}
+            >
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </label>
+        </div>
+        {selectedTransactionIds.size > 0 && (
+          <div style={{ fontSize: "13px", color: "var(--ink-soft)" }}>
+            Выбрано: {selectedTransactionIds.size}
+          </div>
+        )}
+      </div>
+
       <div className="fp-panel fp-table-panel">
         {loading ? (
           <div className="fp-loading">Загрузка…</div>
@@ -271,6 +365,17 @@ export default function Transactions() {
           <table className="fp-table">
             <thead>
               <tr>
+                {canEdit && (
+                  <th style={{ width: 40, textAlign: "center", paddingLeft: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedTransactionIds.size === (transactions || []).length && transactions.length > 0}
+                      onChange={toggleSelectAll}
+                      title={selectedTransactionIds.size > 0 ? "Отменить выбор всех" : "Выбрать все"}
+                      style={{ cursor: "pointer" }}
+                    />
+                  </th>
+                )}
                 {showCompanyColumn && <th>Компания</th>}
                 <th>Дата</th>
                 <th>Счёт</th>
@@ -297,6 +402,16 @@ export default function Transactions() {
                   canEditTransactions(rowRole) && (rowRole === "admin" || t.created_by === user.id);
                 return (
                   <tr key={t.id}>
+                    {canEdit && (
+                      <td style={{ width: 40, textAlign: "center", paddingLeft: 8 }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedTransactionIds.has(t.id)}
+                          onChange={() => toggleTransactionSelection(t.id)}
+                          style={{ cursor: "pointer" }}
+                        />
+                      </td>
+                    )}
                     {showCompanyColumn && (
                       <td>{companies.find((m) => m.company.id === t.company_id)?.company.name || "—"}</td>
                     )}
@@ -347,6 +462,29 @@ export default function Transactions() {
               })}
             </tbody>
           </table>
+        )}
+        {(transactions || []).length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderTop: "1px solid var(--line)" }}>
+            <div style={{ fontSize: "13px", color: "var(--ink-soft)" }}>
+              Страница {currentPage + 1} • {(transactions || []).length} результатов на странице
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                className="fp-btn-ghost"
+                onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
+                disabled={currentPage === 0 || loading}
+              >
+                ← Предыдущая
+              </button>
+              <button
+                className="fp-btn-ghost"
+                onClick={() => setCurrentPage(currentPage + 1)}
+                disabled={(transactions || []).length < pageSize || loading}
+              >
+                Следующая →
+              </button>
+            </div>
+          </div>
         )}
         {!canEdit && (
           <div className="fp-viewer-note">
@@ -418,62 +556,55 @@ export default function Transactions() {
               </label>
               <label>
                 Счёт
-                <select required value={form.account_id} onChange={(e) => updateField("account_id", e.target.value)}>
-                  <option value="" disabled>
-                    Выберите счёт
-                  </option>
-                  {selectableAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name} ({a.currency})
-                      {a.is_active === false ? " — деактивирован" : ""}
-                    </option>
-                  ))}
-                </select>
+                <Combobox
+                  value={form.account_id}
+                  onChange={(val) => updateField("account_id", val)}
+                  options={selectableAccounts.map((a) => ({
+                    id: a.id,
+                    name: `${a.name} (${a.currency})${a.is_active === false ? " — деактивирован" : ""}`
+                  }))}
+                  placeholder="Выберите счёт"
+                  required
+                />
               </label>
 
               <label>
                 Статья
-                <select
-                  required
+                <Combobox
                   value={form.category_id}
-                  onChange={(e) => updateField("category_id", e.target.value)}
-                >
-                  <option value="" disabled>
-                    Выберите статью
-                  </option>
-                  {filteredCategories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                      {c.is_active === false ? " — деактивирована" : ""}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => updateField("category_id", val)}
+                  options={filteredCategories.map((c) => ({
+                    id: c.id,
+                    name: `${c.name}${c.is_active === false ? " — деактивирована" : ""}`
+                  }))}
+                  placeholder="Выберите статью"
+                  required
+                />
               </label>
               <label>
                 Проект
-                <select value={form.project_id} onChange={(e) => updateField("project_id", e.target.value)}>
-                  <option value="">— не указан —</option>
-                  {selectableProjects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                      {p.is_active === false ? " — деактивирован" : ""}
-                    </option>
-                  ))}
-                </select>
+                <Combobox
+                  value={form.project_id}
+                  onChange={(val) => updateField("project_id", val)}
+                  options={selectableProjects.map((p) => ({
+                    id: p.id,
+                    name: `${p.name}${p.is_active === false ? " — деактивирован" : ""}`
+                  }))}
+                  placeholder="— не указан —"
+                />
               </label>
 
               <label>
                 Контрагент
-                <select value={form.counterparty_id} onChange={(e) => updateField("counterparty_id", e.target.value)}>
-                  <option value="">— не указан —</option>
-                  {selectableCounterparties.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                      {c.is_active === false ? " — деактивирован" : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <Combobox
+                  value={form.counterparty_id}
+                  onChange={(val) => updateField("counterparty_id", val)}
+                  options={selectableCounterparties.map((c) => ({
+                    id: c.id,
+                    name: `${c.name}${c.is_active === false ? " — деактивирован" : ""}`
+                  }))}
+                  placeholder="— не указан —"
+                />
               <label>
                 Валюта
                 <input value={form.currency} onChange={(e) => updateField("currency", e.target.value.toUpperCase())} />

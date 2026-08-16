@@ -157,6 +157,8 @@ export const api = {
   updateTransaction: (token, id, payload) =>
     request(`/transactions/${id}`, { method: "PATCH", token, body: payload }),
   deleteTransaction: (token, id) => request(`/transactions/${id}`, { method: "DELETE", token }),
+  batchDeleteTransactions: (token, transactionIds) =>
+    request("/transactions/batch", { method: "DELETE", token, body: { transaction_ids: transactionIds } }),
   exportTransactions: (token, query) => download("/transactions/export.xlsx", { token, query }),
 
   dashboardSummary: (token) => request("/reports/dashboard-summary", { token }),

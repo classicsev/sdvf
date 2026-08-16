@@ -22,7 +22,7 @@ from app.automation_engine import apply_rules
 from app.database import get_db
 from app.fx import convert_to_rub
 from app.models import Account, Category, Counterparty, Project, RoleEnum, Transaction, User
-from app.schemas import TransactionCreate, TransactionOut, TransactionUpdate
+from app.schemas import TransactionCreate, TransactionOut, TransactionUpdate, TransactionBatchDelete
 from app.utils import get_or_404_accessible
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -102,10 +102,23 @@ def list_transactions(
     category: Optional[str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    limit: int = 50,
+    skip: int = 0,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    return _filtered_query(db, user, company_id, project, account, category, date_from, date_to).all()
+    """
+    Список операций с пагинацией.
+    - limit: размер страницы (по умолчанию 50, максимум 1000)
+    - skip: количество пропускаемых записей (по умолчанию 0)
+    """
+    # Валидация limit
+    if limit < 1 or limit > 1000:
+        limit = 50
+    if skip < 0:
+        skip = 0
+
+    return _filtered_query(db, user, company_id, project, account, category, date_from, date_to).limit(limit).offset(skip).all()
 
 
 @router.post(
@@ -213,6 +226,67 @@ def delete_transaction(
     db.commit()
     log_action(db, user, action="delete", entity_type="transaction", entity_id=transaction_id, company_id=tx_company_id)
     return {"deleted": True}
+
+
+@router.delete(
+    "/batch",
+    dependencies=[Depends(require_module("finance"))],
+)
+def batch_delete_transactions(
+    payload: TransactionBatchDelete,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Пакетное удаление нескольких операций.
+    Проверяет права для каждой операции отдельно.
+    """
+    if not payload.transaction_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Массив transaction_ids не может быть пустым"
+        )
+
+    # Берём все операции, доступные пользователю
+    accessible_company_ids = get_accessible_company_ids(db, user)
+    transactions = db.query(Transaction).filter(
+        Transaction.id.in_(payload.transaction_ids),
+        Transaction.company_id.in_(accessible_company_ids)
+    ).all()
+
+    if len(transactions) != len(payload.transaction_ids):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Одна или несколько операций не найдены или недоступны"
+        )
+
+    deleted_count = 0
+    failed_ids = []
+
+    for tx in transactions:
+        try:
+            # Проверяем права на редактирование каждой операции
+            role = check_company_role(db, user, tx.company_id, EDITORS)
+            _check_can_edit(user, tx, role)
+
+            # Удаляем и логируем
+            tx_id = tx.id
+            tx_company_id = tx.company_id
+            db.delete(tx)
+            log_action(db, user, action="delete", entity_type="transaction", entity_id=tx_id, company_id=tx_company_id)
+            deleted_count += 1
+        except HTTPException:
+            # Если нет прав на редактирование конкретной операции — добавляем в failed
+            failed_ids.append(tx.id)
+
+    db.commit()
+
+    return {
+        "deleted": deleted_count,
+        "total_requested": len(payload.transaction_ids),
+        "failed_ids": failed_ids,
+        "message": f"Удалено {deleted_count} из {len(payload.transaction_ids)} операций"
+    }
 
 
 @router.get("/export.xlsx", dependencies=[Depends(require_module("finance"))])
