@@ -64,6 +64,7 @@ export default function Transactions() {
   const [currentPage, setCurrentPage] = useState(0);
   const [useAllForDates, setUseAllForDates] = useState(false);
   const [selectedTransactionIds, setSelectedTransactionIds] = useState(new Set());
+  const [selectedAllMatching, setSelectedAllMatching] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const { data: accounts } = useResource(() => api.listAccounts(token), [token]);
@@ -102,6 +103,7 @@ export default function Transactions() {
   // Сброс выбора и страницы при изменении фильтров
   useEffect(() => {
     setSelectedTransactionIds(new Set());
+    setSelectedAllMatching(false);
     setCurrentPage(0);
     if (!hasDateFilter) setUseAllForDates(false);
   }, [JSON.stringify(filters), pageSize, hasDateFilter]);
@@ -198,6 +200,7 @@ export default function Transactions() {
   }
 
   function toggleTransactionSelection(txId) {
+    setSelectedAllMatching(false);
     setSelectedTransactionIds((prev) => {
       const next = new Set(prev);
       if (next.has(txId)) {
@@ -210,28 +213,50 @@ export default function Transactions() {
   }
 
   function toggleSelectAll() {
-    if (selectedTransactionIds.size === transactions.length) {
-      // Если все выбраны — отменяем выбор
+    if (selectedAllMatching || selectedTransactionIds.size === transactions.length) {
+      // Если всё выбрано — отменяем выбор
       setSelectedTransactionIds(new Set());
+      setSelectedAllMatching(false);
     } else {
       // Выбираем все на текущей странице
       setSelectedTransactionIds(new Set((transactions || []).map((t) => t.id)));
     }
   }
 
+  function selectAllMatching() {
+    // Выбираем все операции, соответствующие текущим фильтрам (не только на странице)
+    setSelectedTransactionIds(new Set((transactions || []).map((t) => t.id)));
+    setSelectedAllMatching(true);
+  }
+
   async function handleBatchDelete() {
-    if (selectedTransactionIds.size === 0) {
+    if (!selectedAllMatching && selectedTransactionIds.size === 0) {
       window.alert("Выберите операции для удаления");
       return;
     }
 
-    const count = selectedTransactionIds.size;
-    if (!window.confirm(`Удалить ${count} операций?`)) return;
+    const confirmText = selectedAllMatching
+      ? "Удалить ВСЕ операции, соответствующие текущим фильтрам?"
+      : `Удалить ${selectedTransactionIds.size} операций?`;
+    if (!window.confirm(confirmText)) return;
 
     setDeleting(true);
     try {
-      const result = await api.batchDeleteTransactions(token, Array.from(selectedTransactionIds));
+      let result;
+      if (selectedAllMatching) {
+        result = await api.batchDeleteTransactionsByFilter(token, {
+          company_id: filters.company || undefined,
+          project: filters.project || undefined,
+          account: filters.account || undefined,
+          category: filters.category || undefined,
+          date_from: filters.date_from || undefined,
+          date_to: filters.date_to || undefined,
+        });
+      } else {
+        result = await api.batchDeleteTransactions(token, Array.from(selectedTransactionIds));
+      }
       setSelectedTransactionIds(new Set());
+      setSelectedAllMatching(false);
       reload();
       window.alert(`Удалено ${result.deleted} операций`);
     } catch (err) {
@@ -318,14 +343,14 @@ export default function Transactions() {
           <button className="fp-btn-ghost" onClick={handleExport} disabled={exporting}>
             <Download size={15} /> {exporting ? "Экспорт…" : "Экспорт в Excel"}
           </button>
-          {canEdit && selectedTransactionIds.size > 0 && (
+          {canEdit && (selectedAllMatching || selectedTransactionIds.size > 0) && (
             <button
               className="fp-btn-danger"
               onClick={handleBatchDelete}
               disabled={deleting}
-              title={`Удалить ${selectedTransactionIds.size} операций`}
+              title={selectedAllMatching ? "Удалить все операции по фильтру" : `Удалить ${selectedTransactionIds.size} операций`}
             >
-              <Trash2 size={16} /> {deleting ? "Удаляем…" : `Удалить (${selectedTransactionIds.size})`}
+              <Trash2 size={16} /> {deleting ? "Удаляем…" : selectedAllMatching ? "Удалить все по фильтру" : `Удалить (${selectedTransactionIds.size})`}
             </button>
           )}
           {canEdit && (
@@ -368,11 +393,52 @@ export default function Transactions() {
             </select>
           </label>
         </div>
-        {selectedTransactionIds.size > 0 && (
+        {selectedAllMatching ? (
+          <div style={{ fontSize: "13px", color: "var(--ink-soft)" }}>
+            Выбрано: все по фильтру
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedAllMatching(false);
+                setSelectedTransactionIds(new Set());
+              }}
+              style={{
+                marginLeft: 10,
+                background: "none",
+                border: "none",
+                color: "var(--accent)",
+                cursor: "pointer",
+                textDecoration: "underline",
+                fontSize: "13px",
+                padding: 0,
+              }}
+            >
+              Снять выбор
+            </button>
+          </div>
+        ) : selectedTransactionIds.size > 0 ? (
           <div style={{ fontSize: "13px", color: "var(--ink-soft)" }}>
             Выбрано: {selectedTransactionIds.size}
+            {transactions.length === pageSize && !useAllForDates && (
+              <button
+                type="button"
+                onClick={selectAllMatching}
+                style={{
+                  marginLeft: 10,
+                  background: "none",
+                  border: "none",
+                  color: "var(--accent)",
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                  fontSize: "13px",
+                  padding: 0,
+                }}
+              >
+                Выбрать все по фильтру
+              </button>
+            )}
           </div>
-        )}
+        ) : null}
       </div>
 
       <div className="fp-panel fp-table-panel">
@@ -388,9 +454,9 @@ export default function Transactions() {
                   <th style={{ width: 40, textAlign: "center", paddingLeft: 8 }}>
                     <input
                       type="checkbox"
-                      checked={selectedTransactionIds.size === (transactions || []).length && transactions.length > 0}
+                      checked={selectedAllMatching || (selectedTransactionIds.size === (transactions || []).length && transactions.length > 0)}
                       onChange={toggleSelectAll}
-                      title={selectedTransactionIds.size > 0 ? "Отменить выбор всех" : "Выбрать все"}
+                      title={selectedAllMatching || selectedTransactionIds.size > 0 ? "Отменить выбор всех" : "Выбрать все"}
                       style={{ cursor: "pointer" }}
                     />
                   </th>
@@ -425,7 +491,7 @@ export default function Transactions() {
                       <td style={{ width: 40, textAlign: "center", paddingLeft: 8 }}>
                         <input
                           type="checkbox"
-                          checked={selectedTransactionIds.has(t.id)}
+                          checked={selectedAllMatching || selectedTransactionIds.has(t.id)}
                           onChange={() => toggleTransactionSelection(t.id)}
                           style={{ cursor: "pointer" }}
                         />

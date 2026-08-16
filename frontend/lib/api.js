@@ -159,6 +159,8 @@ export const api = {
   deleteTransaction: (token, id) => request(`/transactions/${id}`, { method: "DELETE", token }),
   batchDeleteTransactions: (token, transactionIds) =>
     request("/transactions/batch", { method: "DELETE", token, body: { transaction_ids: transactionIds } }),
+  batchDeleteTransactionsByFilter: (token, query) =>
+    request("/transactions/batch-delete-by-filter", { method: "POST", token, query }),
   exportTransactions: (token, query) => download("/transactions/export.xlsx", { token, query }),
 
   dashboardSummary: (token) => request("/reports/dashboard-summary", { token }),

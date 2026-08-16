@@ -294,6 +294,52 @@ def batch_delete_transactions(
     }
 
 
+@router.post(
+    "/batch-delete-by-filter",
+    dependencies=[Depends(require_module("finance"))],
+)
+def batch_delete_transactions_by_filter(
+    company_id: Optional[str] = None,
+    project: Optional[str] = None,
+    account: Optional[str] = None,
+    category: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Пакетное удаление всех операций, соответствующих текущим фильтрам.
+    Проверяет права для каждой операции отдельно.
+    """
+    transactions = _filtered_query(db, user, company_id, project, account, category, date_from, date_to).all()
+
+    deleted_count = 0
+    failed_ids = []
+
+    for tx in transactions:
+        try:
+            role = check_company_role(db, user, tx.company_id, EDITORS)
+            _check_can_edit(user, tx, role)
+
+            tx_id = tx.id
+            tx_company_id = tx.company_id
+            db.delete(tx)
+            log_action(db, user, action="delete", entity_type="transaction", entity_id=tx_id, company_id=tx_company_id)
+            deleted_count += 1
+        except HTTPException:
+            failed_ids.append(tx.id)
+
+    db.commit()
+
+    return {
+        "deleted": deleted_count,
+        "total_requested": len(transactions),
+        "failed_ids": failed_ids,
+        "message": f"Удалено {deleted_count} из {len(transactions)} операций"
+    }
+
+
 @router.get("/export.xlsx", dependencies=[Depends(require_module("finance"))])
 def export_transactions_xlsx(
     company_id: Optional[str] = None,
