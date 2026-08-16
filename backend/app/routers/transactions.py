@@ -126,6 +126,21 @@ def list_transactions(
     return _filtered_query(db, user, company_id, project, account, category, date_from, date_to).limit(limit).offset(skip).all()
 
 
+@router.get("/count", response_model=int, dependencies=[Depends(require_module("finance"))])
+def count_transactions(
+    company_id: Optional[str] = None,
+    project: Optional[str] = None,
+    account: Optional[str] = None,
+    category: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Общее количество операций, подходящих под фильтры."""
+    return _filtered_query(db, user, company_id, project, account, category, date_from, date_to).count()
+
+
 @router.post(
     "",
     response_model=TransactionOut,

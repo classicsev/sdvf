@@ -199,6 +199,44 @@ def test_list_filters_by_account_category_and_date_range(client, db_session):
     assert rows[0]["account_id"] == account_a.id
 
 
+def test_count_transactions_respects_same_filters(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account_a = make_account(db_session, "Счёт А")
+    account_b = make_account(db_session, "Счёт Б")
+    category = make_category(db_session, tx_type=TxTypeEnum.income)
+
+    def _tx(account_id, date_odds):
+        return client.post(
+            "/transactions",
+            headers=headers,
+            json={
+                "date_odds": date_odds,
+                "account_id": account_id,
+                "category_id": category.id,
+                "type": "income",
+                "amount": 100,
+                "currency": "RUB",
+            },
+        ).json()
+
+    _tx(account_a.id, "2026-06-01")
+    _tx(account_b.id, "2026-06-15")
+    _tx(account_a.id, "2026-07-01")
+
+    resp = client.get("/transactions/count", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == 3
+
+    resp = client.get(f"/transactions/count?account={account_a.id}", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == 2
+
+    resp = client.get(f"/transactions/count?account={account_a.id}&date_from=2026-06-20", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == 1
+
+
 def test_export_xlsx_returns_valid_workbook_with_readable_names(client, db_session, tmp_path):
     admin = make_user(db_session, RoleEnum.admin)
     headers = auth_headers(admin)

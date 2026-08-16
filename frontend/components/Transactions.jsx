@@ -65,6 +65,7 @@ export default function Transactions() {
   const [useAllForDates, setUseAllForDates] = useState(false);
   const [selectedTransactionIds, setSelectedTransactionIds] = useState(new Set());
   const [selectedAllMatching, setSelectedAllMatching] = useState(false);
+  const [matchingCount, setMatchingCount] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
   const { data: accounts } = useResource(() => api.listAccounts(token), [token]);
@@ -89,6 +90,21 @@ export default function Transactions() {
     error,
     reload,
   } = useResource(() => api.listTransactions(token, query), [token, JSON.stringify(query)]);
+
+  const countQuery = {
+    company_id: filters.company || undefined,
+    project: filters.project || undefined,
+    account: filters.account || undefined,
+    category: filters.category || undefined,
+    date_from: filters.date_from || undefined,
+    date_to: filters.date_to || undefined,
+  };
+  useEffect(() => {
+    if (!token) return;
+    api.countTransactions(token, countQuery)
+      .then((count) => setMatchingCount(Number(count) || 0))
+      .catch(() => setMatchingCount(null));
+  }, [token, JSON.stringify(countQuery)]);
 
   const accountsById = useMemo(() => Object.fromEntries((accounts || []).map((a) => [a.id, a])), [accounts]);
   const categoriesById = useMemo(() => Object.fromEntries((categories || []).map((c) => [c.id, c])), [categories]);
@@ -236,7 +252,7 @@ export default function Transactions() {
     }
 
     const confirmText = selectedAllMatching
-      ? "Удалить ВСЕ операции, соответствующие текущим фильтрам?"
+      ? `Удалить все подходящие операции (${matchingCount ?? "?"})?`
       : `Удалить ${selectedTransactionIds.size} операций?`;
     if (!window.confirm(confirmText)) return;
 
@@ -348,9 +364,9 @@ export default function Transactions() {
               className="fp-btn-danger"
               onClick={handleBatchDelete}
               disabled={deleting}
-              title={selectedAllMatching ? "Удалить все операции по фильтру" : `Удалить ${selectedTransactionIds.size} операций`}
+              title={selectedAllMatching ? `Удалить все подходящие операции (${matchingCount ?? "?"})` : `Удалить ${selectedTransactionIds.size} операций`}
             >
-              <Trash2 size={16} /> {deleting ? "Удаляем…" : selectedAllMatching ? "Удалить все по фильтру" : `Удалить (${selectedTransactionIds.size})`}
+              <Trash2 size={16} /> {deleting ? "Удаляем…" : selectedAllMatching ? `Удалить все подходящие (${matchingCount ?? "?"})` : `Удалить (${selectedTransactionIds.size})`}
             </button>
           )}
           {canEdit && (
@@ -395,7 +411,7 @@ export default function Transactions() {
         </div>
         {selectedAllMatching ? (
           <div style={{ fontSize: "13px", color: "var(--ink-soft)" }}>
-            Выбрано: все по фильтру
+            Выбрано: все подходящие ({matchingCount ?? "?"})
             <button
               type="button"
               onClick={() => {
@@ -419,7 +435,7 @@ export default function Transactions() {
         ) : selectedTransactionIds.size > 0 ? (
           <div style={{ fontSize: "13px", color: "var(--ink-soft)" }}>
             Выбрано: {selectedTransactionIds.size}
-            {transactions.length === pageSize && !useAllForDates && (
+            {matchingCount > selectedTransactionIds.size && !useAllForDates && (
               <button
                 type="button"
                 onClick={selectAllMatching}
@@ -434,7 +450,7 @@ export default function Transactions() {
                   padding: 0,
                 }}
               >
-                Выбрать все по фильтру
+                Выбрать все подходящие ({matchingCount ?? "?"})
               </button>
             )}
           </div>

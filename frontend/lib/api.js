@@ -152,6 +152,7 @@ export const api = {
     request(`/users/${id}`, { method: "DELETE", token, query: { company_id: companyId } }),
 
   listTransactions: (token, query) => request("/transactions", { token, query }),
+  countTransactions: (token, query) => request("/transactions/count", { token, query }),
   createTransaction: (token, payload, companyId) =>
     request("/transactions", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   updateTransaction: (token, id, payload) =>
