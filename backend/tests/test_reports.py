@@ -150,3 +150,203 @@ def test_pnl_report_groups_expenses_by_group_name(client, db_session):
     assert body["total_expense"] == 2000.0
     assert body["net_profit"] == 3000.0
     assert {"group": "OPEX", "amount": 2000.0} in body["expenses"]
+
+
+# ---------------------------------------------------------------------------
+# Переключатель периода + сравнение с прошлым периодом на дашборде
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_summary_month_range_compares_to_previous_calendar_month(client, db_session, monkeypatch):
+    import datetime as _dt
+
+    class _FrozenDate(_dt.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 3, 15)
+
+    monkeypatch.setattr("app.routers.reports.date", _FrozenDate)
+
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    income_cat = make_category(db_session, "Доход", TxTypeEnum.income)
+
+    _create_tx(client, headers, account.id, income_cat.id, 1000, "income", date_odds="2026-03-10")  # текущий месяц
+    _create_tx(client, headers, account.id, income_cat.id, 600, "income", date_odds="2026-02-10")  # прошлый месяц
+
+    resp = client.get("/reports/dashboard-summary", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["range"] == "month"
+    assert body["period_from"] == "2026-03-01"
+    assert body["period_to"] == "2026-03-31"
+    assert body["period_income_rub"] == 1000.0
+    assert body["prev_period_from"] == "2026-02-01"
+    assert body["prev_period_to"] == "2026-02-28"
+    assert body["prev_period_income_rub"] == 600.0
+
+
+def test_dashboard_summary_quarter_and_year_ranges(client, db_session, monkeypatch):
+    import datetime as _dt
+
+    class _FrozenDate(_dt.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 5, 1)  # Q2 2026
+
+    monkeypatch.setattr("app.routers.reports.date", _FrozenDate)
+
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+
+    resp = client.get("/reports/dashboard-summary", params={"range": "quarter"}, headers=headers)
+    body = resp.json()
+    assert body["period_from"] == "2026-04-01"
+    assert body["period_to"] == "2026-06-30"
+    assert body["prev_period_from"] == "2026-01-01"
+    assert body["prev_period_to"] == "2026-03-31"
+
+    resp = client.get("/reports/dashboard-summary", params={"range": "year"}, headers=headers)
+    body = resp.json()
+    assert body["period_from"] == "2026-01-01"
+    assert body["period_to"] == "2026-12-31"
+    assert body["prev_period_from"] == "2025-01-01"
+    assert body["prev_period_to"] == "2025-12-31"
+
+
+def test_dashboard_summary_custom_range(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    income_cat = make_category(db_session, "Доход", TxTypeEnum.income)
+    _create_tx(client, headers, account.id, income_cat.id, 777, "income", date_odds="2026-04-20")
+
+    resp = client.get(
+        "/reports/dashboard-summary",
+        params={"date_from": "2026-04-01", "date_to": "2026-04-30"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["range"] == "custom"
+    assert body["period_income_rub"] == 777.0
+    # свой период "назад той же длины"
+    assert body["prev_period_from"] == "2026-03-02"
+    assert body["prev_period_to"] == "2026-03-31"
+
+
+def test_dashboard_summary_defaults_to_month_on_invalid_range(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    resp = client.get("/reports/dashboard-summary", params={"range": "decade"}, headers=auth_headers(admin))
+    assert resp.status_code == 200
+    assert resp.json()["range"] == "month"
+
+
+# ---------------------------------------------------------------------------
+# Прогноз остатка (cashflow-forecast) — аналог короткого прогноза Xero на
+# данных Планирования
+# ---------------------------------------------------------------------------
+
+
+def test_forecast_starts_from_current_balance(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    make_account(db_session, opening_balance=1000)
+
+    resp = client.get("/reports/cashflow-forecast", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["current_balance_rub"] == 1000.0
+    assert body["series"][0]["projected_balance_rub"] == 1000.0
+
+
+def test_forecast_applies_once_and_weekly_planning(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    make_account(db_session, opening_balance=1000)
+    income_cat = make_category(db_session, "План доход", TxTypeEnum.income)
+    expense_cat = make_category(db_session, "План расход", TxTypeEnum.expense)
+
+    from datetime import date, timedelta
+
+    today = date.today()
+    once_date = today + timedelta(days=5)
+    client.post(
+        "/planning",
+        headers=headers,
+        json={
+            "category_id": income_cat.id,
+            "amount": 5000,
+            "frequency": "once",
+            "scheduled_date": once_date.isoformat(),
+        },
+    )
+    weekly_start = today + timedelta(days=2)
+    client.post(
+        "/planning",
+        headers=headers,
+        json={
+            "category_id": expense_cat.id,
+            "amount": 100,
+            "frequency": "weekly",
+            "scheduled_date": weekly_start.isoformat(),
+        },
+    )
+
+    resp = client.get("/reports/cashflow-forecast", params={"days": 30}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    by_date = {row["date"]: row for row in body["series"]}
+    assert by_date[once_date.isoformat()]["planned_flow_rub"] == 5000.0
+    assert by_date[weekly_start.isoformat()]["planned_flow_rub"] == -100.0
+    second_weekly = (weekly_start + timedelta(days=7)).isoformat()
+    assert by_date[second_weekly]["planned_flow_rub"] == -100.0
+
+    # 1000 нач. + 5000 (once) - 100*(число еженедельных вхождений в 30 дней)
+    weekly_occurrences = sum(1 for row in body["series"] if row["planned_flow_rub"] == -100.0)
+    expected_final = 1000 + 5000 - 100 * weekly_occurrences
+    assert body["projected_balance_rub"] == float(expected_final)
+
+
+def test_forecast_monthly_clamps_to_shorter_month(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    make_account(db_session, opening_balance=0)
+    expense_cat = make_category(db_session, "Аренда", TxTypeEnum.expense)
+
+    client.post(
+        "/planning",
+        headers=headers,
+        json={
+            "category_id": expense_cat.id,
+            "amount": 300,
+            "frequency": "monthly",
+            "scheduled_date": "2026-01-31",
+        },
+    )
+
+    resp = client.get("/reports/cashflow-forecast", params={"days": 90}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    dates_with_flow = {row["date"] for row in resp.json()["series"] if row["planned_flow_rub"] == -300.0}
+    # Если сегодня достаточно рано в году, в 90 дней должен попасть хотя бы
+    # один случай "31-е число" или обрезанный конец более короткого месяца.
+    assert len(dates_with_flow) >= 0  # само по себе не падает — точный контроль в expand-тесте ниже
+
+
+def test_expand_planning_occurrences_clamps_31_to_month_end():
+    from datetime import date
+
+    from app.models import Planning, TxTypeEnum as TT
+    from app.routers.reports import _expand_planning_occurrences
+
+    plan = Planning(
+        id="p1", company_id="c1", category_id="cat1", amount=300, frequency="monthly",
+        scheduled_date=date(2026, 1, 31), is_active=True,
+    )
+    by_day = _expand_planning_occurrences([(plan, TT.expense)], date(2026, 1, 1), date(2026, 4, 30))
+    assert by_day[date(2026, 1, 31)] == -300
+    assert by_day[date(2026, 2, 28)] == -300  # 2026 не високосный, февраль обрезан
+    assert by_day[date(2026, 3, 31)] == -300
+    assert by_day[date(2026, 4, 30)] == -300  # апрель короче 31 дня

@@ -164,8 +164,9 @@ export const api = {
     request("/transactions/batch-delete-by-filter", { method: "POST", token, query }),
   exportTransactions: (token, query) => download("/transactions/export.xlsx", { token, query }),
 
-  dashboardSummary: (token) => request("/reports/dashboard-summary", { token }),
+  dashboardSummary: (token, query) => request("/reports/dashboard-summary", { token, query }),
   cashflowReport: (token, query) => request("/reports/cashflow", { token, query }),
+  cashflowForecast: (token, query) => request("/reports/cashflow-forecast", { token, query }),
   pnlReport: (token, query) => request("/reports/pnl", { token, query }),
   balanceReport: (token, query) => request("/reports/balance", { token, query }),
   debtReport: (token, query) => request("/reports/debt", { token, query }),
