@@ -71,6 +71,81 @@ def test_account_full_crud_with_account_number(client, db_session):
     assert resp.json()["account_number"] is None
 
 
+def test_set_current_balance_backs_out_opening_balance(client, db_session):
+    # Пользователь вводит остаток "на сегодня" из банковского приложения — не
+    # нужно искать исторический баланс на дату первой синхронизированной
+    # операции (см. HANDOVER.md / обсуждение автоостатка).
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session, opening_balance=0)
+    income_cat = make_category(db_session, "Доход", TxTypeEnum.income)
+    expense_cat = make_category(db_session, "Расход", TxTypeEnum.expense)
+
+    client.post(
+        "/transactions",
+        headers=headers,
+        json={
+            "date_odds": "2026-01-10",
+            "account_id": account.id,
+            "category_id": income_cat.id,
+            "type": "income",
+            "amount": 500,
+            "currency": "RUB",
+        },
+    )
+    client.post(
+        "/transactions",
+        headers=headers,
+        json={
+            "date_odds": "2026-01-11",
+            "account_id": account.id,
+            "category_id": expense_cat.id,
+            "type": "expense",
+            "amount": 200,
+            "currency": "RUB",
+        },
+    )
+
+    # Реальный остаток на сегодня, скажем, 10 000 — а по учтённым операциям
+    # набегает всего +300 (500-200), значит "исторический" opening_balance
+    # должен получиться 9700, чтобы дать в сумме 10 000.
+    resp = client.post(
+        f"/accounts/{account.id}/set-current-balance",
+        headers=headers,
+        json={"current_balance": 10000, "as_of": "2026-08-01"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert float(resp.json()["opening_balance"]) == 9700.0
+
+    dash = client.get("/reports/dashboard-summary", headers=headers)
+    acc = next(a for a in dash.json()["accounts"] if a["id"] == account.id)
+    assert acc["balance"] == 10000.0
+
+
+def test_set_current_balance_defaults_as_of_to_today(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session, opening_balance=0)
+
+    resp = client.post(
+        f"/accounts/{account.id}/set-current-balance", headers=headers, json={"current_balance": 1234.56}
+    )
+    assert resp.status_code == 200, resp.text
+    assert float(resp.json()["opening_balance"]) == 1234.56
+
+
+def test_set_current_balance_requires_admin(client, db_session):
+    account = make_account(db_session)
+    viewer = make_user(db_session, RoleEnum.viewer, company_id=account.company_id)
+
+    resp = client.post(
+        f"/accounts/{account.id}/set-current-balance",
+        headers=auth_headers(viewer),
+        json={"current_balance": 100},
+    )
+    assert resp.status_code == 403
+
+
 def test_counterparty_full_crud(client, db_session):
     admin = make_user(db_session, RoleEnum.admin)
     headers = auth_headers(admin)

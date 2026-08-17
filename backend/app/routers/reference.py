@@ -1,7 +1,9 @@
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -28,11 +30,13 @@ from app.models import (
     Project,
     RoleEnum,
     Transaction,
+    TxTypeEnum,
     User,
 )
 from app.schemas import (
     AccountIn,
     AccountOut,
+    AccountSetCurrentBalanceIn,
     CategoryIn,
     CategoryOut,
     CounterpartyContactIn,
@@ -257,6 +261,45 @@ def update_account(
     check_company_role(db, user, obj.company_id, ADMIN_ONLY)
     for k, v in payload.model_dump().items():
         setattr(obj, k, v)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.post(
+    "/accounts/{account_id}/set-current-balance",
+    response_model=AccountOut,
+    dependencies=[Depends(require_module("finance"))],
+)
+def set_account_current_balance(
+    account_id: str,
+    payload: AccountSetCurrentBalanceIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Вместо поиска исторического остатка на дату первой синхронизированной
+    операции — пользователь вводит остаток, который видит в банке ПРЯМО СЕЙЧАС
+    (или на любую другую as_of), и мы сами решаем уравнение
+    opening_balance = current_balance − (доход − расход по уже введённым
+    операциям на эту дату), чтобы расчётный остаток в Учёте совпал день в день."""
+    obj = _get_or_404(db, user, Account, account_id)
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
+
+    as_of = payload.as_of or date.today()
+    flow = (
+        db.query(
+            func.sum(
+                case(
+                    (Transaction.type == TxTypeEnum.income, Transaction.amount),
+                    else_=-Transaction.amount,
+                )
+            )
+        )
+        .filter(Transaction.account_id == obj.id, Transaction.date_odds <= as_of)
+        .scalar()
+    ) or Decimal("0")
+
+    obj.opening_balance = payload.current_balance - flow
     db.commit()
     db.refresh(obj)
     return obj

@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -97,6 +98,16 @@ class AccountOut(AccountIn):
     id: str
     company_id: str
     is_active: bool
+
+
+class AccountSetCurrentBalanceIn(BaseModel):
+    # Остаток "на сегодня" (или на as_of), который пользователь видит в
+    # банковском приложении — не нужно искать исторический баланс на дату
+    # первой синхронизированной операции, бэкенд сам решает уравнение
+    # opening_balance = current_balance - (доход - расход по уже введённым
+    # операциям), см. routers/reference.py::set_account_current_balance.
+    current_balance: Decimal
+    as_of: Optional[date] = None
 
 
 class MoveCompanyIn(BaseModel):

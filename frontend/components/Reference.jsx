@@ -168,6 +168,29 @@ export default function Reference() {
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Счета: вместо поиска исторического остатка на дату первой синхронизированной
+  // операции — вводим то, что видно в банке сейчас, бэкенд сам пересчитывает
+  // "Начальный остаток" (см. AccountSetCurrentBalanceIn на бэкенде).
+  const [currentBalanceInput, setCurrentBalanceInput] = useState("");
+  const [settingBalance, setSettingBalance] = useState(false);
+  const [balanceMessage, setBalanceMessage] = useState("");
+
+  async function handleSetCurrentBalance() {
+    setSettingBalance(true);
+    setBalanceMessage("");
+    try {
+      const updated = await api.setAccountCurrentBalance(token, editingId, Number(currentBalanceInput));
+      setForm((p) => ({ ...p, opening_balance: String(updated.opening_balance) }));
+      setBalanceMessage("Начальный остаток пересчитан и сохранён.");
+      setCurrentBalanceInput("");
+      reload();
+    } catch (err) {
+      setBalanceMessage(err.message);
+    } finally {
+      setSettingBalance(false);
+    }
+  }
+
   function openAdd() {
     setEditingId(null);
     setForm(defaultFormFor(config.fields));
@@ -177,6 +200,8 @@ export default function Reference() {
     setOriginalCompanyId("");
     setFormIsActive(true);
     setFormError("");
+    setCurrentBalanceInput("");
+    setBalanceMessage("");
     setModalOpen(true);
   }
 
@@ -189,6 +214,8 @@ export default function Reference() {
     setOriginalCompanyId(item.company_id || "");
     setFormIsActive(item.is_active !== false);
     setFormError("");
+    setCurrentBalanceInput("");
+    setBalanceMessage("");
     setModalOpen(true);
   }
 
@@ -424,6 +451,46 @@ export default function Reference() {
                   )}
                 </label>
               ))}
+
+              {tab === "accounts" && editingId && (
+                <div
+                  className="fp-span-2"
+                  style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, marginTop: 4 }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Остаток не совпадает с банком?</div>
+                  <p className="fp-note" style={{ margin: "0 0 8px" }}>
+                    Не нужно искать исторический баланс — введите остаток, который видно в банке прямо сейчас,
+                    «Начальный остаток» выше пересчитается автоматически.
+                  </p>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="Остаток на сегодня"
+                      value={currentBalanceInput}
+                      onChange={(e) => {
+                        setBalanceMessage("");
+                        setCurrentBalanceInput(e.target.value);
+                      }}
+                      style={{ flex: 1, minWidth: 0 }}
+                    />
+                    <button
+                      type="button"
+                      className="fp-btn-ghost"
+                      onClick={handleSetCurrentBalance}
+                      disabled={!currentBalanceInput || settingBalance}
+                      style={{ whiteSpace: "nowrap" }}
+                    >
+                      {settingBalance ? "Считаем…" : "Указать"}
+                    </button>
+                  </div>
+                  {balanceMessage && (
+                    <div className="fp-muted" style={{ fontSize: 12.5, marginTop: 6 }}>
+                      {balanceMessage}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {formError && <div className="fp-form-error fp-span-2">{formError}</div>}
 

@@ -195,6 +195,15 @@ export const api = {
   deleteAccount: (token, id) => request(`/accounts/${id}`, { method: "DELETE", token }),
   moveAccountCompany: (token, id, companyId) =>
     request(`/accounts/${id}/company`, { method: "PATCH", token, body: { company_id: companyId } }),
+  // Проще, чем искать исторический остаток на дату первой синхронизированной
+  // операции — вводим то, что видно в банке сейчас, бэкенд сам вычисляет
+  // opening_balance.
+  setAccountCurrentBalance: (token, id, currentBalance) =>
+    request(`/accounts/${id}/set-current-balance`, {
+      method: "POST",
+      token,
+      body: { current_balance: currentBalance },
+    }),
 
   listCounterparties: (token, query) => request("/counterparties", { token, query }),
   createCounterparty: (token, payload, companyId) =>
