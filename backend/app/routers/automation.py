@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -41,6 +41,7 @@ from app.schemas import (
     AutomationRuleOut,
     IntegrationConnectIn,
     IntegrationOut,
+    IntegrationSyncAllResult,
     IntegrationSyncIn,
     IntegrationSyncResult,
 )
@@ -67,6 +68,7 @@ INTEGRATION_CATALOG = [
 # и amoCRM (см. app/integrations/amocrm.py, отдельные /connect-amocrm и /sync-amocrm —
 # у amoCRM другая форма учётных данных: OAuth2 с refresh_token, а не один статичный токен)
 SYNC_SUPPORTED_PROVIDERS = {"tinkoff"}
+BANK_PROVIDERS = {"tinkoff", "alfa"}
 
 
 def _get_rule_or_404(db: Session, user: User, rule_id: str) -> AutomationRule:
@@ -117,6 +119,109 @@ def _get_or_create_counterparty(db: Session, name: str, company_id: str) -> Coun
         db.add(counterparty)
         db.flush()
     return counterparty
+
+
+def _sync_bank_integration(
+    db: Session,
+    user: User,
+    integration: Integration,
+    account: Account,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> IntegrationSyncResult:
+    """Синхронизирует одну банковскую интеграцию с одним счётом.
+    Обновляет integration.last_sync_at и integration.account_id."""
+    if not integration.is_connected or not integration.credentials_encrypted:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Интеграция не подключена")
+    if integration.provider not in SYNC_SUPPORTED_PROVIDERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Синхронизация для этого провайдера пока не реализована",
+        )
+
+    if not account.account_number:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="У счёта не указан номер счёта — заполните его в справочнике «Счета»",
+        )
+
+    token = decrypt_field(integration.credentials_encrypted)
+    if token is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не удалось расшифровать токен интеграции")
+
+    client = TBankClient(base_url=settings.tbank_base_url, token=token)
+
+    created = 0
+    skipped_duplicate = 0
+    skipped_no_fx_rate = 0
+    skipped_unparseable = 0
+    try:
+        for raw_op in client.fetch_all_operations(account.account_number, date_from, date_to):
+            mapped = map_operation(raw_op)
+            if mapped is None:
+                skipped_unparseable += 1
+                continue
+
+            if (
+                db.query(Transaction)
+                .filter(Transaction.company_id == integration.company_id, Transaction.external_ref == mapped["external_ref"])
+                .first()
+            ):
+                skipped_duplicate += 1
+                continue
+
+            amount_rub = convert_to_rub(db, account.currency, mapped["amount"], mapped["date_odds"])
+            if amount_rub is None:
+                skipped_no_fx_rate += 1
+                continue
+
+            tx_type = TxTypeEnum(mapped["type"])
+            category = _get_or_create_import_category(db, tx_type, integration.company_id)
+            counterparty_id = None
+            if mapped["counterparty_name"]:
+                counterparty_id = _get_or_create_counterparty(db, mapped["counterparty_name"], integration.company_id).id
+
+            db.add(
+                Transaction(
+                    company_id=integration.company_id,
+                    date_odds=mapped["date_odds"],
+                    account_id=account.id,
+                    category_id=category.id,
+                    counterparty_id=counterparty_id,
+                    type=tx_type,
+                    amount=mapped["amount"],
+                    currency=account.currency,
+                    amount_rub=amount_rub,
+                    comment=mapped["comment"],
+                    external_ref=mapped["external_ref"],
+                    created_by=user.id,
+                )
+            )
+            created += 1
+    except TBankError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+    skipped = skipped_duplicate + skipped_no_fx_rate + skipped_unparseable
+    integration.last_sync_at = datetime.utcnow()
+    integration.account_id = account.id
+    db.commit()
+    log_action(
+        db,
+        user,
+        action="sync",
+        entity_type="integration",
+        entity_id=integration.id,
+        details={"created": created, "skipped": skipped, "account_id": account.id},
+        company_id=integration.company_id,
+    )
+    return IntegrationSyncResult(
+        created=created,
+        skipped=skipped,
+        skipped_duplicate=skipped_duplicate,
+        skipped_no_fx_rate=skipped_no_fx_rate,
+        skipped_unparseable=skipped_unparseable,
+    )
 
 
 @router.get("/automation-rules", response_model=list[AutomationRuleOut], dependencies=[FINANCE_MODULE])
@@ -225,99 +330,90 @@ def sync_integration(
 ):
     integration = _get_integration_or_404(db, user, integration_id)
     check_company_role(db, user, integration.company_id, ADMIN_ONLY)
-    company_id = integration.company_id
-    if not integration.is_connected or not integration.credentials_encrypted:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Интеграция не подключена")
-    if integration.provider not in SYNC_SUPPORTED_PROVIDERS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Синхронизация для этого провайдера пока не реализована",
+    account = get_or_404_accessible(db, Account, payload.account_id, [integration.company_id], "Счёт не найден")
+    # Запоминаем счёт на интеграции (integration.account_id) — дальше он используется
+    # для автосинка при открытии страниц (см. sync_all_integrations), без повторного
+    # выбора счёта пользователем каждый раз.
+    return _sync_bank_integration(db, user, integration, account, payload.date_from, payload.date_to)
+
+
+@router.post("/integrations/sync-all", response_model=IntegrationSyncAllResult, dependencies=[FINANCE_MODULE])
+def sync_all_integrations(
+    company_id: Optional[str] = None,
+    force: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Синк всех подключённых банковских интеграций разом — без отдельного
+    планировщика/крона. Вызывается фронтендом при открытии Операций и
+    справочника Счетов (см. HANDOVER.md), поэтому по умолчанию (force=False)
+    реально идёт в банк не чаще integration.autosync_interval_minutes — большинство
+    вызовов при обычной навигации по страницам просто сверяют время и выходят,
+    не тратя лимит запросов к банку. force=True (кнопка «Синхронизировать
+    сейчас») игнорирует этот таймер, но не историю целиком — тянет только
+    с последнего синка, как и обычный автовызов.
+    """
+    company_ids = resolve_company_ids_with_role(db, user, company_id, ADMIN_ONLY)
+    integrations = (
+        db.query(Integration)
+        .filter(
+            Integration.company_id.in_(company_ids),
+            Integration.is_connected.is_(True),
+            Integration.provider.in_(SYNC_SUPPORTED_PROVIDERS),
         )
-
-    account = get_or_404_accessible(db, Account, payload.account_id, [company_id], "Счёт не найден")
-    if not account.account_number:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="У счёта не указан номер счёта — заполните его в справочнике «Счета»",
-        )
-
-    token = decrypt_field(integration.credentials_encrypted)
-    if token is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не удалось расшифровать токен интеграции")
-
-    client = TBankClient(base_url=settings.tbank_base_url, token=token)
-
-    created = 0
-    skipped_duplicate = 0
-    skipped_no_fx_rate = 0
-    skipped_unparseable = 0
-    try:
-        for raw_op in client.fetch_all_operations(account.account_number, payload.date_from, payload.date_to):
-            mapped = map_operation(raw_op)
-            if mapped is None:
-                skipped_unparseable += 1
-                continue
-
-            if (
-                db.query(Transaction)
-                .filter(Transaction.company_id == company_id, Transaction.external_ref == mapped["external_ref"])
-                .first()
-            ):
-                skipped_duplicate += 1
-                continue
-
-            amount_rub = convert_to_rub(db, account.currency, mapped["amount"], mapped["date_odds"])
-            if amount_rub is None:
-                # Нет курса на дату операции — пропускаем, не блокируя остальной синк;
-                # такие операции можно будет добавить вручную после загрузки курса.
-                skipped_no_fx_rate += 1
-                continue
-
-            tx_type = TxTypeEnum(mapped["type"])
-            category = _get_or_create_import_category(db, tx_type, company_id)
-            counterparty_id = None
-            if mapped["counterparty_name"]:
-                counterparty_id = _get_or_create_counterparty(db, mapped["counterparty_name"], company_id).id
-
-            db.add(
-                Transaction(
-                    company_id=company_id,
-                    date_odds=mapped["date_odds"],
-                    account_id=account.id,
-                    category_id=category.id,
-                    counterparty_id=counterparty_id,
-                    type=tx_type,
-                    amount=mapped["amount"],
-                    currency=account.currency,
-                    amount_rub=amount_rub,
-                    comment=mapped["comment"],
-                    external_ref=mapped["external_ref"],
-                    created_by=user.id,
-                )
-            )
-            created += 1
-    except TBankError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
-
-    skipped = skipped_duplicate + skipped_no_fx_rate + skipped_unparseable
-    integration.last_sync_at = datetime.utcnow()
-    db.commit()
-    log_action(
-        db,
-        user,
-        action="sync",
-        entity_type="integration",
-        entity_id=integration.id,
-        details={"created": created, "skipped": skipped, "account_id": account.id},
-        company_id=company_id,
+        .all()
     )
-    return IntegrationSyncResult(
-        created=created,
+
+    processed = 0
+    skipped = 0
+    skipped_rate_limited = 0
+    errors = 0
+    results: list[IntegrationSyncResult] = []
+    now = datetime.utcnow()
+
+    for integration in integrations:
+        if not integration.account_id:
+            # Ещё ни разу не синкали вручную с выбором счёта — автосинку нечего
+            # использовать, пока пользователь не сделает первый ручной /sync.
+            skipped += 1
+            continue
+
+        if not force and integration.last_sync_at:
+            elapsed_minutes = (now - integration.last_sync_at).total_seconds() / 60
+            if elapsed_minutes < integration.autosync_interval_minutes:
+                skipped_rate_limited += 1
+                continue
+
+        account = db.get(Account, integration.account_id)
+        if account is None or not account.account_number:
+            skipped += 1
+            continue
+
+        # Инкрементально с прошлого синка (с суточным нахлёстом на случай пограничных
+        # операций), а не вся история — иначе каждое открытие страницы гоняло бы
+        # банковский API по годам транзакций.
+        date_from = (integration.last_sync_at.date() - timedelta(days=1)) if integration.last_sync_at else None
+        try:
+            result = _sync_bank_integration(db, user, integration, account, date_from, None)
+            results.append(result)
+            processed += 1
+        except HTTPException:
+            errors += 1
+
+    total = len(integrations)
+    message = (
+        f"Синхронизировано интеграций: {processed} из {total}"
+        + (f", пропущено по таймеру: {skipped_rate_limited}" if skipped_rate_limited else "")
+        + (f", с ошибкой: {errors}" if errors else "")
+    )
+    return IntegrationSyncAllResult(
+        total_integrations=total,
+        processed=processed,
         skipped=skipped,
-        skipped_duplicate=skipped_duplicate,
-        skipped_no_fx_rate=skipped_no_fx_rate,
-        skipped_unparseable=skipped_unparseable,
+        skipped_rate_limited=skipped_rate_limited,
+        errors=errors,
+        results=results,
+        message=message,
     )
 
 

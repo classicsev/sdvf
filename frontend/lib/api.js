@@ -257,6 +257,15 @@ export const api = {
   disconnectIntegration: (token, id) => request(`/integrations/${id}/disconnect`, { method: "POST", token }),
   syncIntegration: (token, id, payload) =>
     request(`/integrations/${id}/sync`, { method: "POST", token, body: payload }),
+  // Синк всех подключённых банковских интеграций разом, с троттлингом на
+  // бэкенде (integration.autosync_interval_minutes) — безопасно дёргать при
+  // каждом открытии страницы, force=true — для кнопки "Синхронизировать сейчас".
+  syncAllIntegrations: (token, companyId, force) =>
+    request("/integrations/sync-all", {
+      method: "POST",
+      token,
+      query: { company_id: companyId, force: force || undefined },
+    }),
   connectAmoCrm: (token, id, payload) =>
     request(`/integrations/${id}/connect-amocrm`, { method: "POST", token, body: payload }),
   syncAmoCrm: (token, id, payload) =>

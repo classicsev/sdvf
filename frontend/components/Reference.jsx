@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Plus, X, Pencil, Trash2, Tag, LayoutDashboard, Building2, Contact, Ban, RotateCcw } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Plus, X, Pencil, Trash2, Tag, LayoutDashboard, Building2, Contact, Ban, RotateCcw, RefreshCw } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
@@ -130,6 +130,34 @@ export default function Reference() {
     () => (isCounterparties ? Promise.resolve([]) : config.list(token, companyFilter || undefined)),
     [token, tab, companyFilter]
   );
+
+  // Автосинк банковских интеграций — только на вкладке Счетов, только для тех,
+  // кто вообще может ими управлять. Бэкенд сам решает, не рано ли реально идти
+  // в банк (integration.autosync_interval_minutes) — большинство таких вызовов
+  // при обычной навигации мгновенно возвращают "пропущено по таймеру".
+  const [syncBanner, setSyncBanner] = useState("");
+  const [syncing, setSyncing] = useState(false);
+
+  async function runIntegrationSync(force) {
+    setSyncing(true);
+    if (force) setSyncBanner("");
+    try {
+      const r = await api.syncAllIntegrations(token, companyFilter || undefined, force);
+      if (force || r.processed > 0) setSyncBanner(r.message);
+      if (r.processed > 0) reload();
+    } catch (err) {
+      if (force) setSyncBanner(err.message);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  useEffect(() => {
+    if (tab === "accounts" && canEditAny) {
+      runIntegrationSync(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, companyFilter, canEditAny]);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -262,6 +290,11 @@ export default function Reference() {
             ))}
           </select>
         )}
+        {tab === "accounts" && canEditAny && (
+          <button type="button" className="fp-btn-tiny" onClick={() => runIntegrationSync(true)} disabled={syncing}>
+            <RefreshCw size={13} /> {syncing ? "Синхронизируем…" : "Синхронизировать"}
+          </button>
+        )}
         {canEditAny && (
           <button type="button" className="fp-btn-tiny" onClick={openAdd}>
             <Plus size={13} /> Добавить
@@ -269,6 +302,11 @@ export default function Reference() {
         )}
       </div>
 
+      {tab === "accounts" && syncBanner && (
+        <div className="fp-panel" style={{ padding: "10px 14px", fontSize: 13 }}>
+          {syncBanner}
+        </div>
+      )}
       {error && <div className="fp-error-banner">{error}</div>}
 
       <div className="fp-panel fp-table-panel">

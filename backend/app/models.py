@@ -1,6 +1,7 @@
 import enum
 import uuid
 from datetime import date, datetime
+from typing import Optional
 
 from sqlalchemy import (
     BigInteger,
@@ -567,12 +568,17 @@ class Integration(Base):
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
     company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
+    account_id: Mapped[Optional[str]] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
     provider: Mapped[str] = mapped_column(String(50))  # tinkoff / alfa / wildberries / ozon / amocrm / 1c
     type: Mapped[str] = mapped_column(String(50))  # bank / marketplace / crm / accounting
     # credentials хранится зашифрованным, никогда в открытом виде
     credentials_encrypted: Mapped[str] = mapped_column(Text, nullable=True)
     is_connected: Mapped[bool] = mapped_column(Boolean, default=False)
     last_sync_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    autosync_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    autosync_interval_minutes: Mapped[int] = mapped_column(Integer, default=60)
 
 
 class ApiKey(Base):

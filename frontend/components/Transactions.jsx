@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { Plus, Download, X, Pencil, Trash2, Lock } from "lucide-react";
+import { Plus, Download, X, Pencil, Trash2, Lock, RefreshCw } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
@@ -44,6 +44,10 @@ export default function Transactions() {
   const canEditAnyCompany = companies.some((m) => canEditTransactions(m.role));
   // Обратная совместимость для однокомпанийного случая — совпадает со старым canEdit.
   const canEdit = canEditAnyCompany;
+  // Синк банковских интеграций — доступ строже, чем canEdit (там ещё и оператор):
+  // /integrations/sync-all на бэкенде требует именно admin, как и весь раздел
+  // "Автоматизация".
+  const canSyncIntegrations = companies.some((m) => m.role === "admin");
 
   const [filters, setFilters] = useState({
     company: "",
@@ -123,6 +127,31 @@ export default function Transactions() {
     setCurrentPage(0);
     if (!hasDateFilter) setUseAllForDates(false);
   }, [JSON.stringify(filters), pageSize, hasDateFilter]);
+
+  // Автосинк банковских интеграций при открытии/фильтрации Операций — бэкенд
+  // сам решает, не рано ли реально идти в банк (integration.autosync_interval_minutes),
+  // поэтому безопасно дёргать при каждой смене компании, не только по кнопке.
+  const [syncBanner, setSyncBanner] = useState("");
+  const [syncing, setSyncing] = useState(false);
+
+  async function runIntegrationSync(force) {
+    setSyncing(true);
+    if (force) setSyncBanner("");
+    try {
+      const r = await api.syncAllIntegrations(token, filters.company || undefined, force);
+      if (force || r.processed > 0) setSyncBanner(r.message);
+      if (r.processed > 0) reload();
+    } catch (err) {
+      if (force) setSyncBanner(err.message);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  useEffect(() => {
+    if (canSyncIntegrations) runIntegrationSync(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, filters.company, canSyncIntegrations]);
 
   function openAdd() {
     setEditing(null);
@@ -356,6 +385,11 @@ export default function Transactions() {
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {canSyncIntegrations && (
+            <button className="fp-btn-ghost" onClick={() => runIntegrationSync(true)} disabled={syncing}>
+              <RefreshCw size={15} /> {syncing ? "Синхронизируем…" : "Синхронизировать"}
+            </button>
+          )}
           <button className="fp-btn-ghost" onClick={handleExport} disabled={exporting}>
             <Download size={15} /> {exporting ? "Экспорт…" : "Экспорт в Excel"}
           </button>
@@ -376,6 +410,12 @@ export default function Transactions() {
           )}
         </div>
       </div>
+
+      {syncBanner && (
+        <div className="fp-panel" style={{ padding: "10px 14px", fontSize: 13, marginBottom: 14 }}>
+          {syncBanner}
+        </div>
+      )}
 
       {error && <div className="fp-error-banner">{error}</div>}
 

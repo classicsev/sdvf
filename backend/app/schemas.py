@@ -445,10 +445,13 @@ class IntegrationOut(BaseModel):
 
     id: str
     company_id: str
+    account_id: Optional[str] = None
     provider: str
     type: str
     is_connected: bool
     last_sync_at: Optional[datetime] = None
+    autosync_enabled: bool = False
+    autosync_interval_minutes: int = 60
 
 
 class IntegrationConnectIn(BaseModel):
@@ -467,6 +470,16 @@ class IntegrationSyncResult(BaseModel):
     skipped_duplicate: int = 0
     skipped_no_fx_rate: int = 0
     skipped_unparseable: int = 0
+
+
+class IntegrationSyncAllResult(BaseModel):
+    total_integrations: int
+    processed: int
+    skipped: int
+    skipped_rate_limited: int
+    errors: int
+    results: list[IntegrationSyncResult]
+    message: str
 
 
 class AmoCrmConnectIn(BaseModel):
