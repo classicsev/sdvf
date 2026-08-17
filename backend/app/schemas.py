@@ -494,6 +494,31 @@ class IntegrationSyncAllResult(BaseModel):
     message: str
 
 
+class StatementTransactionPreview(BaseModel):
+    date_odds: date
+    type: TxTypeEnum
+    amount: Decimal
+    comment: Optional[str] = None
+    counterparty_name: Optional[str] = None
+
+
+class StatementImportResult(BaseModel):
+    bank: str
+    account_number: Optional[str] = None
+    period_from: Optional[date] = None
+    period_to: Optional[date] = None
+    opening_balance: Optional[Decimal] = None
+    closing_balance: Optional[Decimal] = None
+    closing_balance_date: Optional[date] = None
+    dry_run: bool
+    created: int
+    skipped: int
+    skipped_duplicate: int = 0
+    skipped_no_fx_rate: int = 0
+    skipped_unparseable: int = 0
+    preview: list[StatementTransactionPreview] = []
+
+
 class AmoCrmConnectIn(BaseModel):
     subdomain: str
     client_id: str

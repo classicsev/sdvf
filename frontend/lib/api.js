@@ -66,6 +66,34 @@ async function download(path, { token, query } = {}) {
   URL.revokeObjectURL(url);
 }
 
+async function uploadFile(path, { token, file, query } = {}) {
+  const headers = { Accept: "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  // Content-Type НЕ ставим сами — браузер сам проставит multipart/form-data
+  // с правильным boundary.
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${API_BASE}${path}${buildQuery(query)}`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  const isJson = res.headers.get("content-type")?.includes("application/json");
+  const data = isJson ? await res.json().catch(() => null) : null;
+
+  if (!res.ok) {
+    const detail = data?.detail;
+    const message = Array.isArray(detail)
+      ? detail.map((d) => d.msg).join("; ")
+      : detail || `Ошибка запроса (${res.status})`;
+    throw new ApiError(message, res.status);
+  }
+
+  return data;
+}
+
 async function openPdf(path, { token, query } = {}) {
   const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -199,12 +227,18 @@ export const api = {
   // Проще, чем искать исторический остаток на дату первой синхронизированной
   // операции — вводим то, что видно в банке сейчас, бэкенд сам вычисляет
   // opening_balance.
-  setAccountCurrentBalance: (token, id, currentBalance) =>
+  setAccountCurrentBalance: (token, id, currentBalance, asOf) =>
     request(`/accounts/${id}/set-current-balance`, {
       method: "POST",
       token,
-      body: { current_balance: currentBalance },
+      body: asOf ? { current_balance: currentBalance, as_of: asOf } : { current_balance: currentBalance },
     }),
+  // Справки/выписки банков для счетов физлиц без API (Т-Банк, Сбербанк, Альфа-Банк,
+  // ВТБ) — бэкенд сам определяет банк по содержимому файла. dry_run=true (по
+  // умолчанию) только считает, что было бы создано, не пишет в БД — для предпросмотра
+  // перед подтверждением.
+  importStatement: (token, accountId, file, dryRun = true) =>
+    uploadFile(`/accounts/${accountId}/import-statement`, { token, file, query: { dry_run: dryRun } }),
 
   listCounterparties: (token, query) => request("/counterparties", { token, query }),
   createCounterparty: (token, payload, companyId) =>

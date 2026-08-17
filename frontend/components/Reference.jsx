@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Plus, X, Pencil, Trash2, Tag, LayoutDashboard, Building2, Contact, Ban, RotateCcw, RefreshCw } from "lucide-react";
+import { Plus, X, Pencil, Trash2, Tag, LayoutDashboard, Building2, Contact, Ban, RotateCcw, RefreshCw, Upload } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
-import { fmt } from "../lib/format";
+import { fmt, fmtDate } from "../lib/format";
 import { canEditReference } from "../lib/roles";
 import Counterparties from "./Counterparties";
 
@@ -15,6 +15,13 @@ const STATUS_COLUMN = {
   render: (v) => (
     <span className={`fp-status-badge ${v === false ? "warn" : "ok"}`}>{v === false ? "Неактивен" : "Активен"}</span>
   ),
+};
+
+const BANK_LABELS = {
+  tbank: "Т-Банк",
+  sberbank: "Сбербанк",
+  alfabank: "Альфа-Банк",
+  vtb: "ВТБ",
 };
 
 const TABS = {
@@ -191,6 +198,79 @@ export default function Reference() {
     }
   }
 
+  // Импорт PDF-справки/выписки для счетов физлиц без банковского API (Т-Банк,
+  // Сбербанк, Альфа-Банк, ВТБ) — банк определяется бэкендом по содержимому файла.
+  // Сначала dry-run-предпросмотр (ничего не пишет в БД), затем подтверждение.
+  const [statementFile, setStatementFile] = useState(null);
+  const [statementPreview, setStatementPreview] = useState(null);
+  const [statementResult, setStatementResult] = useState(null);
+  const [statementBusy, setStatementBusy] = useState(false);
+  const [statementError, setStatementError] = useState("");
+
+  function resetStatementImport() {
+    setStatementFile(null);
+    setStatementPreview(null);
+    setStatementResult(null);
+    setStatementError("");
+  }
+
+  async function handleStatementFileChange(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setStatementFile(file);
+    setStatementResult(null);
+    setStatementPreview(null);
+    setStatementError("");
+    setStatementBusy(true);
+    try {
+      const preview = await api.importStatement(token, editingId, file, true);
+      setStatementPreview(preview);
+    } catch (err) {
+      setStatementError(err.message);
+    } finally {
+      setStatementBusy(false);
+    }
+  }
+
+  async function handleConfirmStatementImport() {
+    if (!statementFile) return;
+    setStatementBusy(true);
+    setStatementError("");
+    try {
+      const result = await api.importStatement(token, editingId, statementFile, false);
+      setStatementResult(result);
+      setStatementPreview(null);
+      setStatementFile(null);
+      reload();
+    } catch (err) {
+      setStatementError(err.message);
+    } finally {
+      setStatementBusy(false);
+    }
+  }
+
+  async function handleUseStatementBalance() {
+    if (statementPreview?.closing_balance == null) return;
+    setStatementBusy(true);
+    setStatementError("");
+    try {
+      const updated = await api.setAccountCurrentBalance(
+        token,
+        editingId,
+        Number(statementPreview.closing_balance),
+        statementPreview.closing_balance_date
+      );
+      setForm((p) => ({ ...p, opening_balance: String(updated.opening_balance) }));
+      setBalanceMessage(`Начальный остаток пересчитан на основе остатка из справки (на ${fmtDate(statementPreview.closing_balance_date)}).`);
+      reload();
+    } catch (err) {
+      setStatementError(err.message);
+    } finally {
+      setStatementBusy(false);
+    }
+  }
+
   function openAdd() {
     setEditingId(null);
     setForm(defaultFormFor(config.fields));
@@ -202,6 +282,7 @@ export default function Reference() {
     setFormError("");
     setCurrentBalanceInput("");
     setBalanceMessage("");
+    resetStatementImport();
     setModalOpen(true);
   }
 
@@ -216,6 +297,7 @@ export default function Reference() {
     setFormError("");
     setCurrentBalanceInput("");
     setBalanceMessage("");
+    resetStatementImport();
     setModalOpen(true);
   }
 
@@ -487,6 +569,92 @@ export default function Reference() {
                   {balanceMessage && (
                     <div className="fp-muted" style={{ fontSize: 12.5, marginTop: 6 }}>
                       {balanceMessage}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {tab === "accounts" && editingId && (
+                <div
+                  className="fp-span-2"
+                  style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, marginTop: 4 }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                    Импорт из справки/выписки банка (PDF)
+                  </div>
+                  <p className="fp-note" style={{ margin: "0 0 8px" }}>
+                    Для счетов физлиц без API банка — Т-Банк, Сбербанк, Альфа-Банк, ВТБ. Банк определяется
+                    автоматически по содержимому файла.
+                  </p>
+                  <label className="fp-btn-ghost" style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                    <Upload size={14} />
+                    {statementFile ? statementFile.name : "Выбрать файл"}
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      onChange={handleStatementFileChange}
+                      disabled={statementBusy}
+                      style={{ display: "none" }}
+                    />
+                  </label>
+                  {statementBusy && (
+                    <div className="fp-muted" style={{ fontSize: 12.5, marginTop: 6 }}>
+                      Разбираем файл…
+                    </div>
+                  )}
+                  {statementError && (
+                    <div className="fp-form-error" style={{ marginTop: 6 }}>
+                      {statementError}
+                    </div>
+                  )}
+                  {statementPreview && (
+                    <div style={{ marginTop: 8, fontSize: 12.5 }}>
+                      <div>
+                        Банк: <b>{BANK_LABELS[statementPreview.bank] || statementPreview.bank}</b>
+                        {statementPreview.period_from && statementPreview.period_to && (
+                          <>
+                            {" "}
+                            · период {fmtDate(statementPreview.period_from)} — {fmtDate(statementPreview.period_to)}
+                          </>
+                        )}
+                      </div>
+                      <div style={{ marginTop: 4 }}>
+                        Новых операций: <b>{statementPreview.created}</b>
+                        {statementPreview.skipped_duplicate > 0 && <> · уже есть в Учёте: {statementPreview.skipped_duplicate}</>}
+                        {statementPreview.skipped_no_fx_rate > 0 && <> · нет курса на дату: {statementPreview.skipped_no_fx_rate}</>}
+                      </div>
+                      {statementPreview.closing_balance != null && (
+                        <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <span>
+                            Остаток на {fmtDate(statementPreview.closing_balance_date)}:{" "}
+                            <b>{fmt(statementPreview.closing_balance, form.currency)}</b>
+                          </span>
+                          <button
+                            type="button"
+                            className="fp-btn-ghost"
+                            onClick={handleUseStatementBalance}
+                            disabled={statementBusy}
+                          >
+                            Использовать как начальный остаток
+                          </button>
+                        </div>
+                      )}
+                      <div style={{ marginTop: 8 }}>
+                        <button
+                          type="button"
+                          className="fp-btn-primary"
+                          onClick={handleConfirmStatementImport}
+                          disabled={statementBusy || statementPreview.created === 0}
+                        >
+                          {statementBusy ? "Импортируем…" : `Импортировать ${statementPreview.created} операций`}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {statementResult && (
+                    <div className="fp-muted" style={{ fontSize: 12.5, marginTop: 6 }}>
+                      Импортировано {statementResult.created} операций
+                      {statementResult.skipped_duplicate > 0 ? `, пропущено дублей: ${statementResult.skipped_duplicate}` : ""}.
                     </div>
                   )}
                 </div>

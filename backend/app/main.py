@@ -19,6 +19,7 @@ from app.routers import (
     production,
     reference,
     reports,
+    statements,
     transactions,
     users,
     warehouse,
@@ -51,6 +52,7 @@ app.include_router(dadata.router)
 app.include_router(warehouse.router)
 app.include_router(orders.router)
 app.include_router(production.router)
+app.include_router(statements.router)
 
 MEDIA_DIR = Path(__file__).resolve().parent.parent / "media"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)

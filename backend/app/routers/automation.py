@@ -14,6 +14,11 @@ from app.auth import (
     resolve_company_ids_with_role,
     resolve_write_company_id,
 )
+from app.bank_import import (
+    get_or_create_counterparty,
+    get_or_create_import_category,
+    import_mapped_transactions,
+)
 from app.config import settings
 from app.crypto import decrypt_field, encrypt_field
 from app.database import get_db
@@ -102,45 +107,6 @@ def _ensure_integration_catalog(db: Session, company_id: str) -> None:
     db.commit()
 
 
-def _get_or_create_import_category(db: Session, tx_type: TxTypeEnum, company_id: str) -> Category:
-    name = "Импорт из банка (приход)" if tx_type == "income" else "Импорт из банка (расход)"
-    category = db.query(Category).filter(Category.company_id == company_id, Category.name == name).first()
-    if category is None:
-        category = Category(company_id=company_id, name=name, group_name="Импорт", type=tx_type)
-        db.add(category)
-        db.flush()
-    return category
-
-
-def _get_or_create_financing_category(db: Session, tx_type: TxTypeEnum, company_id: str) -> Category:
-    # Кредитная линия/овердрафт — не доход и не расход бизнеса (см.
-    # integrations/tbank.py::FINANCING_CATEGORIES), отдельная категория с
-    # is_financing=True, чтобы её можно было исключить из П&Л и дашборда,
-    # не теряя сами операции из истории счёта.
-    name = "Кредитная линия: пополнение" if tx_type == "income" else "Кредитная линия: погашение"
-    category = db.query(Category).filter(Category.company_id == company_id, Category.name == name).first()
-    if category is None:
-        category = Category(
-            company_id=company_id,
-            name=name,
-            group_name="Финансовая деятельность",
-            type=tx_type,
-            is_financing=True,
-        )
-        db.add(category)
-        db.flush()
-    return category
-
-
-def _get_or_create_counterparty(db: Session, name: str, company_id: str) -> Counterparty:
-    counterparty = db.query(Counterparty).filter(Counterparty.company_id == company_id, Counterparty.name == name).first()
-    if counterparty is None:
-        counterparty = Counterparty(company_id=company_id, name=name)
-        db.add(counterparty)
-        db.flush()
-    return counterparty
-
-
 def _sync_bank_integration(
     db: Session,
     user: User,
@@ -171,61 +137,13 @@ def _sync_bank_integration(
 
     client = TBankClient(base_url=settings.tbank_base_url, token=token)
 
-    created = 0
-    skipped_duplicate = 0
-    skipped_no_fx_rate = 0
-    skipped_unparseable = 0
     try:
-        for raw_op in client.fetch_all_operations(account.account_number, date_from, date_to):
-            mapped = map_operation(raw_op)
-            if mapped is None:
-                skipped_unparseable += 1
-                continue
-
-            if (
-                db.query(Transaction)
-                .filter(Transaction.company_id == integration.company_id, Transaction.external_ref == mapped["external_ref"])
-                .first()
-            ):
-                skipped_duplicate += 1
-                continue
-
-            amount_rub = convert_to_rub(db, account.currency, mapped["amount"], mapped["date_odds"])
-            if amount_rub is None:
-                skipped_no_fx_rate += 1
-                continue
-
-            tx_type = TxTypeEnum(mapped["type"])
-            if mapped.get("is_financing"):
-                category = _get_or_create_financing_category(db, tx_type, integration.company_id)
-            else:
-                category = _get_or_create_import_category(db, tx_type, integration.company_id)
-            counterparty_id = None
-            if mapped["counterparty_name"]:
-                counterparty_id = _get_or_create_counterparty(db, mapped["counterparty_name"], integration.company_id).id
-
-            db.add(
-                Transaction(
-                    company_id=integration.company_id,
-                    date_odds=mapped["date_odds"],
-                    account_id=account.id,
-                    category_id=category.id,
-                    counterparty_id=counterparty_id,
-                    type=tx_type,
-                    amount=mapped["amount"],
-                    currency=account.currency,
-                    amount_rub=amount_rub,
-                    comment=mapped["comment"],
-                    external_ref=mapped["external_ref"],
-                    created_by=user.id,
-                )
-            )
-            created += 1
+        mapped_ops = (map_operation(raw_op) for raw_op in client.fetch_all_operations(account.account_number, date_from, date_to))
+        result = import_mapped_transactions(db, user, integration.company_id, account, mapped_ops)
     except TBankError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
-    skipped = skipped_duplicate + skipped_no_fx_rate + skipped_unparseable
     integration.last_sync_at = datetime.utcnow()
     integration.account_id = account.id
     db.commit()
@@ -235,16 +153,10 @@ def _sync_bank_integration(
         action="sync",
         entity_type="integration",
         entity_id=integration.id,
-        details={"created": created, "skipped": skipped, "account_id": account.id},
+        details={"created": result["created"], "skipped": result["skipped"], "account_id": account.id},
         company_id=integration.company_id,
     )
-    return IntegrationSyncResult(
-        created=created,
-        skipped=skipped,
-        skipped_duplicate=skipped_duplicate,
-        skipped_no_fx_rate=skipped_no_fx_rate,
-        skipped_unparseable=skipped_unparseable,
-    )
+    return IntegrationSyncResult(**result)
 
 
 @router.get("/automation-rules", response_model=list[AutomationRuleOut], dependencies=[FINANCE_MODULE])
@@ -564,7 +476,7 @@ def sync_amocrm(
 
             parent = counterparty_by_amo_company.get(mapped["company_id"]) if mapped["company_id"] else None
             if parent is None:
-                parent = _get_or_create_counterparty(db, mapped["name"], company_id)
+                parent = get_or_create_counterparty(db, mapped["name"], company_id)
                 if mapped["company_id"]:
                     counterparty_by_amo_company[mapped["company_id"]] = parent
             counterparty_by_amo_contact[mapped["id"]] = parent
@@ -618,7 +530,7 @@ def sync_amocrm(
                 deals_skipped += 1
                 continue
 
-            category = _get_or_create_import_category(db, TxTypeEnum.income, company_id)
+            category = get_or_create_import_category(db, TxTypeEnum.income, company_id)
             # Контрагент сделки — организация контакта (или он сам, если контакт
             # без компании); см. counterparty_by_amo_contact выше.
             parent = counterparty_by_amo_contact.get(mapped["contact_id"])
