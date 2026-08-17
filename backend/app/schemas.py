@@ -59,6 +59,7 @@ class CategoryIn(BaseModel):
     type: TxTypeEnum
     group_name: Optional[str] = None
     is_active: bool = True
+    is_financing: bool = False
 
 
 class CategoryOut(CategoryIn):

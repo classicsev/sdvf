@@ -112,6 +112,26 @@ def _get_or_create_import_category(db: Session, tx_type: TxTypeEnum, company_id:
     return category
 
 
+def _get_or_create_financing_category(db: Session, tx_type: TxTypeEnum, company_id: str) -> Category:
+    # Кредитная линия/овердрафт — не доход и не расход бизнеса (см.
+    # integrations/tbank.py::FINANCING_CATEGORIES), отдельная категория с
+    # is_financing=True, чтобы её можно было исключить из П&Л и дашборда,
+    # не теряя сами операции из истории счёта.
+    name = "Кредитная линия: пополнение" if tx_type == "income" else "Кредитная линия: погашение"
+    category = db.query(Category).filter(Category.company_id == company_id, Category.name == name).first()
+    if category is None:
+        category = Category(
+            company_id=company_id,
+            name=name,
+            group_name="Финансовая деятельность",
+            type=tx_type,
+            is_financing=True,
+        )
+        db.add(category)
+        db.flush()
+    return category
+
+
 def _get_or_create_counterparty(db: Session, name: str, company_id: str) -> Counterparty:
     counterparty = db.query(Counterparty).filter(Counterparty.company_id == company_id, Counterparty.name == name).first()
     if counterparty is None:
@@ -176,7 +196,10 @@ def _sync_bank_integration(
                 continue
 
             tx_type = TxTypeEnum(mapped["type"])
-            category = _get_or_create_import_category(db, tx_type, integration.company_id)
+            if mapped.get("is_financing"):
+                category = _get_or_create_financing_category(db, tx_type, integration.company_id)
+            else:
+                category = _get_or_create_import_category(db, tx_type, integration.company_id)
             counterparty_id = None
             if mapped["counterparty_name"]:
                 counterparty_id = _get_or_create_counterparty(db, mapped["counterparty_name"], integration.company_id).id

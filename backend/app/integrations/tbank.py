@@ -6,6 +6,15 @@ import httpx
 
 SANDBOX_TOKEN = "TBankSandboxToken"
 
+# Служебные категории Т-Банк API (поле "category" в сыром ответе /api/v1/statement),
+# относящиеся к работе кредитной линии/овердрафта, а не к операционной деятельности
+# бизнеса — деньги реально движутся по счёту, но это не доход и не расход (см.
+# routers/automation.py::_get_or_create_financing_category). Проверено на реальных
+# данных: сумма incomeLoan и сумма creditPaymentOuter за период совпадали друг с
+# другом и ровно на эту величину расходились "Приход/Расход" с веб-кабинетом банка
+# (там такие операции не входят в счётчик "Списания и поступления").
+FINANCING_CATEGORIES = {"incomeLoan", "creditPaymentOuter"}
+
 
 class TBankError(Exception):
     pass
@@ -131,4 +140,5 @@ def map_operation(op: dict) -> Optional[dict]:
         "amount": amount,
         "comment": op.get("payPurpose") or op.get("description") or None,
         "counterparty_name": counterparty_name,
+        "is_financing": op.get("category") in FINANCING_CATEGORIES,
     }

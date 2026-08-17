@@ -115,6 +115,11 @@ class Category(Base):
     type: Mapped[TxTypeEnum] = mapped_column(Enum(TxTypeEnum))
     group_name: Mapped[str] = mapped_column(String(100), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Финансовая деятельность (займы/кредитные линии и их погашение) — не доход
+    # и не расход бизнеса ни при УСН-доходы (пп.10 п.1 ст.251 НК РФ), ни при ОСН,
+    # поэтому исключается из П&Л и сводного Прихода/Расхода на дашборде, но сама
+    # операция остаётся видна в списке — деньги реально прошли по счёту.
+    is_financing: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Project(Base):

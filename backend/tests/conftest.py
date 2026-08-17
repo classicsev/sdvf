@@ -109,9 +109,15 @@ def auth_headers(user) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def make_category(db_session, name="Тестовая статья", tx_type=TxTypeEnum.expense, group_name=None, company_id=None):
+def make_category(
+    db_session, name="Тестовая статья", tx_type=TxTypeEnum.expense, group_name=None, company_id=None, is_financing=False
+):
     category = Category(
-        company_id=company_id or _current_company_id, name=name, type=tx_type, group_name=group_name
+        company_id=company_id or _current_company_id,
+        name=name,
+        type=tx_type,
+        group_name=group_name,
+        is_financing=is_financing,
     )
     db_session.add(category)
     db_session.commit()

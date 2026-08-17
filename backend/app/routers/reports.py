@@ -114,10 +114,19 @@ def dashboard_summary(
         )
 
     forced_project = scope_project_filter(user)
-    period_query = db.query(Transaction).filter(
-        Transaction.company_id.in_(company_ids),
-        Transaction.date_odds >= period_from,
-        Transaction.date_odds <= period_to,
+    # is_financing (кредитные линии/займы и их погашение) — не доход и не расход
+    # бизнеса ни при УСН-доходы, ни при ОСН (см. models.py::Category.is_financing),
+    # поэтому не входит в "Приход/Расход" — сами операции остаются в списке
+    # транзакций и в остатке счёта, просто не искажают эти сводные цифры.
+    period_query = (
+        db.query(Transaction)
+        .join(Category, Transaction.category_id == Category.id)
+        .filter(
+            Transaction.company_id.in_(company_ids),
+            Transaction.date_odds >= period_from,
+            Transaction.date_odds <= period_to,
+            Category.is_financing.is_(False),
+        )
     )
     if forced_project:
         period_query = period_query.filter(Transaction.project_id == forced_project)
@@ -241,8 +250,13 @@ def pnl_report(
     if forced_project:
         query = query.filter(Transaction.project_id == forced_project)
 
+    # is_financing (кредитные линии/займы и их погашение) исключены из П&Л — не
+    # доход и не расход бизнеса ни при УСН-доходы, ни при ОСН (см.
+    # models.py::Category.is_financing и dashboard_summary выше).
     revenue = (
         query.filter(Transaction.type == TxTypeEnum.income)
+        .join(Category, Transaction.category_id == Category.id)
+        .filter(Category.is_financing.is_(False))
         .with_entities(func.coalesce(func.sum(Transaction.amount_rub), 0))
         .scalar()
     )
@@ -251,6 +265,7 @@ def pnl_report(
     expense_rows = (
         query.filter(Transaction.type == TxTypeEnum.expense)
         .join(Category, Transaction.category_id == Category.id)
+        .filter(Category.is_financing.is_(False))
         .with_entities(group_expr.label("group_name"), func.sum(Transaction.amount_rub))
         .group_by(group_expr)
         .all()

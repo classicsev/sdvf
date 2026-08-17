@@ -7,6 +7,7 @@ Create Date: 2026-08-17 00:00:00.000000
 """
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision = 'b7e3c9f1a24d'
@@ -16,7 +17,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column('integrations', sa.Column('account_id', sa.String(36), nullable=True))
+    # accounts.id — postgresql UUID (см. models.py::gen_uuid/UUID(as_uuid=False)),
+    # не String — FK ниже иначе падает с DatatypeMismatch (проверено на проде).
+    op.add_column('integrations', sa.Column('account_id', postgresql.UUID(as_uuid=False), nullable=True))
     op.add_column(
         'integrations',
         sa.Column('autosync_enabled', sa.Boolean(), nullable=False, server_default=sa.false())

@@ -120,6 +120,88 @@ def test_sync_auto_creates_counterparty_from_payer_name(client, db_session, monk
     assert cp is not None
 
 
+class _FakeTBankClientWithCreditLine:
+    """Реальный сценарий: пополнение и погашение кредитной линии вперемешку с
+    обычными операциями — синк должен развести их по разным категориям."""
+
+    def __init__(self, base_url, token):
+        pass
+
+    def fetch_all_operations(self, account_number, date_from, date_to=None):
+        return iter(
+            [
+                {
+                    "operationId": "op-real-income",
+                    "typeOfOperation": "Credit",
+                    "accountAmount": 100000.00,
+                    "operationDate": "2026-06-01T00:00:00Z",
+                    "payPurpose": "Оплата по счёту",
+                    "category": "incomePeople",
+                },
+                {
+                    "operationId": "op-loan-draw",
+                    "typeOfOperation": "Credit",
+                    "accountAmount": 50000.00,
+                    "operationDate": "2026-06-02T00:00:00Z",
+                    "category": "incomeLoan",
+                },
+                {
+                    "operationId": "op-loan-repay",
+                    "typeOfOperation": "Debit",
+                    "accountAmount": 50000.00,
+                    "operationDate": "2026-06-03T00:00:00Z",
+                    "category": "creditPaymentOuter",
+                },
+            ]
+        )
+
+
+def test_sync_routes_credit_line_operations_to_financing_category(client, db_session, monkeypatch):
+    monkeypatch.setattr(automation_router, "TBankClient", _FakeTBankClientWithCreditLine)
+
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session, account_number="40702810900000012345")
+    integration = _setup_connected_tbank(client, headers, db_session)
+
+    resp = client.post(
+        f"/integrations/{integration.id}/sync",
+        headers=headers,
+        json={"account_id": account.id, "date_from": "2026-06-01", "date_to": "2026-06-30"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["created"] == 3
+
+    from app.models import Category
+
+    real_income_cat = (
+        db_session.query(Category)
+        .join(Transaction, Transaction.category_id == Category.id)
+        .filter(Transaction.external_ref == "tbank:op-real-income")
+        .first()
+    )
+    assert real_income_cat.is_financing is False
+    assert real_income_cat.name == "Импорт из банка (приход)"
+
+    loan_draw_cat = (
+        db_session.query(Category)
+        .join(Transaction, Transaction.category_id == Category.id)
+        .filter(Transaction.external_ref == "tbank:op-loan-draw")
+        .first()
+    )
+    assert loan_draw_cat.is_financing is True
+    assert loan_draw_cat.name == "Кредитная линия: пополнение"
+
+    loan_repay_cat = (
+        db_session.query(Category)
+        .join(Transaction, Transaction.category_id == Category.id)
+        .filter(Transaction.external_ref == "tbank:op-loan-repay")
+        .first()
+    )
+    assert loan_repay_cat.is_financing is True
+    assert loan_repay_cat.name == "Кредитная линия: погашение"
+
+
 def test_sync_fails_when_tbank_returns_error(client, db_session, monkeypatch):
     class _FailingClient:
         def __init__(self, base_url, token):

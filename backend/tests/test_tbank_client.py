@@ -33,6 +33,49 @@ def test_map_operation_income_from_credit():
     assert mapped["date_odds"] == date(2026, 6, 5)
     assert mapped["comment"] == "Оплата по договору"
     assert mapped["counterparty_name"] == "ИП Мальшин"
+    assert mapped["is_financing"] is False
+
+
+def test_map_operation_flags_credit_line_drawdown_as_financing():
+    # incomeLoan — пополнение кредитной линии/овердрафта, не доход бизнеса
+    # (см. FINANCING_CATEGORIES) — реальный случай, найден при разборе живых
+    # данных: сумма incomeLoan за период совпадала с creditPaymentOuter и ровно
+    # на эту величину расходилась с "Приход/Расход" веб-кабинета Т-Банка.
+    op = {
+        "operationId": "op-loan-1",
+        "typeOfOperation": "Credit",
+        "accountAmount": 50000.0,
+        "operationDate": "2026-06-05T10:00:00Z",
+        "category": "incomeLoan",
+    }
+    mapped = map_operation(op)
+    assert mapped["type"] == "income"
+    assert mapped["is_financing"] is True
+
+
+def test_map_operation_flags_credit_line_repayment_as_financing():
+    op = {
+        "operationId": "op-loan-2",
+        "typeOfOperation": "Debit",
+        "accountAmount": 50000.0,
+        "operationDate": "2026-06-06T10:00:00Z",
+        "category": "creditPaymentOuter",
+    }
+    mapped = map_operation(op)
+    assert mapped["type"] == "expense"
+    assert mapped["is_financing"] is True
+
+
+def test_map_operation_regular_category_is_not_financing():
+    op = {
+        "operationId": "op-regular",
+        "typeOfOperation": "Debit",
+        "accountAmount": 1000.0,
+        "operationDate": "2026-06-06T10:00:00Z",
+        "category": "contragentOutcome",
+    }
+    mapped = map_operation(op)
+    assert mapped["is_financing"] is False
 
 
 def test_map_operation_expense_from_debit_uses_receiver_name():
