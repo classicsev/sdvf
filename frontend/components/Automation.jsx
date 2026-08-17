@@ -62,11 +62,16 @@ function describeCondition(condition) {
 
 const AMO_CONNECT_EMPTY = { subdomain: "", client_id: "", client_secret: "", access_token: "", refresh_token: "" };
 
-function IntegrationsPanel({ token, integrations, accounts, reload, companyFilter }) {
+function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
   const { user } = useAuth();
   const companies = user.companies || [];
   const multiCompany = companies.length > 1;
   const showCompanyColumn = multiCompany && !companyFilter;
+
+  const { data: accounts } = useResource(
+    () => api.listAccounts(token, { company_id: companyFilter || undefined }),
+    [token, companyFilter]
+  );
 
   const [connectTarget, setConnectTarget] = useState(null);
   const [connectTokenValue, setConnectTokenValue] = useState("");
@@ -315,27 +320,41 @@ function IntegrationsPanel({ token, integrations, accounts, reload, companyFilte
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSync}>
-              <label className="fp-span-2">
-                {syncTarget.provider === "amocrm" ? "Счёт (куда записать доход по сделкам)" : "Счёт (с заполненным номером счёта)"}
-                <select
-                  required
-                  value={syncForm.account_id}
-                  onChange={(e) => setSyncForm((p) => ({ ...p, account_id: e.target.value }))}
-                >
-                  <option value="" disabled>
-                    Выберите счёт
-                  </option>
-                  {(accounts || [])
-                    .filter((a) => !multiCompany || a.company_id === syncTarget.company_id)
-                    .map((a) => (
-                      <option key={a.id} value={a.id} disabled={syncTarget.provider !== "amocrm" && !a.account_number}>
-                        {syncTarget.provider === "amocrm"
-                          ? a.name
-                          : `${a.name} ${a.account_number ? `(${a.account_number})` : "— нет номера счёта"}`}
-                      </option>
-                    ))}
-                </select>
-              </label>
+              {(() => {
+                const relevantAccounts = (accounts || [])
+                  .filter((a) => !multiCompany || a.company_id === syncTarget.company_id)
+                  .filter((a) => syncTarget.provider === "amocrm" || a.account_number);
+                const needsAccountNumber = syncTarget.provider !== "amocrm";
+                return (
+                  <label className="fp-span-2">
+                    {syncTarget.provider === "amocrm" ? "Счёт (куда записать доход по сделкам)" : "Счёт (с заполненным номером счёта)"}
+                    {relevantAccounts.length === 0 ? (
+                      <div className="fp-form-error" style={{ marginTop: 6 }}>
+                        {needsAccountNumber
+                          ? "В этой компании нет счетов с заполненным номером. Добавьте номер счёта в справочнике «Счета»."
+                          : "В этой компании нет счетов. Добавьте счёт в справочнике «Счета»."}
+                      </div>
+                    ) : (
+                      <select
+                        required
+                        value={syncForm.account_id}
+                        onChange={(e) => setSyncForm((p) => ({ ...p, account_id: e.target.value }))}
+                      >
+                        <option value="" disabled>
+                          Выберите счёт
+                        </option>
+                        {relevantAccounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {syncTarget.provider === "amocrm"
+                              ? a.name
+                              : `${a.name} (${a.account_number})`}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </label>
+                );
+              })()}
               <label className={syncTarget.provider === "amocrm" ? "fp-span-2" : ""}>
                 {syncTarget.provider === "amocrm" ? "Сделки, закрытые с даты (опц.)" : "С даты"}
                 <input
@@ -422,7 +441,6 @@ export default function Automation() {
     () => api.listIntegrations(token, query),
     [token, companyId]
   );
-  const { data: accounts } = useResource(() => api.listAccounts(token), [token]);
 
   const categoriesById = useMemo(() => Object.fromEntries((categories || []).map((c) => [c.id, c])), [categories]);
   const projectsById = useMemo(() => Object.fromEntries((projects || []).map((p) => [p.id, p])), [projects]);
@@ -610,7 +628,6 @@ export default function Automation() {
       <IntegrationsPanel
         token={token}
         integrations={integrations}
-        accounts={accounts}
         reload={reloadIntegrations}
         companyFilter={companyId}
       />

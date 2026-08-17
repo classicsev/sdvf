@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.models import ApiKey, RoleEnum, User
+from app.models import ApiKey, Company, RoleEnum, User
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
@@ -332,15 +332,22 @@ def decode_sso_link_confirm_token(token: str) -> Optional[dict]:
 
 def require_module(*modules: str):
     """Dependency factory: 403, если ни один из перечисленных модулей не куплен
-    компанией пользователя. Несколько модулей — через ИЛИ (нужно для общих
-    ресурсов вроде контрагентов, доступных и Учёту, и Складу).
+    ни в одной из доступных пользователю компаний. Несколько модулей — через ИЛИ
+    (нужно для общих ресурсов вроде контрагентов, доступных и Учёту, и Складу).
 
     Usage: dependencies=[Depends(require_module("finance"))]
     """
     flag_by_module = {"finance": "module_finance_enabled", "warehouse": "module_warehouse_enabled"}
 
-    def checker(user: User = Depends(get_current_user)) -> User:
-        if not any(getattr(user.company, flag_by_module[m]) for m in modules):
+    def checker(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
+        accessible_ids = get_accessible_company_ids(db, user)
+        if not accessible_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Этот модуль недоступен для вашей компании",
+            )
+        companies = db.query(Company).filter(Company.id.in_(accessible_ids)).all()
+        if not any(getattr(company, flag_by_module[m]) for company in companies for m in modules):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Этот модуль недоступен для вашей компании",

@@ -79,10 +79,14 @@ const MODULES_NAV_ROLES = ["admin"];
 
 export default function Shell() {
   const { user, token, logout } = useAuth();
+  const companies = user.companies || [];
+  const userRoles = [...new Set(companies.map((m) => m.role))];
   const allowed = [
-    ...(ROLE_NAV[user.role] || []),
-    ...(MODULES_NAV_ROLES.includes(user.role) ? ["modules"] : []),
-  ].filter((key) => isModuleEnabled(user.company, NAV_MODULE[key]));
+    ...new Set(userRoles.flatMap((role) => ROLE_NAV[role] || [])),
+    ...(userRoles.some((role) => MODULES_NAV_ROLES.includes(role)) ? ["modules"] : []),
+  ].filter((key) =>
+    companies.some((membership) => isModuleEnabled(membership.company, NAV_MODULE[key]))
+  );
   const [view, setView] = useState(allowed[0] || "dashboard");
   const [resendState, setResendState] = useState("idle"); // idle | busy | sent
   const [profileOpen, setProfileOpen] = useState(false);

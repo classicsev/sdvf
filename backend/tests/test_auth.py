@@ -1,5 +1,5 @@
-from app.models import RoleEnum, User
-from tests.conftest import auth_headers, make_user
+from app.models import CompanyMember, RoleEnum, User
+from tests.conftest import auth_headers, make_company, make_user
 
 
 def test_login_oauth_only_account_returns_401_not_500(client, db_session):
@@ -69,3 +69,29 @@ def test_admin_cannot_deactivate_self(client, db_session):
     admin = make_user(db_session, RoleEnum.admin)
     resp = client.delete(f"/users/{admin.id}", headers=auth_headers(admin))
     assert resp.status_code == 400
+
+
+def test_require_module_allows_access_when_module_enabled_in_any_company(client, db_session):
+    # Пользователь с двумя компаниями: finance выключен в первой, включен во второй.
+    # Доступ к /accounts должен быть, т.к. require_module смотрит все доступные компании.
+    user = make_user(db_session, RoleEnum.admin)
+    first_membership = user.company_memberships[0]
+    first_company = first_membership.company
+    first_company.module_finance_enabled = False
+
+    second_company = make_company(db_session, name="Вторая компания")
+    db_session.add(CompanyMember(user_id=user.id, company_id=second_company.id, role=RoleEnum.admin))
+    db_session.commit()
+
+    resp = client.get("/accounts", headers=auth_headers(user))
+    assert resp.status_code == 200
+
+
+def test_require_module_rejects_when_module_disabled_in_all_companies(client, db_session):
+    user = make_user(db_session, RoleEnum.admin)
+    for membership in user.company_memberships:
+        membership.company.module_finance_enabled = False
+    db_session.commit()
+
+    resp = client.get("/accounts", headers=auth_headers(user))
+    assert resp.status_code == 403

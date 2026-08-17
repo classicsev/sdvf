@@ -19,10 +19,11 @@ const ACTION_LABELS = {
 
 export default function Audit() {
   const { token, user } = useAuth();
+  const isAdmin = (user.companies || []).some((m) => m.role === "admin");
   const { data: log, loading, error } = useResource(() => api.listAuditLog(token), [token]);
   const { data: users } = useResource(
-    () => (user.role === "admin" ? api.listUsers(token) : Promise.resolve([])),
-    [token, user.role]
+    () => (isAdmin ? api.listUsers(token) : Promise.resolve([])),
+    [token, isAdmin]
   );
   const usersById = useMemo(() => Object.fromEntries((users || []).map((u) => [u.id, u])), [users]);
 

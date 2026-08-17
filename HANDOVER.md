@@ -99,6 +99,34 @@ Host sdvf    → 195.133.194.63, root, тот же ключ
 (та же логика, что у `delete_or_deactivate`), и только если пользователь admin и в
 исходной, и в целевой компании.
 
+### Модульные гейты и навигация (multi-company)
+
+- `backend/app/auth.py::require_module(...)` — проверяет, что хотя бы у одной
+  доступной пользователю компании включен нужный модуль (`module_finance_enabled` /
+  `module_warehouse_enabled`). Раньше смотрел только на первую компанию (`user.company`).
+- `frontend/components/Shell.jsx` — пункты меню фильтруются по всем компаниям
+  пользователя: раздел виден, если модуль включён хотя бы в одной компании, а роли
+  для навигации собираются по всем memberships.
+- Важно: отдельные эндпоинты с `company_id` в query/body должны сами проверять
+  модуль у целевой компании, если это критично (сейчас это делается через
+  `resolve_company_ids` + бизнес-логика, а `require_module` — только входной фильтр).
+
+### Оставшиеся legacy-зависимости от первой компании
+
+Ниже места, которые до сих пор опираются на `user.company` / `user.company_id`
+(первая компания по дате создания membership). Они работают для пользователей с
+одной компанией, но могут вести себя неожиданно при нескольких:
+
+- `backend/app/auth.py::scope_company_filter` — явно помечен как legacy для
+  роутеров Фазы 2; новый код должен использовать `get_accessible_company_ids`.
+- `backend/app/auth.py::resolve_write_company_id` — fallback на первую компанию,
+  когда `company_id` не передан; фронтендные формы уже передают company_id явно.
+- `backend/app/routers/companies.py::/companies/me` и `/companies/me/modules` —
+  endpoint'ы "моей компании", работают с первой компанией; активный UI использует
+  `/companies/:id/modules`.
+- `frontend/components/Shell.jsx:146` — отображение текущей роли берёт `user.role`
+  (первая компания); это чисто UX, на права не влияет.
+
 ### Стек
 
 - Бэкенд: `backend/app/` — роутеры в `routers/`, модели в `models.py`, схемы в

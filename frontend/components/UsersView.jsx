@@ -23,14 +23,17 @@ export default function UsersView() {
   const { data: projects } = useResource(() => api.listProjects(token), [token]);
 
   // Роль пользователя в компании, которую сейчас показываем в таблице — при
-  // просмотре "Все компании" берём первую компанию из списка пользователя
-  // (обратная совместимость), при фильтре по конкретной — роль именно в ней.
+  // просмотре "Все компании" берём первую компанию из списка пользователя,
+  // при фильтре по конкретной — роль именно в ней.
+  function firstMembershipRole(u) {
+    return u.companies?.[0]?.role || u.role;
+  }
   function roleInContext(u) {
-    if (companyFilter) return u.companies?.find((c) => c.company.id === companyFilter)?.role || u.role;
-    return u.role;
+    if (companyFilter) return u.companies?.find((c) => c.company.id === companyFilter)?.role || firstMembershipRole(u);
+    return firstMembershipRole(u);
   }
   function targetCompanyFor(u) {
-    return companyFilter || u.company_id;
+    return companyFilter || u.companies?.[0]?.company.id || u.company_id;
   }
 
   const [modalOpen, setModalOpen] = useState(false);
