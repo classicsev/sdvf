@@ -88,6 +88,7 @@ def import_statement(
         opening_balance=statement.opening_balance,
         closing_balance=statement.closing_balance,
         closing_balance_date=statement.closing_balance_date,
+        account_opening_balance=account.opening_balance,
         dry_run=dry_run,
         preview=preview,
         **result,

@@ -265,6 +265,14 @@ export default function Reference() {
       // отдельным вызовом отсюда: раньше это было два шага, и порядок/сам факт
       // второго шага ничем не гарантировался.
       const result = await api.importStatement(token, accountId, statementFile, false);
+      // Критично: синхронизируем поле формы с реальным значением из БД. Иначе
+      // форма продолжает показывать старое "Начальный остаток", и если после
+      // этого нажать общую кнопку "Сохранить", она отправит устаревшее число и
+      // затрёт только что применённый остаток обратно — именно это и произошло
+      // на реальных счетах пользователя.
+      if (result.account_opening_balance != null) {
+        setForm((p) => ({ ...p, opening_balance: String(result.account_opening_balance) }));
+      }
       setStatementResult(result);
       setStatementPreview(null);
       setStatementFile(null);

@@ -508,9 +508,16 @@ class StatementImportResult(BaseModel):
     account_number: Optional[str] = None
     period_from: Optional[date] = None
     period_to: Optional[date] = None
+    # Входящий остаток, который называет сама справка/выписка (есть не у всех
+    # банков) — просто для отображения, не путать с account_opening_balance ниже.
     opening_balance: Optional[Decimal] = None
     closing_balance: Optional[Decimal] = None
     closing_balance_date: Optional[date] = None
+    # Начальный остаток СЧЁТА в Учёте после этого запроса (пересчитан автоматически,
+    # см. routers/statements.py) — фронтенд обязан обновить им поле формы, иначе
+    # при последующем нажатии "Сохранить" форма отправит старое значение и затрёт
+    # только что применённый остаток обратно.
+    account_opening_balance: Optional[Decimal] = None
     dry_run: bool
     created: int
     skipped: int

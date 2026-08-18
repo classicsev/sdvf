@@ -51,13 +51,15 @@ def test_dry_run_previews_without_writing_transactions(client, db_session, monke
     monkeypatch.setattr(statements_router, "detect_and_parse", lambda data: FAKE_STATEMENT)
     admin = make_user(db_session, RoleEnum.admin)
     headers = auth_headers(admin)
-    account = make_account(db_session)
+    account = make_account(db_session, opening_balance=42)
 
     resp = _upload(client, headers, account.id)  # dry_run по умолчанию True
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["dry_run"] is True
     assert body["created"] == 2
+    # dry_run ничего не меняет — остаток счёта в ответе такой же, как был.
+    assert body["account_opening_balance"] == "42.00"
     assert body["skipped"] == 0
     assert body["bank"] == "tbank"
     assert body["closing_balance"] == "9500.00"
@@ -78,6 +80,10 @@ def test_commit_creates_transactions_and_dedupes_on_rerun(client, db_session, mo
     assert body["dry_run"] is False
     assert body["created"] == 2
     assert body["preview"] == []
+    # account_opening_balance — реальный остаток счёта в БД после этого запроса;
+    # фронтенд обязан положить его в форму, иначе следующее "Сохранить" затрёт
+    # только что применённый остаток обратно (см. Reference.jsx).
+    assert body["account_opening_balance"] == "0.00"
     assert db_session.query(Transaction).count() == 2
 
     # Повторная загрузка того же файла — дедуп по external_ref, ничего не дублируется.
@@ -102,6 +108,7 @@ def test_confirmed_import_reconciles_opening_balance_when_flow_does_not_match_st
 
     resp = _upload(client, headers, account.id, dry_run=False)
     assert resp.status_code == 200, resp.text
+    assert resp.json()["account_opening_balance"] == "100.00"
 
     db_session.refresh(account)
     assert account.opening_balance == Decimal("100.00")
