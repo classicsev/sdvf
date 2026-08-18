@@ -16,6 +16,7 @@ from app.auth import (
 )
 from app.config import settings
 from app.database import get_db
+from app.holding_transfers import get_or_create_internal_transfer_category
 from app.integrations.sdvf import SdvfClient, SdvfError
 from app.models import (
     Account,
@@ -83,6 +84,13 @@ def list_categories(
     company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
     company_ids = resolve_company_ids(db, user, company_id)
+    # Категории "Перевод между своими счетами" заводим лениво здесь (а не только
+    # когда авто-детект перевода первый раз сработает при импорте) — иначе их
+    # нечем было бы выбрать вручную, пока такой случай не встретится сам.
+    for cid in company_ids:
+        get_or_create_internal_transfer_category(db, TxTypeEnum.income, cid)
+        get_or_create_internal_transfer_category(db, TxTypeEnum.expense, cid)
+    db.commit()
     return db.query(Category).filter(Category.company_id.in_(company_ids)).all()
 
 

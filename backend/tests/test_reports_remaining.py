@@ -31,6 +31,25 @@ def test_cashflow_by_month_when_no_period(client, db_session):
     assert month["net"] == 600.0
 
 
+def test_cashflow_by_month_excludes_financing_and_internal_transfer(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    income = make_category(db_session, "Приход", TxTypeEnum.income)
+    loan = make_category(db_session, "Кредитная линия: пополнение", TxTypeEnum.income, is_financing=True)
+    transfer = make_category(
+        db_session, "Перевод между своими счетами: пополнение", TxTypeEnum.income, is_internal_transfer=True
+    )
+
+    _tx(client, headers, account_id=account.id, category_id=income.id, type="income", amount=1000, date_odds="2026-06-05")
+    _tx(client, headers, account_id=account.id, category_id=loan.id, type="income", amount=50000, date_odds="2026-06-06")
+    _tx(client, headers, account_id=account.id, category_id=transfer.id, type="income", amount=30000, date_odds="2026-06-07")
+
+    resp = client.get("/reports/cashflow", headers=headers)
+    month = next(m for m in resp.json()["by_month"] if m["period"] == "2026-06")
+    assert month["income"] == 1000.0
+
+
 def test_cashflow_by_category_with_period(client, db_session):
     admin = make_user(db_session, RoleEnum.admin)
     headers = auth_headers(admin)

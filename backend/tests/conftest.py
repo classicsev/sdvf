@@ -110,7 +110,13 @@ def auth_headers(user) -> dict:
 
 
 def make_category(
-    db_session, name="Тестовая статья", tx_type=TxTypeEnum.expense, group_name=None, company_id=None, is_financing=False
+    db_session,
+    name="Тестовая статья",
+    tx_type=TxTypeEnum.expense,
+    group_name=None,
+    company_id=None,
+    is_financing=False,
+    is_internal_transfer=False,
 ):
     category = Category(
         company_id=company_id or _current_company_id,
@@ -118,6 +124,7 @@ def make_category(
         type=tx_type,
         group_name=group_name,
         is_financing=is_financing,
+        is_internal_transfer=is_internal_transfer,
     )
     db_session.add(category)
     db_session.commit()

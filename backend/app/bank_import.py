@@ -2,7 +2,9 @@ from typing import Iterable, Optional
 
 from sqlalchemy.orm import Session
 
+from app.auth import get_accessible_company_ids
 from app.fx import convert_to_rub
+from app.holding_transfers import detect_internal_transfer, get_or_create_internal_transfer_category
 from app.models import Account, Category, Counterparty, Transaction, TxTypeEnum, User
 
 
@@ -68,6 +70,9 @@ def import_mapped_transactions(
     skipped_duplicate = 0
     skipped_no_fx_rate = 0
     skipped_unparseable = 0
+    # Холдинг = все компании/физлица, доступные пользователю, который делает импорт
+    # (см. app/holding_transfers.py) — только среди них ищем "второй конец" перевода.
+    holding_company_ids = get_accessible_company_ids(db, user)
 
     for mapped in mapped_ops:
         if mapped is None:
@@ -94,6 +99,8 @@ def import_mapped_transactions(
         tx_type = TxTypeEnum(mapped["type"])
         if mapped.get("is_financing"):
             category = get_or_create_financing_category(db, tx_type, company_id)
+        elif detect_internal_transfer(db, holding_company_ids, account.id, mapped.get("comment")):
+            category = get_or_create_internal_transfer_category(db, tx_type, company_id)
         else:
             category = get_or_create_import_category(db, tx_type, company_id)
         counterparty_id = None

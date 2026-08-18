@@ -61,6 +61,7 @@ class CategoryIn(BaseModel):
     group_name: Optional[str] = None
     is_active: bool = True
     is_financing: bool = False
+    is_internal_transfer: bool = False
 
 
 class CategoryOut(CategoryIn):

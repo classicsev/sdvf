@@ -88,22 +88,32 @@ function KpiCard({ label, value, tone, icon, periodLabel, trendPctValue, invertT
 }
 
 export default function Dashboard() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const companies = user?.companies || [];
+  const multiCompany = companies.length > 1;
 
   const [range, setRange] = useState("month");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
+  const [companyFilter, setCompanyFilter] = useState("");
   const isCustom = range === "custom";
 
-  const summaryQuery = isCustom
-    ? { date_from: customFrom || undefined, date_to: customTo || undefined }
-    : { range };
+  const summaryQuery = {
+    ...(isCustom ? { date_from: customFrom || undefined, date_to: customTo || undefined } : { range }),
+    company_id: companyFilter || undefined,
+  };
   const { data: summary, loading, error } = useResource(
     () => api.dashboardSummary(token, summaryQuery),
-    [token, range, customFrom, customTo]
+    [token, range, customFrom, customTo, companyFilter]
   );
-  const { data: cashflow } = useResource(() => api.cashflowReport(token), [token]);
-  const { data: forecast } = useResource(() => api.cashflowForecast(token, { days: 30 }), [token]);
+  const { data: cashflow } = useResource(
+    () => api.cashflowReport(token, { company_id: companyFilter || undefined }),
+    [token, companyFilter]
+  );
+  const { data: forecast } = useResource(
+    () => api.cashflowForecast(token, { days: 30, company_id: companyFilter || undefined }),
+    [token, companyFilter]
+  );
 
   if (loading) return <div className="fp-loading">Загрузка…</div>;
   if (error) return <div className="fp-error-banner">{error}</div>;
@@ -135,6 +145,16 @@ export default function Dashboard() {
             <span className="fp-muted">—</span>
             <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} />
           </div>
+        )}
+        {multiCompany && (
+          <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>
+            <option value="">Все компании</option>
+            {companies.map((m) => (
+              <option key={m.company.id} value={m.company.id}>
+                {m.company.name}
+              </option>
+            ))}
+          </select>
         )}
       </div>
 

@@ -133,10 +133,12 @@ def _income_expense_for_range(
     period_to: date,
     forced_project: Optional[str],
 ) -> tuple[Decimal, Decimal, dict, dict]:
-    # is_financing (кредитные линии/займы и их погашение) — не доход и не расход
-    # бизнеса ни при УСН-доходы, ни при ОСН (см. models.py::Category.is_financing),
-    # поэтому не входит в "Приход/Расход" — сами операции остаются в списке
-    # транзакций и в остатке счёта, просто не искажают эти сводные цифры.
+    # is_financing (кредитные линии/займы и их погашение) и is_internal_transfer
+    # (переводы между своими же счетами/компаниями/физлицами в одном холдинге,
+    # см. app/holding_transfers.py) — не доход и не расход бизнеса, поэтому не
+    # входят в "Приход/Расход" ни по одной компании, ни сводно по всем сразу
+    # (свой перевод — не выручка ни там, ни там); сами операции остаются в
+    # списке транзакций и в остатке счёта, просто не искажают эти сводные цифры.
     query = (
         db.query(Transaction)
         .join(Category, Transaction.category_id == Category.id)
@@ -145,6 +147,7 @@ def _income_expense_for_range(
             Transaction.date_odds >= period_from,
             Transaction.date_odds <= period_to,
             Category.is_financing.is_(False),
+            Category.is_internal_transfer.is_(False),
         )
     )
     if forced_project:
@@ -365,7 +368,18 @@ def cashflow_report(
     user: User = Depends(get_current_user),
 ):
     company_ids = resolve_company_ids(db, user, company_id)
-    query = db.query(Transaction).filter(Transaction.company_id.in_(company_ids))
+    # is_financing/is_internal_transfer исключены по той же причине, что и в
+    # dashboard_summary/pnl_report — иначе кредитные линии и переводы между
+    # своими же счетами раздувают "Приход/Расход" на графике по месяцам.
+    query = (
+        db.query(Transaction)
+        .join(Category, Transaction.category_id == Category.id)
+        .filter(
+            Transaction.company_id.in_(company_ids),
+            Category.is_financing.is_(False),
+            Category.is_internal_transfer.is_(False),
+        )
+    )
     forced_project = scope_project_filter(user)
     if forced_project:
         query = query.filter(Transaction.project_id == forced_project)
@@ -375,8 +389,7 @@ def cashflow_report(
         query = query.filter(Transaction.date_odds >= start, Transaction.date_odds <= end)
 
         rows = (
-            query.join(Category, Transaction.category_id == Category.id)
-            .with_entities(Category.id, Category.name, Transaction.type, func.sum(Transaction.amount_rub))
+            query.with_entities(Category.id, Category.name, Transaction.type, func.sum(Transaction.amount_rub))
             .group_by(Category.id, Category.name, Transaction.type)
             .all()
         )
@@ -429,13 +442,13 @@ def pnl_report(
     if forced_project:
         query = query.filter(Transaction.project_id == forced_project)
 
-    # is_financing (кредитные линии/займы и их погашение) исключены из П&Л — не
-    # доход и не расход бизнеса ни при УСН-доходы, ни при ОСН (см.
-    # models.py::Category.is_financing и dashboard_summary выше).
+    # is_financing (кредитные линии/займы и их погашение) и is_internal_transfer
+    # (переводы между своими же счетами/компаниями/физлицами) исключены из П&Л —
+    # ни то, ни другое не доход и не расход бизнеса (см. dashboard_summary выше).
     revenue = (
         query.filter(Transaction.type == TxTypeEnum.income)
         .join(Category, Transaction.category_id == Category.id)
-        .filter(Category.is_financing.is_(False))
+        .filter(Category.is_financing.is_(False), Category.is_internal_transfer.is_(False))
         .with_entities(func.coalesce(func.sum(Transaction.amount_rub), 0))
         .scalar()
     )
@@ -444,7 +457,7 @@ def pnl_report(
     expense_rows = (
         query.filter(Transaction.type == TxTypeEnum.expense)
         .join(Category, Transaction.category_id == Category.id)
-        .filter(Category.is_financing.is_(False))
+        .filter(Category.is_financing.is_(False), Category.is_internal_transfer.is_(False))
         .with_entities(group_expr.label("group_name"), func.sum(Transaction.amount_rub))
         .group_by(group_expr)
         .all()
