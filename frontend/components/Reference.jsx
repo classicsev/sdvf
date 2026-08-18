@@ -644,7 +644,7 @@ export default function Reference() {
                         <div style={{ marginTop: 6 }}>
                           Остаток на {fmtDate(statementPreview.closing_balance_date)}:{" "}
                           <b>{fmt(statementPreview.closing_balance, form.currency)}</b> — применится к «Начальному
-                          остатку» автоматически после импорта.
+                          остатку» автоматически{statementPreview.created > 0 ? " после импорта." : "."}
                         </div>
                       )}
                       <div style={{ marginTop: 8 }}>
@@ -652,9 +652,13 @@ export default function Reference() {
                           type="button"
                           className="fp-btn-primary"
                           onClick={handleConfirmStatementImport}
-                          disabled={statementBusy || statementPreview.created === 0}
+                          disabled={statementBusy || (statementPreview.created === 0 && statementPreview.closing_balance == null)}
                         >
-                          {statementBusy ? "Импортируем…" : `Импортировать ${statementPreview.created} операций`}
+                          {statementBusy
+                            ? "Обрабатываем…"
+                            : statementPreview.created > 0
+                            ? `Импортировать ${statementPreview.created} операций`
+                            : "Применить остаток из справки"}
                         </button>
                       </div>
                     </div>
