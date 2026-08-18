@@ -260,22 +260,11 @@ export default function Reference() {
     setStatementError("");
     try {
       const accountId = await ensureAccountIdForStatement();
+      // Остаток из справки применяется на бэкенде — тем же запросом и тем же
+      // коммитом, что и сам импорт операций (см. routers/statements.py), а не
+      // отдельным вызовом отсюда: раньше это было два шага, и порядок/сам факт
+      // второго шага ничем не гарантировался.
       const result = await api.importStatement(token, accountId, statementFile, false);
-      // Остаток из справки применяем ТОЛЬКО после того, как операции уже
-      // импортированы — именно в этом порядке (не раньше!) уравнение
-      // opening_balance = остаток_из_справки − уже_учтённый_поток даёт верный
-      // результат. Раньше это была отдельная кнопка, которую можно было нажать
-      // до импорта — тогда остаток из справки и поток от только что
-      // импортированных операций складывались вместе и задваивали баланс.
-      if (result.closing_balance != null) {
-        const updated = await api.setAccountCurrentBalance(
-          token,
-          accountId,
-          Number(result.closing_balance),
-          result.closing_balance_date
-        );
-        setForm((p) => ({ ...p, opening_balance: String(updated.opening_balance) }));
-      }
       setStatementResult(result);
       setStatementPreview(null);
       setStatementFile(null);

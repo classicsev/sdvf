@@ -2,7 +2,7 @@ import io
 from datetime import date
 from decimal import Decimal
 
-from app.models import RoleEnum, Transaction
+from app.models import Account, RoleEnum, Transaction
 from app.routers import statements as statements_router
 from app.statement_parsers.base import ParsedStatement
 from tests.conftest import auth_headers, make_account, make_user
@@ -86,6 +86,57 @@ def test_commit_creates_transactions_and_dedupes_on_rerun(client, db_session, mo
     assert body2["created"] == 0
     assert body2["skipped_duplicate"] == 2
     assert db_session.query(Transaction).count() == 2
+
+
+def test_confirmed_import_reconciles_opening_balance_when_flow_does_not_match_statement(client, db_session, monkeypatch):
+    # Реальный случай: остаток "на дату" из справки не обязан совпадать с
+    # суммой (доход-расход) распарсенных операций один в один — на счету мог
+    # быть остаток ещё ДО начала периода выписки. FAKE_STATEMENT: доход 10000,
+    # расход 500, чистый поток +9500, но справка называет закрывающий остаток
+    # 9600.00 — разница 100.00 должна лечь в opening_balance, а не потеряться.
+    statement_with_gap = ParsedStatement(**{**FAKE_STATEMENT.__dict__, "closing_balance": Decimal("9600.00")})
+    monkeypatch.setattr(statements_router, "detect_and_parse", lambda data: statement_with_gap)
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session, opening_balance=0)
+
+    resp = _upload(client, headers, account.id, dry_run=False)
+    assert resp.status_code == 200, resp.text
+
+    db_session.refresh(account)
+    assert account.opening_balance == Decimal("100.00")
+
+
+def test_reimport_with_zero_new_operations_still_reconciles_balance(client, db_session, monkeypatch):
+    # Ровно тот баг, который был найден на реальных данных пользователя: файл
+    # уже когда-то загружали (все операции — дубли, created=0), но остаток
+    # всё равно должен пересчитаться при повторной загрузке того же файла —
+    # это единственный способ починить счёт без похода в базу руками.
+    monkeypatch.setattr(statements_router, "detect_and_parse", lambda data: FAKE_STATEMENT)
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session, opening_balance=0)
+
+    resp1 = _upload(client, headers, account.id, dry_run=False)
+    assert resp1.status_code == 200
+    assert resp1.json()["created"] == 2
+
+    # Кто-то (или баг) сломал остаток между первой и второй загрузкой.
+    account = db_session.get(Account, account.id)
+    account.opening_balance = Decimal("777.00")
+    db_session.commit()
+
+    resp2 = _upload(client, headers, account.id, dry_run=False)
+    assert resp2.status_code == 200
+    body2 = resp2.json()
+    assert body2["created"] == 0
+    assert body2["skipped_duplicate"] == 2
+
+    db_session.refresh(account)
+    # opening_balance должен пересчитаться так, чтобы итоговый остаток снова
+    # совпал с закрывающим остатком из справки (9500.00 = поток 10000-500),
+    # а не остаться испорченным на 777.00.
+    assert account.opening_balance + Decimal("10000.00") - Decimal("500.00") == Decimal("9500.00")
 
 
 def test_non_admin_cannot_import_statement(client, db_session, monkeypatch):

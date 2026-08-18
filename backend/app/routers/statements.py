@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.account_balance import reconcile_opening_balance
 from app.auth import check_company_role, get_accessible_company_ids, get_current_user, require_module
 from app.bank_import import import_mapped_transactions
 from app.database import get_db
@@ -66,6 +67,16 @@ def import_statement(
             for t in statement.transactions
         ]
     else:
+        # Остаток из справки применяется здесь же, одним коммитом вместе с только
+        # что импортированными операциями — не отдельным запросом с фронтенда.
+        # Раньше это была отдельная кнопка/вызов после импорта, и порядок/сам факт
+        # её нажатия ничем не гарантировался — на практике это давало либо
+        # задвоенный остаток (если нажать раньше импорта), либо вовсе не применялся
+        # (если, например, все операции уже были импортированы раньше и кнопка
+        # подтверждения не срабатывала). Теперь это не выбор пользователя, а
+        # гарантированный шаг самого импорта.
+        if statement.closing_balance is not None:
+            reconcile_opening_balance(db, account, statement.closing_balance, statement.closing_balance_date)
         db.commit()
         preview = []
 

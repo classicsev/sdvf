@@ -3,7 +3,6 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -14,6 +13,7 @@ from app.auth import (
     resolve_company_ids,
     resolve_write_company_id,
 )
+from app.account_balance import reconcile_opening_balance
 from app.config import settings
 from app.database import get_db
 from app.holding_transfers import get_or_create_internal_transfer_category
@@ -293,21 +293,7 @@ def set_account_current_balance(
     obj = _get_or_404(db, user, Account, account_id)
     check_company_role(db, user, obj.company_id, ADMIN_ONLY)
 
-    as_of = payload.as_of or date.today()
-    flow = (
-        db.query(
-            func.sum(
-                case(
-                    (Transaction.type == TxTypeEnum.income, Transaction.amount),
-                    else_=-Transaction.amount,
-                )
-            )
-        )
-        .filter(Transaction.account_id == obj.id, Transaction.date_odds <= as_of)
-        .scalar()
-    ) or Decimal("0")
-
-    obj.opening_balance = payload.current_balance - flow
+    reconcile_opening_balance(db, obj, payload.current_balance, payload.as_of)
     db.commit()
     db.refresh(obj)
     return obj
