@@ -541,8 +541,16 @@ export default function Reference() {
                       step={f.type === "number" ? "0.01" : undefined}
                       required={f.required}
                       value={form[f.key]}
-                      onChange={(e) => setForm((p) => ({ ...p, [f.key]: e.target.value }))}
+                      onChange={(e) => {
+                        setForm((p) => ({ ...p, [f.key]: e.target.value }));
+                        if (f.key === "opening_balance") setStatementResult(null);
+                      }}
                     />
+                  )}
+                  {f.key === "opening_balance" && statementResult?.account_opening_balance != null && (
+                    <span style={{ color: "var(--expense)", fontSize: 11.5, display: "block", marginTop: 3 }}>
+                      Совпадает с банком — менять не нужно
+                    </span>
                   )}
                 </label>
               ))}
