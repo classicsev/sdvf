@@ -214,6 +214,26 @@ export default function Reference() {
     setStatementError("");
   }
 
+  // Если файл выбран ещё до сохранения счёта (создание "с нуля"), сначала тихо
+  // создаём счёт текущими значениями формы — иначе пришлось бы сначала жать
+  // "Сохранить", а потом снова открывать счёт на редактирование ради импорта.
+  // Дальше модалка ведёт себя как обычное редактирование уже созданного счёта.
+  async function ensureAccountIdForStatement() {
+    if (editingId) return editingId;
+    if (!form.name?.trim()) {
+      throw new Error("Сначала укажите название счёта");
+    }
+    const payload = { ...form, is_active: true };
+    config.fields.forEach((f) => {
+      if (f.type === "number") payload[f.key] = Number(payload[f.key] || 0);
+    });
+    const created = await config.create(token, payload, formCompanyId || undefined);
+    setEditingId(created.id);
+    setOriginalCompanyId(created.company_id);
+    reload();
+    return created.id;
+  }
+
   async function handleStatementFileChange(e) {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -224,7 +244,8 @@ export default function Reference() {
     setStatementError("");
     setStatementBusy(true);
     try {
-      const preview = await api.importStatement(token, editingId, file, true);
+      const accountId = await ensureAccountIdForStatement();
+      const preview = await api.importStatement(token, accountId, file, true);
       setStatementPreview(preview);
     } catch (err) {
       setStatementError(err.message);
@@ -238,7 +259,8 @@ export default function Reference() {
     setStatementBusy(true);
     setStatementError("");
     try {
-      const result = await api.importStatement(token, editingId, statementFile, false);
+      const accountId = await ensureAccountIdForStatement();
+      const result = await api.importStatement(token, accountId, statementFile, false);
       setStatementResult(result);
       setStatementPreview(null);
       setStatementFile(null);
@@ -574,7 +596,7 @@ export default function Reference() {
                 </div>
               )}
 
-              {tab === "accounts" && editingId && (
+              {tab === "accounts" && (
                 <div
                   className="fp-span-2"
                   style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, marginTop: 4 }}
@@ -585,6 +607,7 @@ export default function Reference() {
                   <p className="fp-note" style={{ margin: "0 0 8px" }}>
                     Для счетов физлиц без API банка — Т-Банк, Сбербанк, Альфа-Банк, ВТБ. Банк определяется
                     автоматически по содержимому файла.
+                    {!editingId && " Счёт сохранится автоматически, как только выберете файл — укажите хотя бы название выше."}
                   </p>
                   <label className="fp-btn-ghost" style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                     <Upload size={14} />
