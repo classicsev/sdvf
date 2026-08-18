@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Wallet, ArrowUpRight, ArrowDownRight, TrendingUp, TrendingDown } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Wallet, ArrowUpRight, ArrowDownRight, TrendingUp, TrendingDown, RefreshCw } from "lucide-react";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -20,6 +20,7 @@ import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { fmt, fmtDate } from "../lib/format";
+import { canEditReference } from "../lib/roles";
 
 const RANGE_OPTIONS = [
   { key: "today", label: "Сегодня" },
@@ -102,18 +103,49 @@ export default function Dashboard() {
     ...(isCustom ? { date_from: customFrom || undefined, date_to: customTo || undefined } : { range }),
     company_id: companyFilter || undefined,
   };
-  const { data: summary, loading, error } = useResource(
+  const { data: summary, loading, error, reload: reloadSummary } = useResource(
     () => api.dashboardSummary(token, summaryQuery),
     [token, range, customFrom, customTo, companyFilter]
   );
-  const { data: cashflow } = useResource(
+  const { data: cashflow, reload: reloadCashflow } = useResource(
     () => api.cashflowReport(token, { company_id: companyFilter || undefined }),
     [token, companyFilter]
   );
-  const { data: forecast } = useResource(
+  const { data: forecast, reload: reloadForecast } = useResource(
     () => api.cashflowForecast(token, { days: 30, company_id: companyFilter || undefined }),
     [token, companyFilter]
   );
+
+  // Автосинк банковских интеграций при открытии дашборда — тот же приём, что и
+  // на вкладке Счетов (см. Reference.jsx), чтобы цифры на дашборде не отставали,
+  // если пользователь открыл его первым, а не Справочники. Бэкенд сам решает, не
+  // рано ли реально идти в банк (integration.autosync_interval_minutes).
+  const canEditAny = companies.some((m) => canEditReference(m.role));
+  const [syncBanner, setSyncBanner] = useState("");
+  const [syncing, setSyncing] = useState(false);
+
+  async function runIntegrationSync(force) {
+    setSyncing(true);
+    if (force) setSyncBanner("");
+    try {
+      const r = await api.syncAllIntegrations(token, companyFilter || undefined, force);
+      if (force || r.processed > 0) setSyncBanner(r.message);
+      if (r.processed > 0) {
+        reloadSummary();
+        reloadCashflow();
+        reloadForecast();
+      }
+    } catch (err) {
+      if (force) setSyncBanner(err.message);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  useEffect(() => {
+    if (canEditAny) runIntegrationSync(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyFilter, canEditAny]);
 
   if (loading) return <div className="fp-loading">Загрузка…</div>;
   if (error) return <div className="fp-error-banner">{error}</div>;
@@ -156,7 +188,18 @@ export default function Dashboard() {
             ))}
           </select>
         )}
+        {canEditAny && (
+          <button type="button" className="fp-btn-tiny" onClick={() => runIntegrationSync(true)} disabled={syncing}>
+            <RefreshCw size={13} /> {syncing ? "Синхронизируем…" : "Синхронизировать"}
+          </button>
+        )}
       </div>
+
+      {syncBanner && (
+        <div className="fp-panel" style={{ padding: "10px 14px", fontSize: 13, marginBottom: 4 }}>
+          {syncBanner}
+        </div>
+      )}
 
       <section className="fp-kpi-row">
         <KpiCard
