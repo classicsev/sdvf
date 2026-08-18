@@ -261,30 +261,24 @@ export default function Reference() {
     try {
       const accountId = await ensureAccountIdForStatement();
       const result = await api.importStatement(token, accountId, statementFile, false);
+      // Остаток из справки применяем ТОЛЬКО после того, как операции уже
+      // импортированы — именно в этом порядке (не раньше!) уравнение
+      // opening_balance = остаток_из_справки − уже_учтённый_поток даёт верный
+      // результат. Раньше это была отдельная кнопка, которую можно было нажать
+      // до импорта — тогда остаток из справки и поток от только что
+      // импортированных операций складывались вместе и задваивали баланс.
+      if (result.closing_balance != null) {
+        const updated = await api.setAccountCurrentBalance(
+          token,
+          accountId,
+          Number(result.closing_balance),
+          result.closing_balance_date
+        );
+        setForm((p) => ({ ...p, opening_balance: String(updated.opening_balance) }));
+      }
       setStatementResult(result);
       setStatementPreview(null);
       setStatementFile(null);
-      reload();
-    } catch (err) {
-      setStatementError(err.message);
-    } finally {
-      setStatementBusy(false);
-    }
-  }
-
-  async function handleUseStatementBalance() {
-    if (statementPreview?.closing_balance == null) return;
-    setStatementBusy(true);
-    setStatementError("");
-    try {
-      const updated = await api.setAccountCurrentBalance(
-        token,
-        editingId,
-        Number(statementPreview.closing_balance),
-        statementPreview.closing_balance_date
-      );
-      setForm((p) => ({ ...p, opening_balance: String(updated.opening_balance) }));
-      setBalanceMessage(`Начальный остаток пересчитан на основе остатка из справки (на ${fmtDate(statementPreview.closing_balance_date)}).`);
       reload();
     } catch (err) {
       setStatementError(err.message);
@@ -647,19 +641,10 @@ export default function Reference() {
                         {statementPreview.skipped_no_fx_rate > 0 && <> · нет курса на дату: {statementPreview.skipped_no_fx_rate}</>}
                       </div>
                       {statementPreview.closing_balance != null && (
-                        <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                          <span>
-                            Остаток на {fmtDate(statementPreview.closing_balance_date)}:{" "}
-                            <b>{fmt(statementPreview.closing_balance, form.currency)}</b>
-                          </span>
-                          <button
-                            type="button"
-                            className="fp-btn-ghost"
-                            onClick={handleUseStatementBalance}
-                            disabled={statementBusy}
-                          >
-                            Использовать как начальный остаток
-                          </button>
+                        <div style={{ marginTop: 6 }}>
+                          Остаток на {fmtDate(statementPreview.closing_balance_date)}:{" "}
+                          <b>{fmt(statementPreview.closing_balance, form.currency)}</b> — применится к «Начальному
+                          остатку» автоматически после импорта.
                         </div>
                       )}
                       <div style={{ marginTop: 8 }}>
@@ -677,7 +662,8 @@ export default function Reference() {
                   {statementResult && (
                     <div className="fp-muted" style={{ fontSize: 12.5, marginTop: 6 }}>
                       Импортировано {statementResult.created} операций
-                      {statementResult.skipped_duplicate > 0 ? `, пропущено дублей: ${statementResult.skipped_duplicate}` : ""}.
+                      {statementResult.skipped_duplicate > 0 ? `, пропущено дублей: ${statementResult.skipped_duplicate}` : ""}
+                      {statementResult.closing_balance != null ? ". Начальный остаток пересчитан по остатку из справки." : "."}
                     </div>
                   )}
                 </div>
