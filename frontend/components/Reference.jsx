@@ -588,29 +588,25 @@ export default function Reference() {
                   className="fp-span-2"
                   style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, marginTop: 4 }}
                 >
-                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>Видимость по компаниям</div>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 400 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Видимость по компаниям</div>
+                  <label className="fp-checkbox-row">
                     <input
                       type="checkbox"
                       checked={formIsGlobal}
                       onChange={(e) => setFormIsGlobal(e.target.checked)}
-                      style={{ width: "auto" }}
                     />
                     Все компании (включая те, что появятся позже)
                   </label>
                   {!formIsGlobal && (
                     <>
-                      <p className="fp-note" style={{ margin: "8px 0 6px" }}>
+                      <p className="fp-note" style={{ margin: "6px 0 2px" }}>
                         Кроме «своей» компании — где ещё выбирать эт{tab === "categories" ? "у статью" : "от проект"}:
                       </p>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <div style={{ display: "flex", flexDirection: "column" }}>
                         {companies
                           .filter((m) => canEditReference(m.role) && m.company.id !== formCompanyId)
                           .map((m) => (
-                            <label
-                              key={m.company.id}
-                              style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 400 }}
-                            >
+                            <label key={m.company.id} className="fp-checkbox-row">
                               <input
                                 type="checkbox"
                                 checked={formVisibleCompanyIds.includes(m.company.id)}
@@ -621,7 +617,6 @@ export default function Reference() {
                                       : prev.filter((id) => id !== m.company.id)
                                   )
                                 }
-                                style={{ width: "auto" }}
                               />
                               {m.company.name}
                             </label>

@@ -245,6 +245,17 @@ html, body {
   width: 100%; min-width: 0;
 }
 
+.fp-checkbox-row {
+  display: flex; flex-direction: row; align-items: center; gap: 9px;
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 400;
+  color: var(--ink); padding: 6px 8px; margin: 0 -8px; border-radius: 6px;
+  cursor: pointer; transition: background 0.12s;
+}
+.fp-checkbox-row:hover { background: var(--bg); }
+.fp-checkbox-row input[type="checkbox"] {
+  width: 16px; height: 16px; flex: none; accent-color: var(--accent); cursor: pointer;
+}
+
 .fp-modal-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 .fp-form-error { color: var(--expense); font-size: 12.5px; margin-top: 10px; }
 
