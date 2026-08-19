@@ -408,6 +408,10 @@ html, body {
 .fp-combobox-create:hover { background: #EAE3D3; }
 .fp-combobox-create:disabled { opacity: 0.6; cursor: default; }
 .fp-combobox-create-error { padding: 6px 12px; color: var(--expense); font-size: 12px; border-top: 1px solid var(--line); }
+.fp-combobox-create-hint {
+  display: flex; align-items: center; gap: 6px; padding: 8px 12px; color: var(--ink-soft);
+  font-size: 12.5px; border-top: 1px solid var(--line);
+}
 
 @media (max-width: 860px) {
   .fp-root { flex-direction: column; }

@@ -129,32 +129,37 @@ export function Combobox({
             onChange={(e) => setSearch(e.target.value)}
           />
           <div className="fp-combobox-list">
-            {filtered.length === 0 && !canCreate ? (
-              <div className="fp-combobox-empty">
-                {onCreateNew ? "Ничего не найдено — введите название, чтобы добавить" : "Ничего не найдено"}
-              </div>
-            ) : (
-              filtered.map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  className={`fp-combobox-option ${value === opt.id ? "selected" : ""}`}
-                  onClick={() => handleSelect(opt.id)}
-                >
-                  {opt.name}
-                </button>
-              ))
-            )}
-            {canCreate && (
+            {filtered.length === 0 && !onCreateNew && <div className="fp-combobox-empty">Ничего не найдено</div>}
+            {filtered.map((opt) => (
               <button
+                key={opt.id}
                 type="button"
-                className="fp-combobox-option fp-combobox-create"
-                onClick={handleCreate}
-                disabled={creating}
+                className={`fp-combobox-option ${value === opt.id ? "selected" : ""}`}
+                onClick={() => handleSelect(opt.id)}
               >
-                <Plus size={13} /> {creating ? "Добавляем…" : `${createLabel} «${trimmedSearch}»`}
+                {opt.name}
               </button>
-            )}
+            ))}
+            {/* Кнопка добавления видна ВСЕГДА, как только onCreateNew задан — не
+                только после ввода текста. Раньше она появлялась молча, и
+                пользователь, открыв пустой список, не понимал, что можно
+                напечатать название и создать запись отсюда же. */}
+            {onCreateNew &&
+              (canCreate ? (
+                <button
+                  type="button"
+                  className="fp-combobox-option fp-combobox-create"
+                  onClick={handleCreate}
+                  disabled={creating}
+                >
+                  <Plus size={13} /> {creating ? "Добавляем…" : `${createLabel} «${trimmedSearch}»`}
+                </button>
+              ) : (
+                <div className="fp-combobox-create-hint">
+                  <Plus size={13} />
+                  {trimmedSearch ? "Такая запись уже есть в списке" : "Введите название выше, чтобы добавить новую"}
+                </div>
+              ))}
           </div>
           {createError && <div className="fp-combobox-create-error">{createError}</div>}
         </div>
