@@ -238,6 +238,23 @@ def resolve_company_ids(db: Session, user: User, company_id: Optional[str]) -> l
     return [company_id]
 
 
+def resolve_company_ids_multi(
+    db: Session, user: User, company_id: Optional[str], company_ids: Optional[list[str]]
+) -> list[str]:
+    """Как resolve_company_ids, но принимает ещё и множественный ?company_ids=
+    (несколько значений одного параметра в query) — для фильтра по нескольким
+    компаниям сразу (Статьи/Проекты в Справочниках). company_ids, если
+    передан и не пуст, имеет приоритет над одиночным company_id."""
+    accessible = get_accessible_company_ids(db, user)
+    ids = list(dict.fromkeys(company_ids)) if company_ids else ([company_id] if company_id else None)
+    if not ids:
+        return accessible
+    invalid = [cid for cid in ids if cid not in accessible]
+    if invalid:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Компания не найдена")
+    return ids
+
+
 def resolve_company_ids_with_role(
     db: Session, user: User, company_id: Optional[str], allowed: Iterable[RoleEnum]
 ) -> list[str]:

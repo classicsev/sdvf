@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from app.auth import (
     get_current_user,
     require_module,
     resolve_company_ids,
+    resolve_company_ids_multi,
     resolve_write_company_id,
 )
 from app.account_balance import reconcile_opening_balance
@@ -170,17 +171,25 @@ def _move_to_company(db, user, obj, payload: MoveCompanyIn, references: list[tup
 
 @router.get("/categories", response_model=list[CategoryOut], dependencies=[Depends(require_module("finance"))])
 def list_categories(
-    company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    company_id: Optional[str] = None,
+    company_ids: list[str] = Query(default=[]),
+    match: str = "union",
+    own_only: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    company_ids = resolve_company_ids(db, user, company_id)
+    filter_ids = resolve_company_ids_multi(db, user, company_id, company_ids)
     # Категории "Перевод между своими счетами" заводим лениво здесь (а не только
     # когда авто-детект перевода первый раз сработает при импорте) — иначе их
     # нечем было бы выбрать вручную, пока такой случай не встретится сам.
-    for cid in company_ids:
+    for cid in filter_ids:
         get_or_create_internal_transfer_category(db, TxTypeEnum.income, cid)
         get_or_create_internal_transfer_category(db, TxTypeEnum.expense, cid)
     db.commit()
-    return apply_visibility_filter(db, db.query(Category), Category, company_ids).all()
+    query = db.query(Category)
+    if own_only:
+        return query.filter(Category.company_id.in_(filter_ids)).all()
+    return apply_visibility_filter(db, query, Category, filter_ids, mode=match).all()
 
 
 @router.post("/categories", response_model=CategoryOut, dependencies=[Depends(require_module("finance"))])
@@ -266,10 +275,18 @@ def bulk_visibility_categories(
 
 @router.get("/projects", response_model=list[ProjectOut], dependencies=[Depends(require_module("finance"))])
 def list_projects(
-    company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    company_id: Optional[str] = None,
+    company_ids: list[str] = Query(default=[]),
+    match: str = "union",
+    own_only: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    company_ids = resolve_company_ids(db, user, company_id)
-    return apply_visibility_filter(db, db.query(Project), Project, company_ids).all()
+    filter_ids = resolve_company_ids_multi(db, user, company_id, company_ids)
+    query = db.query(Project)
+    if own_only:
+        return query.filter(Project.company_id.in_(filter_ids)).all()
+    return apply_visibility_filter(db, query, Project, filter_ids, mode=match).all()
 
 
 @router.post("/projects", response_model=ProjectOut, dependencies=[Depends(require_module("finance"))])

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Plus, X, Pencil, Trash2, Tag, LayoutDashboard, Building2, Contact, Ban, RotateCcw, RefreshCw, Upload } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Plus, X, Pencil, Trash2, Tag, LayoutDashboard, Building2, Contact, Ban, RotateCcw, RefreshCw, Upload, ChevronDown } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
@@ -29,7 +29,8 @@ const TABS = {
     label: "Статьи",
     icon: Tag,
     noun: "статью",
-    list: (token, companyId) => api.listCategories(token, { company_id: companyId }),
+    list: (token, filter) =>
+      api.listCategories(token, { company_ids: filter.companyIds, own_only: filter.ownOnly, match: filter.match }),
     create: (token, payload, companyId) => api.createCategory(token, payload, companyId),
     update: (token, id, payload) => api.updateCategory(token, id, payload),
     remove: (token, id) => api.deleteCategory(token, id),
@@ -59,7 +60,8 @@ const TABS = {
     label: "Проекты",
     icon: LayoutDashboard,
     noun: "проект",
-    list: (token, companyId) => api.listProjects(token, { company_id: companyId }),
+    list: (token, filter) =>
+      api.listProjects(token, { company_ids: filter.companyIds, own_only: filter.ownOnly, match: filter.match }),
     create: (token, payload, companyId) => api.createProject(token, payload, companyId),
     update: (token, id, payload) => api.updateProject(token, id, payload),
     remove: (token, id) => api.deleteProject(token, id),
@@ -131,13 +133,49 @@ export default function Reference() {
   // компонентом ниже; TABS.categories тут только чтобы хуки ниже не падали.
   const config = TABS[tab] || TABS.categories;
   const isCounterparties = tab === COUNTERPARTIES_TAB;
+  const supportsCompanyScope = tab === "categories" || tab === "projects";
 
-  // "" = все доступные компании сразу (сводный список); иначе — id конкретной.
+  // Счета/Контрагенты: нет межкомпанийной видимости, простой фильтр на одну
+  // компанию ("" = все доступные). Статьи/Проекты — свой, более гибкий
+  // фильтр ниже (companyFilterIds/ownOnly/matchMode), т.к. у них есть
+  // is_global/visible_company_ids.
   const [companyFilter, setCompanyFilter] = useState("");
 
+  // Фильтр Статей/Проектов по нескольким компаниям сразу: [] = все доступные.
+  // ownOnly — исключить записи, которые видны здесь только потому, что
+  // расшарены из другой компании (убрать пересечения). matchMode актуален
+  // только когда выбрано >1 компании: "union" — видна хотя бы в одной из
+  // них, "intersection" — расшарена именно между всеми выбранными сразу.
+  const [companyFilterIds, setCompanyFilterIds] = useState([]);
+  const [ownOnly, setOwnOnly] = useState(false);
+  const [matchMode, setMatchMode] = useState("union");
+  const [companyPopoverOpen, setCompanyPopoverOpen] = useState(false);
+  const companyPopoverRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (companyPopoverRef.current && !companyPopoverRef.current.contains(e.target)) {
+        setCompanyPopoverOpen(false);
+      }
+    }
+    if (companyPopoverOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [companyPopoverOpen]);
+
+  function toggleCompanyFilterId(id) {
+    setCompanyFilterIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
   const { data: items, loading, error, reload } = useResource(
-    () => (isCounterparties ? Promise.resolve([]) : config.list(token, companyFilter || undefined)),
-    [token, tab, companyFilter]
+    () =>
+      isCounterparties
+        ? Promise.resolve([])
+        : supportsCompanyScope
+        ? config.list(token, { companyIds: companyFilterIds, ownOnly, match: matchMode })
+        : config.list(token, companyFilter || undefined),
+    [token, tab, companyFilter, companyFilterIds.join(","), ownOnly, matchMode]
   );
 
   // Автосинк банковских интеграций — только на вкладке Счетов, только для тех,
@@ -291,7 +329,6 @@ export default function Reference() {
   // приняла is_global/visible_company_ids). См. TABS.categories/projects.
   const [formIsGlobal, setFormIsGlobal] = useState(false);
   const [formVisibleCompanyIds, setFormVisibleCompanyIds] = useState([]);
-  const supportsCompanyScope = tab === "categories" || tab === "projects";
   const supportsBulkDistribute = supportsCompanyScope && multiCompany;
 
   // Массовое распределение выбранных статей/проектов по компаниям — в отличие
@@ -308,7 +345,7 @@ export default function Reference() {
 
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [tab, companyFilter]);
+  }, [tab, companyFilter, companyFilterIds.join(","), ownOnly, matchMode]);
 
   function toggleSelect(id) {
     setSelectedIds((prev) => {
@@ -364,7 +401,12 @@ export default function Reference() {
     setEditingId(null);
     setForm(defaultFormFor(config.fields));
     const editableCompanies = companies.filter((m) => canEditReference(m.role));
-    const preselected = editableCompanies.find((m) => m.company.id === companyFilter) || editableCompanies[0];
+    const currentFilterCompanyId = supportsCompanyScope
+      ? companyFilterIds.length === 1
+        ? companyFilterIds[0]
+        : ""
+      : companyFilter;
+    const preselected = editableCompanies.find((m) => m.company.id === currentFilterCompanyId) || editableCompanies[0];
     setFormCompanyId(preselected?.company.id || "");
     setOriginalCompanyId("");
     setFormIsActive(true);
@@ -459,7 +501,9 @@ export default function Reference() {
     }
   }
 
-  const showCompanyColumn = multiCompany && !companyFilter;
+  const showCompanyColumn = supportsCompanyScope
+    ? multiCompany && (companyFilterIds.length !== 1 || !ownOnly)
+    : multiCompany && !companyFilter;
   const editableCompanies = companies.filter((m) => canEditReference(m.role));
 
   const tabsRow = (
@@ -486,7 +530,7 @@ export default function Reference() {
     <div className="fp-dash">
       <div className="fp-tabs-row">
         {tabsRow}
-        {multiCompany && (
+        {multiCompany && !supportsCompanyScope && (
           <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>
             <option value="">Все компании</option>
             {companies.map((m) => (
@@ -495,6 +539,76 @@ export default function Reference() {
               </option>
             ))}
           </select>
+        )}
+        {multiCompany && supportsCompanyScope && (
+          <div style={{ position: "relative" }} ref={companyPopoverRef}>
+            <button
+              type="button"
+              className="fp-btn-tiny"
+              onClick={() => setCompanyPopoverOpen((v) => !v)}
+            >
+              <Building2 size={13} />
+              {companyFilterIds.length === 0
+                ? "Все компании"
+                : companyFilterIds.length === 1
+                ? companies.find((m) => m.company.id === companyFilterIds[0])?.company.name || "1 компания"
+                : `Компаний: ${companyFilterIds.length}`}
+              {ownOnly && companyFilterIds.length > 0 && " · только свои"}
+              <ChevronDown size={13} className={`fp-combobox-chevron ${companyPopoverOpen ? "rotated" : ""}`} />
+            </button>
+            {companyPopoverOpen && (
+              <div className="fp-combobox-popup" style={{ width: 280, padding: "6px 0" }}>
+                <label
+                  className="fp-checkbox-row"
+                  style={{ fontWeight: companyFilterIds.length === 0 ? 600 : 400 }}
+                >
+                  <input type="checkbox" checked={companyFilterIds.length === 0} onChange={() => setCompanyFilterIds([])} />
+                  Все компании
+                </label>
+                <div style={{ borderTop: "1px solid var(--line)", margin: "4px 0" }} />
+                {companies.map((m) => (
+                  <label key={m.company.id} className="fp-checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={companyFilterIds.includes(m.company.id)}
+                      onChange={() => toggleCompanyFilterId(m.company.id)}
+                    />
+                    {m.company.name}
+                  </label>
+                ))}
+                <div style={{ borderTop: "1px solid var(--line)", margin: "4px 0" }} />
+                <label className="fp-checkbox-row">
+                  <input type="checkbox" checked={ownOnly} onChange={(e) => setOwnOnly(e.target.checked)} />
+                  Только свои — без расшаренных из других
+                </label>
+                {companyFilterIds.length > 1 && !ownOnly && (
+                  <div style={{ padding: "4px 12px 2px" }}>
+                    <div className="fp-note" style={{ margin: "2px 0 4px" }}>
+                      Несколько компаний — что показывать:
+                    </div>
+                    <label className="fp-checkbox-row" style={{ padding: "4px 0" }}>
+                      <input
+                        type="radio"
+                        name="companyFilterMatch"
+                        checked={matchMode === "union"}
+                        onChange={() => setMatchMode("union")}
+                      />
+                      Видна хотя бы в одной из них
+                    </label>
+                    <label className="fp-checkbox-row" style={{ padding: "4px 0" }}>
+                      <input
+                        type="radio"
+                        name="companyFilterMatch"
+                        checked={matchMode === "intersection"}
+                        onChange={() => setMatchMode("intersection")}
+                      />
+                      Расшарена между всеми выбранными
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         )}
         {tab === "accounts" && canEditAny && (
           <button type="button" className="fp-btn-tiny" onClick={() => runIntegrationSync(true)} disabled={syncing}>

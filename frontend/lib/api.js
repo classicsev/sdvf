@@ -4,7 +4,15 @@ function buildQuery(params) {
   if (!params) return "";
   const usp = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") usp.set(key, value);
+    if (value === undefined || value === null || value === "") return;
+    if (Array.isArray(value)) {
+      // Повторяющийся параметр (?key=a&key=b) — так FastAPI парсит list[str].
+      value.forEach((v) => {
+        if (v !== undefined && v !== null && v !== "") usp.append(key, v);
+      });
+    } else {
+      usp.set(key, value);
+    }
   });
   const qs = usp.toString();
   return qs ? `?${qs}` : "";

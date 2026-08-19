@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Category, CategoryCompany, Project, ProjectCompany
@@ -13,9 +13,24 @@ from app.models import Category, CategoryCompany, Project, ProjectCompany
 # при валидации category_id/project_id на самой операции (transactions.py).
 
 
-def apply_visibility_filter(db: Session, query, model, company_ids: list[str]):
+def apply_visibility_filter(db: Session, query, model, company_ids: list[str], mode: str = "union"):
+    """mode="union" (по умолчанию) — запись видна хотя бы в одной из company_ids
+    (обычное поведение). mode="intersection" имеет смысл только при нескольких
+    company_ids — запись видна ВО ВСЕХ них одновременно (реально расшарена
+    между именно этими компаниями, а не просто попадает в общий список видимых
+    отовсюду). При одной компании оба режима эквивалентны union."""
     assoc_model = CategoryCompany if model is Category else ProjectCompany
     fk_col = assoc_model.category_id if model is Category else assoc_model.project_id
+
+    if mode == "intersection" and len(company_ids) > 1:
+        conditions = []
+        for cid in company_ids:
+            visible_for_cid = select(fk_col).where(assoc_model.company_id == cid)
+            conditions.append(
+                or_(model.company_id == cid, model.is_global.is_(True), model.id.in_(visible_for_cid))
+            )
+        return query.filter(and_(*conditions))
+
     visible_ids_select = select(fk_col).where(assoc_model.company_id.in_(company_ids))
     return query.filter(
         or_(

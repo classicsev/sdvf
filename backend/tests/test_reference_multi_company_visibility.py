@@ -168,3 +168,96 @@ def test_project_same_visibility_rules_as_category(client, db_session):
 
     resp = client.get("/projects", headers=headers, params={"company_id": company_b.id})
     assert any(p["id"] == project_id for p in resp.json())
+
+
+# ---------------------------------------------------------------------------
+# Фильтр списка по нескольким компаниям сразу: own_only ("только свои, без
+# расшаренных") и match=intersection ("расшарено именно между этими
+# компаниями"). См. reference_scope.py::apply_visibility_filter.
+# ---------------------------------------------------------------------------
+
+
+def test_own_only_excludes_items_shared_from_other_company(client, db_session):
+    company_b = make_company(db_session, "Компания Б")
+    admin = make_user(db_session, RoleEnum.admin)
+    _add_to_company(db_session, admin, company_b)
+    headers = auth_headers(admin)
+
+    resp = client.post(
+        "/categories",
+        headers=headers,
+        json={"name": "Расшаренная из А", "type": "expense", "visible_company_ids": [company_b.id]},
+    )
+    assert resp.status_code == 200, resp.text
+    shared_id = resp.json()["id"]
+
+    resp = client.post(
+        "/categories", headers=headers, json={"name": "Своя в Б", "type": "expense"}, params={"company_id": company_b.id}
+    )
+    assert resp.status_code == 200, resp.text
+    own_in_b_id = resp.json()["id"]
+
+    # Без own_only — видны обе (своя в Б + расшаренная из А).
+    resp = client.get("/categories", headers=headers, params={"company_id": company_b.id})
+    ids = {c["id"] for c in resp.json()}
+    assert {shared_id, own_in_b_id} <= ids
+
+    # С own_only=true — только своя в Б, расшаренная из А пропадает.
+    resp = client.get("/categories", headers=headers, params={"company_id": company_b.id, "own_only": "true"})
+    ids = {c["id"] for c in resp.json()}
+    assert own_in_b_id in ids
+    assert shared_id not in ids
+
+
+def test_multi_company_ids_union_by_default(client, db_session):
+    company_b = make_company(db_session, "Компания Б")
+    admin = make_user(db_session, RoleEnum.admin)
+    _add_to_company(db_session, admin, company_b)
+    headers = auth_headers(admin)
+
+    resp = client.post("/categories", headers=headers, json={"name": "Только А", "type": "expense"})
+    only_a_id = resp.json()["id"]
+    resp = client.post(
+        "/categories", headers=headers, json={"name": "Только Б", "type": "expense"}, params={"company_id": company_b.id}
+    )
+    only_b_id = resp.json()["id"]
+
+    resp = client.get("/categories", headers=headers, params={"company_ids": [admin.company_id, company_b.id]})
+    assert resp.status_code == 200, resp.text
+    ids = {c["id"] for c in resp.json()}
+    assert only_a_id in ids and only_b_id in ids
+
+
+def test_multi_company_ids_intersection_shows_only_shared_between_all(client, db_session):
+    company_b = make_company(db_session, "Компания Б")
+    admin = make_user(db_session, RoleEnum.admin)
+    _add_to_company(db_session, admin, company_b)
+    headers = auth_headers(admin)
+
+    resp = client.post("/categories", headers=headers, json={"name": "Только А", "type": "expense"})
+    only_a_id = resp.json()["id"]
+    resp = client.post(
+        "/categories",
+        headers=headers,
+        json={"name": "Расшарена в обе", "type": "expense", "visible_company_ids": [company_b.id]},
+    )
+    shared_id = resp.json()["id"]
+
+    resp = client.get(
+        "/categories",
+        headers=headers,
+        params={"company_ids": [admin.company_id, company_b.id], "match": "intersection"},
+    )
+    assert resp.status_code == 200, resp.text
+    ids = {c["id"] for c in resp.json()}
+    assert shared_id in ids
+    assert only_a_id not in ids
+
+
+def test_multi_company_ids_rejects_inaccessible_company(client, db_session):
+    other = make_company(db_session, "Чужая компания")
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+
+    resp = client.get("/categories", headers=headers, params={"company_ids": [admin.company_id, other.id]})
+    assert resp.status_code == 404
