@@ -329,6 +329,11 @@ export default function Reference() {
   // приняла is_global/visible_company_ids). См. TABS.categories/projects.
   const [formIsGlobal, setFormIsGlobal] = useState(false);
   const [formVisibleCompanyIds, setFormVisibleCompanyIds] = useState([]);
+  // Выбор строк чекбоксами + массовое удаление доступны на всех вкладках
+  // generic-таблицы (Статьи/Проекты/Счета), не только при нескольких
+  // компаниях. "Распределить по компаниям" — отдельно, только там, где это
+  // вообще имеет смысл (межкомпанийная видимость + больше одной компании).
+  const supportsSelection = !isCounterparties;
   const supportsBulkDistribute = supportsCompanyScope && multiCompany;
 
   // Массовое распределение выбранных статей/проектов по компаниям — в отличие
@@ -342,6 +347,7 @@ export default function Reference() {
   const [bulkIsGlobal, setBulkIsGlobal] = useState(false);
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkError, setBulkError] = useState("");
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   useEffect(() => {
     setSelectedIds(new Set());
@@ -490,6 +496,31 @@ export default function Reference() {
     }
   }
 
+  async function handleBulkDelete() {
+    const ids = Array.from(selectedIds);
+    if (!window.confirm(`Удалить выбранные записи (${ids.length})?`)) return;
+    setBulkDeleting(true);
+    // Как и у одиночного удаления — запись, которая уже используется в
+    // операциях, не стирается, а деактивируется (config.remove сам это решает
+    // на бэкенде). Promise.allSettled, а не Promise.all — одна проблемная
+    // запись (например, гонка с параллельным удалением) не должна прерывать
+    // удаление остальных выбранных.
+    const results = await Promise.allSettled(ids.map((id) => config.remove(token, id)));
+    const deleted = results.filter((r) => r.status === "fulfilled" && !r.value?.deactivated).length;
+    const deactivated = results.filter((r) => r.status === "fulfilled" && r.value?.deactivated).length;
+    const failed = results.length - deleted - deactivated;
+    setSelectedIds(new Set());
+    setBulkDeleting(false);
+    reload();
+    if (deactivated > 0 || failed > 0) {
+      window.alert(
+        `Удалено: ${deleted}.` +
+          (deactivated > 0 ? ` Деактивировано (уже используются в операциях): ${deactivated}.` : "") +
+          (failed > 0 ? ` Не удалось: ${failed}.` : "")
+      );
+    }
+  }
+
   async function handleToggleActive(item) {
     const payload = Object.fromEntries(config.fields.map((f) => [f.key, item[f.key]]));
     payload.is_active = item.is_active === false;
@@ -620,6 +651,11 @@ export default function Reference() {
             <Building2 size={13} /> Распределить по компаниям ({selectedIds.size})
           </button>
         )}
+        {supportsSelection && canEditAny && selectedIds.size > 0 && (
+          <button type="button" className="fp-btn-tiny" onClick={handleBulkDelete} disabled={bulkDeleting}>
+            <Trash2 size={13} /> {bulkDeleting ? "Удаляем…" : `Удалить выбранное (${selectedIds.size})`}
+          </button>
+        )}
         {canEditAny && (
           <button type="button" className="fp-btn-tiny" onClick={openAdd}>
             <Plus size={13} /> Добавить
@@ -643,7 +679,7 @@ export default function Reference() {
           <table className="fp-table">
             <thead>
               <tr>
-                {supportsBulkDistribute && canEditAny && (
+                {supportsSelection && canEditAny && (
                   <th style={{ width: 32 }}>
                     <input
                       type="checkbox"
@@ -668,7 +704,7 @@ export default function Reference() {
                 const canEditRow = canEditReference(roleForCompany(item.company_id));
                 return (
                   <tr key={item.id}>
-                    {supportsBulkDistribute && canEditAny && (
+                    {supportsSelection && canEditAny && (
                       <td>
                         {canEditRow && (
                           <input
