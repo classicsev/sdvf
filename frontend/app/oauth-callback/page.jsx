@@ -10,6 +10,8 @@ const ERROR_MESSAGES = {
   no_access_token: "Провайдер не вернул токен доступа.",
   provider_error: "Сервис авторизации временно недоступен. Попробуйте позже.",
   account_disabled: "Учётная запись деактивирована.",
+  provider_not_configured: "Этот способ входа сейчас недоступен.",
+  email_not_verified: "Email в аккаунте СДВФ не подтверждён — вход невозможен.",
 };
 
 function Inner() {

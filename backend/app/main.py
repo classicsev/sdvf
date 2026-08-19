@@ -19,6 +19,7 @@ from app.routers import (
     production,
     reference,
     reports,
+    sdvf_login,
     statements,
     transactions,
     users,
@@ -39,6 +40,7 @@ app.include_router(users.auth_router)
 app.include_router(users.users_router)
 app.include_router(oauth.router)
 app.include_router(identity_provider.router)
+app.include_router(sdvf_login.router)
 app.include_router(companies.router)
 app.include_router(transactions.router)
 app.include_router(reports.router)

@@ -13,15 +13,20 @@ const LABELS = {
 // client_id (см. GET /auth/oauth/providers) — пока не подключён, кнопки просто нет.
 export default function OAuthButtons() {
   const [providers, setProviders] = useState([]);
+  const [sdvfEnabled, setSdvfEnabled] = useState(false);
 
   useEffect(() => {
     api
       .listOAuthProviders()
       .then((data) => setProviders(data.providers || []))
       .catch(() => {});
+    api
+      .sdvfLoginEnabled()
+      .then((data) => setSdvfEnabled(!!data.enabled))
+      .catch(() => {});
   }, []);
 
-  if (providers.length === 0) return null;
+  if (providers.length === 0 && !sdvfEnabled) return null;
 
   return (
     <>
@@ -32,6 +37,11 @@ export default function OAuthButtons() {
             {LABELS[provider] || provider}
           </a>
         ))}
+        {sdvfEnabled && (
+          <a className="fp-oauth-btn" href={api.sdvfLoginStartUrl()}>
+            Войти через СДВФ
+          </a>
+        )}
       </div>
     </>
   );

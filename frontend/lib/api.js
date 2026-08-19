@@ -143,6 +143,8 @@ export const api = {
 
   listOAuthProviders: () => request("/auth/oauth/providers"),
   oauthStartUrl: (provider) => `${API_BASE}/auth/oauth/${provider}/start`,
+  sdvfLoginEnabled: () => request("/auth/sdvf/enabled"),
+  sdvfLoginStartUrl: () => `${API_BASE}/auth/sdvf/start`,
 
   ssoConsent: (token, payload) => request("/oauth/consent", { method: "POST", token, body: payload }),
 
