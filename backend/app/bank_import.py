@@ -73,19 +73,26 @@ def import_mapped_transactions(
     # Холдинг = все компании/физлица, доступные пользователю, который делает импорт
     # (см. app/holding_transfers.py) — только среди них ищем "второй конец" перевода.
     holding_company_ids = get_accessible_company_ids(db, user)
+    # Дубль может встретиться не только среди уже сохранённых в БД операций, но
+    # и внутри ЭТОЙ ЖЕ пачки — например, песочница Alfa API отдаёт одну и ту же
+    # тестовую операцию на разные дни с одинаковым uuid. Без этой проверки
+    # обе попадали бы в один batch-INSERT и падали с UniqueViolation по
+    # (company_id, external_ref), а не аккуратно считались как дубль.
+    seen_refs_in_batch: set[str] = set()
 
     for mapped in mapped_ops:
         if mapped is None:
             skipped_unparseable += 1
             continue
 
-        if (
+        if mapped["external_ref"] in seen_refs_in_batch or (
             db.query(Transaction)
             .filter(Transaction.company_id == company_id, Transaction.external_ref == mapped["external_ref"])
             .first()
         ):
             skipped_duplicate += 1
             continue
+        seen_refs_in_batch.add(mapped["external_ref"])
 
         amount_rub = convert_to_rub(db, account.currency, mapped["amount"], mapped["date_odds"])
         if amount_rub is None:

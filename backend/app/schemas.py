@@ -499,6 +499,10 @@ class IntegrationSyncIn(BaseModel):
     account_id: str
     date_from: date
     date_to: Optional[date] = None
+    # Для песочниц банков, принимающих только свои фиксированные тестовые
+    # номера счетов (напр. Alfa API) — не переписывать реальный номер счёта
+    # в справочнике ради теста, а подставить тестовый только для этого запроса.
+    account_number_override: Optional[str] = None
 
 
 class IntegrationSyncResult(BaseModel):

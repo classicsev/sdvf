@@ -150,7 +150,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
 
   function openSync(integration) {
     setSyncTarget(integration);
-    setSyncForm({ account_id: "", date_from: "", date_to: "" });
+    setSyncForm({ account_id: "", date_from: "", date_to: "", account_number_override: "" });
     setSyncError("");
     setSyncResult(null);
     setSyncDetailsOpen(false);
@@ -173,6 +173,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
               account_id: syncForm.account_id,
               date_from: syncForm.date_from,
               date_to: syncForm.date_to || null,
+              account_number_override: syncForm.account_number_override || null,
             });
       setSyncResult(result);
       reload();
@@ -460,6 +461,22 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                     value={syncForm.date_to}
                     onChange={(e) => setSyncForm((p) => ({ ...p, date_to: e.target.value }))}
                   />
+                </label>
+              )}
+              {syncTarget.provider === "alfa" && (
+                <label className="fp-span-2">
+                  Тестовый номер счёта для песочницы (опц.)
+                  <input
+                    value={syncForm.account_number_override}
+                    onChange={(e) => setSyncForm((p) => ({ ...p, account_number_override: e.target.value }))}
+                    placeholder="40702810102300000001"
+                  />
+                  <span className="fp-note" style={{ display: "block", marginTop: 4 }}>
+                    Песочница Alfa API принимает только свои тестовые номера счетов, не настоящий. Заполните, если
+                    синкаете тестовую песочницу — реальный номер счёта в справочнике «Счета» останется как есть.
+                    Тестовые номера: 40702810102300000001, 40702810402300000002, 40702810002300000003,
+                    40702978902300000004.
+                  </span>
                 </label>
               )}
               {syncError && <div className="fp-form-error fp-span-2">{syncError}</div>}

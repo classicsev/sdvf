@@ -119,9 +119,14 @@ def _sync_bank_integration(
     account: Account,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    account_number_override: Optional[str] = None,
 ) -> IntegrationSyncResult:
     """Синхронизирует одну банковскую интеграцию с одним счётом.
-    Обновляет integration.last_sync_at и integration.account_id."""
+    Обновляет integration.last_sync_at и integration.account_id.
+
+    account_number_override — только для запроса к банку (напр. песочница
+    Alfa API принимает лишь свои фиксированные тестовые номера счетов) — сам
+    Account и его настоящий account_number в справочнике не трогаем."""
     if not integration.is_connected or not integration.credentials_encrypted:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Интеграция не подключена")
     if integration.provider not in SYNC_SUPPORTED_PROVIDERS:
@@ -130,7 +135,8 @@ def _sync_bank_integration(
             detail="Синхронизация для этого провайдера пока не реализована",
         )
 
-    if not account.account_number:
+    account_number = account_number_override or account.account_number
+    if not account_number:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="У счёта не указан номер счёта — заполните его в справочнике «Счета»",
@@ -140,11 +146,26 @@ def _sync_bank_integration(
     if creds_raw is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не удалось расшифровать данные интеграции")
 
-    if integration.provider == "alfa" and date_from is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Для Альфа-Банка нужно указать дату начала периода — выписка запрашивается по дням",
-        )
+    if integration.provider == "alfa":
+        if date_from is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Для Альфа-Банка нужно указать дату начала периода — выписка запрашивается по дням",
+            )
+        # Alfa API отдаёт выписку строго по одному дню за запрос (см.
+        # AlfaBankClient.fetch_all_operations) — широкий диапазон означает
+        # столько же последовательных обращений к банку и рискует затянуться
+        # на минуты. Ограничиваем один вызов синка тремя месяцами, для
+        # бóльшего периода — синкать несколькими вызовами по частям.
+        days_requested = ((date_to or date.today()) - date_from).days
+        if days_requested > 92:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Для Альфа-Банка за один раз можно синкать не больше 92 дней "
+                    "(выписка запрашивается по дням) — сузьте период и повторите частями"
+                ),
+            )
 
     try:
         # client.fetch_all_operations(...) вызывается ЗДЕСЬ, внутри try — это
@@ -153,7 +174,7 @@ def _sync_bank_integration(
         # тем же except, что и ошибки самого импорта.
         if integration.provider == "tinkoff":
             client = TBankClient(base_url=settings.tbank_base_url, token=creds_raw)
-            raw_ops = client.fetch_all_operations(account.account_number, date_from, date_to)
+            raw_ops = client.fetch_all_operations(account_number, date_from, date_to)
             mapped_ops = (map_operation(raw_op) for raw_op in raw_ops)
         else:  # "alfa"
             creds = json.loads(creds_raw)
@@ -164,7 +185,7 @@ def _sync_bank_integration(
                 key_pem=creds["key_pem"],
                 key_password=creds["key_password"],
             )
-            raw_ops = client.fetch_all_operations(account.account_number, date_from, date_to)
+            raw_ops = client.fetch_all_operations(account_number, date_from, date_to)
             mapped_ops = (map_alfa_operation(raw_op) for raw_op in raw_ops)
 
         result = import_mapped_transactions(db, user, integration.company_id, account, mapped_ops)
@@ -322,7 +343,9 @@ def sync_integration(
     # Запоминаем счёт на интеграции (integration.account_id) — дальше он используется
     # для автосинка при открытии страниц (см. sync_all_integrations), без повторного
     # выбора счёта пользователем каждый раз.
-    return _sync_bank_integration(db, user, integration, account, payload.date_from, payload.date_to)
+    return _sync_bank_integration(
+        db, user, integration, account, payload.date_from, payload.date_to, payload.account_number_override
+    )
 
 
 @router.post("/integrations/sync-all", response_model=IntegrationSyncAllResult, dependencies=[FINANCE_MODULE])

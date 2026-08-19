@@ -160,3 +160,66 @@ def test_sync_fails_when_alfa_returns_error(client, db_session, monkeypatch):
     assert db_session.query(Transaction).filter(Transaction.external_ref.isnot(None)).count() == 0
     db_session.refresh(integration)
     assert integration.last_sync_at is None
+
+
+def test_sync_rejects_wide_date_range_for_alfa(client, db_session, monkeypatch):
+    """Alfa API отдаёт выписку по одному дню за раз — широкий диапазон
+    означает столько же последовательных запросов к банку и рискует
+    затянуться на минуты (см. HANDOVER.md, реальный кейс: ~230 дней "зависли")."""
+    monkeypatch.setattr(automation_router, "AlfaBankClient", _FakeAlfaBankClient)
+
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session, account_number="40702810102300000001")
+    integration = _setup_connected_alfa(client, headers, db_session)
+
+    resp = client.post(
+        f"/integrations/{integration.id}/sync",
+        headers=headers,
+        json={"account_id": account.id, "date_from": "2026-01-01", "date_to": "2026-08-19"},
+    )
+    assert resp.status_code == 400
+    assert "92" in resp.json()["detail"]
+
+
+def test_sync_dedupes_same_external_ref_seen_twice_in_one_batch(client, db_session, monkeypatch):
+    """Регрессия: песочница Alfa отдаёт одну и ту же тестовую операцию
+    (тот же uuid) на разные дни — раньше это падало необработанной
+    IntegrityError (UniqueViolation) при батч-вставке вместо аккуратного
+    skipped_duplicate, потому что дедуп проверялся только против уже
+    сохранённых в БД записей, а не внутри текущей пачки."""
+
+    class _RepeatingClient:
+        def __init__(self, base_url, api_key, cert_pem, key_pem, key_password):
+            pass
+
+        def fetch_all_operations(self, account_number, date_from, date_to=None):
+            op = {
+                "uuid": "same-op-every-day",
+                "direction": "DEBIT",
+                "amount": {"amount": 10.0, "currencyName": "RUR"},
+                "operationDate": "2025-12-31T00:00:00Z",
+                "paymentPurpose": "Штраф ГИБДД",
+                "rurTransfer": {"payeeName": "ГИБДД"},
+            }
+            return iter([dict(op), dict(op), dict(op)])
+
+    monkeypatch.setattr(automation_router, "AlfaBankClient", _RepeatingClient)
+
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session, account_number="40702810102300000001")
+    integration = _setup_connected_alfa(client, headers, db_session)
+
+    resp = client.post(
+        f"/integrations/{integration.id}/sync",
+        headers=headers,
+        json={"account_id": account.id, "date_from": "2026-06-01", "date_to": "2026-06-03"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["created"] == 1
+    assert body["skipped_duplicate"] == 2
+    assert (
+        db_session.query(Transaction).filter(Transaction.external_ref == "alfa:same-op-every-day").count() == 1
+    )
