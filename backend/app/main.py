@@ -36,6 +36,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def no_store_api_responses(request, call_next):
+    # Финансовые данные не должны оседать ни в браузерном, ни в промежуточном
+    # HTTP-кэше — без явного Cache-Control GET на один и тот же URL (напр.
+    # /reports/dashboard-summary?range=month) браузер иногда отдаёт старый
+    # ответ вместо похода в сеть после того, как данные реально изменились
+    # (см. HANDOVER.md). /media — загруженные файлы (аватары и т.п.), там
+    # кэш как раз уместен, поэтому не трогаем.
+    response = await call_next(request)
+    if not request.url.path.startswith("/media"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
 app.include_router(users.auth_router)
 app.include_router(users.users_router)
 app.include_router(oauth.router)

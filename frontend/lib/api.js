@@ -25,6 +25,13 @@ async function request(path, { method = "GET", token, body, query } = {}) {
   const res = await fetch(`${API_BASE}${path}${buildQuery(query)}`, {
     method,
     headers,
+    // Бэкенд не проставляет Cache-Control/ETag на JSON-ответы — без явного
+    // no-store браузер по умолчанию (cache: "default") иногда решает, что
+    // повторный GET на тот же URL можно отдать из своего HTTP-кэша, а не
+    // сходить в сеть. Для дашборда/отчётов это означало "цифры не меняются
+    // после создания операции" — не баг бэкенда, кэш браузера отдавал старый
+    // ответ на идентичный URL.
+    cache: "no-store",
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
