@@ -124,13 +124,15 @@ export function Combobox({
             ref={inputRef}
             type="text"
             className="fp-combobox-search"
-            placeholder="Поиск..."
+            placeholder={onCreateNew ? "Поиск или название для добавления..." : "Поиск..."}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
           <div className="fp-combobox-list">
             {filtered.length === 0 && !canCreate ? (
-              <div className="fp-combobox-empty">Ничего не найдено</div>
+              <div className="fp-combobox-empty">
+                {onCreateNew ? "Ничего не найдено — введите название, чтобы добавить" : "Ничего не найдено"}
+              </div>
             ) : (
               filtered.map((opt) => (
                 <button
