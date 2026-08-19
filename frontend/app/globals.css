@@ -401,16 +401,20 @@ html, body {
 
 .fp-combobox-empty { padding: 12px; text-align: center; color: var(--ink-soft); font-size: 13px; }
 
+/* Зона "добавить новую" — сразу под полем поиска, ДО списка опций, с заметным
+   фоном-подсветкой, чтобы не сливаться с обычными пунктами списка ниже. */
 .fp-combobox-create {
-  display: flex; align-items: center; gap: 6px; color: var(--accent);
-  border-top: 1px solid var(--line); font-weight: 500;
+  width: 100%; display: flex; align-items: center; gap: 7px; padding: 10px 12px;
+  border: none; border-bottom: 2px solid var(--line); background: #F6EFDD;
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 13.5px; font-weight: 600;
+  color: var(--accent); text-align: left; cursor: pointer; transition: background 0.15s;
 }
-.fp-combobox-create:hover { background: #EAE3D3; }
+.fp-combobox-create-active:hover { background: #EFE3C4; }
 .fp-combobox-create:disabled { opacity: 0.6; cursor: default; }
 .fp-combobox-create-error { padding: 6px 12px; color: var(--expense); font-size: 12px; border-top: 1px solid var(--line); }
 .fp-combobox-create-hint {
-  display: flex; align-items: center; gap: 6px; padding: 8px 12px; color: var(--ink-soft);
-  font-size: 12.5px; border-top: 1px solid var(--line);
+  display: flex; align-items: center; gap: 7px; padding: 10px 12px; background: #F6EFDD;
+  border-bottom: 2px solid var(--line); color: var(--ink); font-weight: 500; font-size: 13px;
 }
 
 @media (max-width: 860px) {

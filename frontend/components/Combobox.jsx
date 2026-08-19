@@ -128,6 +128,27 @@ export function Combobox({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+          {/* Видна СРАЗУ при открытии, над списком — не в конце, куда нужно
+              долистать, и не только после ввода текста (раньше появлялась
+              молча, пользователь не понимал, что можно создать запись отсюда). */}
+          {onCreateNew &&
+            (canCreate ? (
+              <button
+                type="button"
+                className="fp-combobox-create fp-combobox-create-active"
+                onClick={handleCreate}
+                disabled={creating}
+              >
+                <Plus size={15} /> {creating ? "Добавляем…" : `${createLabel} «${trimmedSearch}»`}
+              </button>
+            ) : (
+              <div className="fp-combobox-create-hint">
+                <Plus size={15} />
+                {trimmedSearch
+                  ? "Такая запись уже есть в списке ниже"
+                  : "Нет нужной статьи? Напечатайте название — добавим сразу, без похода в Справочники"}
+              </div>
+            ))}
           <div className="fp-combobox-list">
             {filtered.length === 0 && !onCreateNew && <div className="fp-combobox-empty">Ничего не найдено</div>}
             {filtered.map((opt) => (
@@ -140,26 +161,6 @@ export function Combobox({
                 {opt.name}
               </button>
             ))}
-            {/* Кнопка добавления видна ВСЕГДА, как только onCreateNew задан — не
-                только после ввода текста. Раньше она появлялась молча, и
-                пользователь, открыв пустой список, не понимал, что можно
-                напечатать название и создать запись отсюда же. */}
-            {onCreateNew &&
-              (canCreate ? (
-                <button
-                  type="button"
-                  className="fp-combobox-option fp-combobox-create"
-                  onClick={handleCreate}
-                  disabled={creating}
-                >
-                  <Plus size={13} /> {creating ? "Добавляем…" : `${createLabel} «${trimmedSearch}»`}
-                </button>
-              ) : (
-                <div className="fp-combobox-create-hint">
-                  <Plus size={13} />
-                  {trimmedSearch ? "Такая запись уже есть в списке" : "Введите название выше, чтобы добавить новую"}
-                </div>
-              ))}
           </div>
           {createError && <div className="fp-combobox-create-error">{createError}</div>}
         </div>
