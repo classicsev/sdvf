@@ -62,6 +62,14 @@ function describeCondition(condition) {
 
 const AMO_CONNECT_EMPTY = { subdomain: "", client_id: "", client_secret: "", access_token: "", refresh_token: "" };
 const ALFA_CONNECT_EMPTY = { api_key: "", cert_pem: "", key_pem: "", key_password: "" };
+// Песочница Alfa API принимает только эти фиксированные номера счетов —
+// см. "Тестирование Выписок по счетам ЮЛ" в документации, проверено вживую.
+const ALFA_SANDBOX_TEST_ACCOUNTS = [
+  "40702810102300000001",
+  "40702810402300000002",
+  "40702810002300000003",
+  "40702978902300000004",
+];
 const ALFA_FILE_NAMES_EMPTY = { cert: "", key: "" };
 
 function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
@@ -466,16 +474,20 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
               {syncTarget.provider === "alfa" && (
                 <label className="fp-span-2">
                   Тестовый номер счёта для песочницы (опц.)
-                  <input
+                  <select
                     value={syncForm.account_number_override}
                     onChange={(e) => setSyncForm((p) => ({ ...p, account_number_override: e.target.value }))}
-                    placeholder="40702810102300000001"
-                  />
+                  >
+                    <option value="">Не подставлять — использовать номер счёта из справочника</option>
+                    {ALFA_SANDBOX_TEST_ACCOUNTS.map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
                   <span className="fp-note" style={{ display: "block", marginTop: 4 }}>
-                    Песочница Alfa API принимает только свои тестовые номера счетов, не настоящий. Заполните, если
-                    синкаете тестовую песочницу — реальный номер счёта в справочнике «Счета» останется как есть.
-                    Тестовые номера: 40702810102300000001, 40702810402300000002, 40702810002300000003,
-                    40702978902300000004.
+                    Песочница Alfa API принимает только свои тестовые номера счетов, не настоящий. Выберите один из
+                    списка, если синкаете песочницу — реальный номер счёта в справочнике «Счета» останется как есть.
                   </span>
                 </label>
               )}
