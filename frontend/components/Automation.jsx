@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus, X, Trash2, Plug, RefreshCw } from "lucide-react";
+import { Plus, X, Trash2, Plug, RefreshCw, Upload, Check } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
@@ -62,6 +62,7 @@ function describeCondition(condition) {
 
 const AMO_CONNECT_EMPTY = { subdomain: "", client_id: "", client_secret: "", access_token: "", refresh_token: "" };
 const ALFA_CONNECT_EMPTY = { api_key: "", cert_pem: "", key_pem: "", key_password: "" };
+const ALFA_FILE_NAMES_EMPTY = { cert: "", key: "" };
 
 function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
   const { user } = useAuth();
@@ -78,6 +79,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
   const [connectTokenValue, setConnectTokenValue] = useState("");
   const [amoConnectForm, setAmoConnectForm] = useState(AMO_CONNECT_EMPTY);
   const [alfaConnectForm, setAlfaConnectForm] = useState(ALFA_CONNECT_EMPTY);
+  const [alfaFileNames, setAlfaFileNames] = useState(ALFA_FILE_NAMES_EMPTY);
   const [connectError, setConnectError] = useState("");
   const [connectSaving, setConnectSaving] = useState(false);
 
@@ -93,7 +95,26 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
     setConnectTokenValue("");
     setAmoConnectForm(AMO_CONNECT_EMPTY);
     setAlfaConnectForm(ALFA_CONNECT_EMPTY);
+    setAlfaFileNames(ALFA_FILE_NAMES_EMPTY);
     setConnectError("");
+  }
+
+  // Сертификат/ключ читаем прямо из выбранного файла (а не просим вставлять
+  // текст руками) — пользователь и так открывает файл в проводнике, копипаст
+  // блока PEM только добавлял путаницы (см. фидбек после первого подключения
+  // Альфа-Банка).
+  function handleAlfaFilePicked(field, nameKey) {
+    return (e) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        setAlfaConnectForm((p) => ({ ...p, [field]: String(reader.result || "").trim() }));
+      };
+      reader.readAsText(file);
+      setAlfaFileNames((p) => ({ ...p, [nameKey]: file.name }));
+    };
   }
 
   async function handleConnect(e) {
@@ -300,26 +321,44 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                       onChange={(e) => setAlfaConnectForm((p) => ({ ...p, api_key: e.target.value }))}
                     />
                   </label>
-                  <label className="fp-span-2">
-                    Сертификат клиента (содержимое .cer файла целиком, включая BEGIN/END)
-                    <textarea
-                      required
-                      rows={4}
-                      value={alfaConnectForm.cert_pem}
-                      onChange={(e) => setAlfaConnectForm((p) => ({ ...p, cert_pem: e.target.value }))}
-                      placeholder="-----BEGIN CERTIFICATE-----..."
-                    />
-                  </label>
-                  <label className="fp-span-2">
-                    Приватный ключ (содержимое .key файла целиком)
-                    <textarea
-                      required
-                      rows={4}
-                      value={alfaConnectForm.key_pem}
-                      onChange={(e) => setAlfaConnectForm((p) => ({ ...p, key_pem: e.target.value }))}
-                      placeholder="-----BEGIN RSA PRIVATE KEY-----..."
-                    />
-                  </label>
+                  <div className="fp-span-2">
+                    Сертификат клиента (файл .cer, который прислал банк)
+                    <div style={{ marginTop: 5 }}>
+                      <label
+                        className="fp-btn-ghost"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+                      >
+                        {alfaConnectForm.cert_pem ? <Check size={14} /> : <Upload size={14} />}
+                        {alfaFileNames.cert || "Выбрать файл .cer"}
+                        <input
+                          type="file"
+                          accept=".cer,.pem,.crt"
+                          required={!alfaConnectForm.cert_pem}
+                          onChange={handleAlfaFilePicked("cert_pem", "cert")}
+                          style={{ display: "none" }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                  <div className="fp-span-2">
+                    Приватный ключ (файл .key, который прислал банк)
+                    <div style={{ marginTop: 5 }}>
+                      <label
+                        className="fp-btn-ghost"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+                      >
+                        {alfaConnectForm.key_pem ? <Check size={14} /> : <Upload size={14} />}
+                        {alfaFileNames.key || "Выбрать файл .key"}
+                        <input
+                          type="file"
+                          accept=".key,.pem"
+                          required={!alfaConnectForm.key_pem}
+                          onChange={handleAlfaFilePicked("key_pem", "key")}
+                          style={{ display: "none" }}
+                        />
+                      </label>
+                    </div>
+                  </div>
                   <label className="fp-span-2">
                     Пароль от приватного ключа
                     <input

@@ -3,9 +3,21 @@ import tempfile
 from contextlib import contextmanager
 from datetime import date, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Iterator, Optional
 
 import httpx
+
+# TLS-сертификат sandbox.alfabank.ru/baas.alfabank.ru выпущен НЕ цепочкой
+# Альфы из архива банка (та — apica_2022_chain.cer — для другого, ей
+# подписан только НАШ клиентский сертификат), а российским государственным
+# Минцифры: Russian Trusted Root CA → Russian Trusted Sub CA (проверено
+# напрямую через `openssl s_client -connect sandbox.alfabank.ru:443`).
+# Этой пары нет в стандартном системном CA-бандле (certifi) — без явного
+# verify=<этот файл> запрос падает с "self-signed certificate in certificate
+# chain" ещё до какой-либо авторизации (найдено на реальном первом запросе,
+# см. HANDOVER.md). Сами сертификаты публичные, не секрет.
+_CA_CHAIN_PATH = str(Path(__file__).parent / "alfabank_ca_chain.pem")
 
 
 class AlfaBankError(Exception):
@@ -70,6 +82,7 @@ class AlfaBankClient:
                     params=params,
                     headers=headers,
                     cert=(cert_path, key_path, self.key_password),
+                    verify=_CA_CHAIN_PATH,
                     timeout=self.timeout,
                 )
             except httpx.HTTPError as exc:
