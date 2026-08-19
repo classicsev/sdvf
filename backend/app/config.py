@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 480
     field_encryption_key: str
     tbank_base_url: str = "https://business.tbank.ru/openapi"
+    # Sandbox по умолчанию — на проде переключить на https://baas.alfabank.ru/api
+    # через переменную окружения, когда появится боевой сертификат/ключ.
+    alfabank_base_url: str = "https://sandbox.alfabank.ru/api"
     # Список разрешённых origin'ов фронтенда через запятую (без пробелов).
     # В проде указать реальный домен(ы), напр. "https://finance.example.ru".
     cors_origins: str = "http://localhost:3000"

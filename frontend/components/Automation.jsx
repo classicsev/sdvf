@@ -17,7 +17,7 @@ const PROVIDER_LABELS = {
   "1c": "1С:УНФ",
 };
 
-const SYNC_SUPPORTED = ["tinkoff", "amocrm"];
+const SYNC_SUPPORTED = ["tinkoff", "alfa", "amocrm"];
 
 const FIELD_OPTIONS = [
   { value: "counterparty", label: "Контрагент" },
@@ -61,6 +61,7 @@ function describeCondition(condition) {
 }
 
 const AMO_CONNECT_EMPTY = { subdomain: "", client_id: "", client_secret: "", access_token: "", refresh_token: "" };
+const ALFA_CONNECT_EMPTY = { api_key: "", cert_pem: "", key_pem: "", key_password: "" };
 
 function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
   const { user } = useAuth();
@@ -76,6 +77,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
   const [connectTarget, setConnectTarget] = useState(null);
   const [connectTokenValue, setConnectTokenValue] = useState("");
   const [amoConnectForm, setAmoConnectForm] = useState(AMO_CONNECT_EMPTY);
+  const [alfaConnectForm, setAlfaConnectForm] = useState(ALFA_CONNECT_EMPTY);
   const [connectError, setConnectError] = useState("");
   const [connectSaving, setConnectSaving] = useState(false);
 
@@ -90,6 +92,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
     setConnectTarget(integration);
     setConnectTokenValue("");
     setAmoConnectForm(AMO_CONNECT_EMPTY);
+    setAlfaConnectForm(ALFA_CONNECT_EMPTY);
     setConnectError("");
   }
 
@@ -100,6 +103,8 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
     try {
       if (connectTarget.provider === "amocrm") {
         await api.connectAmoCrm(token, connectTarget.id, amoConnectForm);
+      } else if (connectTarget.provider === "alfa") {
+        await api.connectAlfaBank(token, connectTarget.id, alfaConnectForm);
       } else {
         await api.connectIntegration(token, connectTarget.id, { token: connectTokenValue });
       }
@@ -222,7 +227,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
           </tbody>
         </table>
         <p className="fp-note" style={{ padding: "0 16px 16px" }}>
-          Реальная синхронизация реализована для Т-Банка (API «Операции по счету») и amoCRM (контакты →
+          Реальная синхронизация реализована для Т-Банка и Альфа-Банка (выписки по счёту) и amoCRM (контакты →
           контрагенты, сделки в статусе «Успешно реализовано» → доходные транзакции). Остальные — заглушки
           каталога на будущее.
         </p>
@@ -283,6 +288,50 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                   <div className="fp-note fp-span-2">
                     amoCRM не выдаёт статичный токен для внешних интеграций — access/refresh получаются через
                     обмен кода авторизации на вкладке «Ключи и доступы» вашей интеграции в amoMarket.
+                  </div>
+                </>
+              ) : connectTarget.provider === "alfa" ? (
+                <>
+                  <label className="fp-span-2">
+                    API-ключ (Alfa API, Портал разработчика)
+                    <input
+                      required
+                      value={alfaConnectForm.api_key}
+                      onChange={(e) => setAlfaConnectForm((p) => ({ ...p, api_key: e.target.value }))}
+                    />
+                  </label>
+                  <label className="fp-span-2">
+                    Сертификат клиента (содержимое .cer файла целиком, включая BEGIN/END)
+                    <textarea
+                      required
+                      rows={4}
+                      value={alfaConnectForm.cert_pem}
+                      onChange={(e) => setAlfaConnectForm((p) => ({ ...p, cert_pem: e.target.value }))}
+                      placeholder="-----BEGIN CERTIFICATE-----..."
+                    />
+                  </label>
+                  <label className="fp-span-2">
+                    Приватный ключ (содержимое .key файла целиком)
+                    <textarea
+                      required
+                      rows={4}
+                      value={alfaConnectForm.key_pem}
+                      onChange={(e) => setAlfaConnectForm((p) => ({ ...p, key_pem: e.target.value }))}
+                      placeholder="-----BEGIN RSA PRIVATE KEY-----..."
+                    />
+                  </label>
+                  <label className="fp-span-2">
+                    Пароль от приватного ключа
+                    <input
+                      required
+                      type="password"
+                      value={alfaConnectForm.key_password}
+                      onChange={(e) => setAlfaConnectForm((p) => ({ ...p, key_password: e.target.value }))}
+                    />
+                  </label>
+                  <div className="fp-note fp-span-2">
+                    Сертификат, ключ и пароль к нему выдаёт Альфа-Банк вместе с API-ключом (личный кабинет
+                    разработчика / письмо от банка).
                   </div>
                 </>
               ) : (

@@ -551,6 +551,16 @@ class StatementImportResult(BaseModel):
     preview: list[StatementTransactionPreview] = []
 
 
+class AlfaBankConnectIn(BaseModel):
+    # mTLS (сертификат+ключ клиента, выданные Альфа-Банком) + ApiKey — см.
+    # integrations/alfabank.py. cert_pem/key_pem — содержимое .cer/.key файлов
+    # как есть (PEM), key_password — пароль, которым зашифрован приватный ключ.
+    api_key: str
+    cert_pem: str
+    key_pem: str
+    key_password: str
+
+
 class AmoCrmConnectIn(BaseModel):
     subdomain: str
     client_id: str

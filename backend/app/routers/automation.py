@@ -23,6 +23,8 @@ from app.config import settings
 from app.crypto import decrypt_field, encrypt_field
 from app.database import get_db
 from app.fx import convert_to_rub
+from app.integrations.alfabank import AlfaBankClient, AlfaBankError
+from app.integrations.alfabank import map_operation as map_alfa_operation
 from app.integrations.amocrm import AmoCrmClient, AmoCrmError, map_company, map_contact, map_lead
 from app.integrations.tbank import TBankClient, TBankError, map_operation
 from app.models import (
@@ -39,6 +41,7 @@ from app.models import (
     User,
 )
 from app.schemas import (
+    AlfaBankConnectIn,
     AmoCrmConnectIn,
     AmoCrmSyncIn,
     AmoCrmSyncResult,
@@ -70,10 +73,11 @@ INTEGRATION_CATALOG = [
     ("1c", "1С:УНФ", "accounting"),
 ]
 
-# На данный момент реально реализован синк для Т-Банка (см. app/integrations/tbank.py)
-# и amoCRM (см. app/integrations/amocrm.py, отдельные /connect-amocrm и /sync-amocrm —
+# На данный момент реально реализован синк для Т-Банка и Альфа-Банка (см.
+# app/integrations/tbank.py, app/integrations/alfabank.py) и amoCRM (см.
+# app/integrations/amocrm.py, отдельные /connect-amocrm и /sync-amocrm —
 # у amoCRM другая форма учётных данных: OAuth2 с refresh_token, а не один статичный токен)
-SYNC_SUPPORTED_PROVIDERS = {"tinkoff"}
+SYNC_SUPPORTED_PROVIDERS = {"tinkoff", "alfa"}
 BANK_PROVIDERS = {"tinkoff", "alfa"}
 
 
@@ -132,16 +136,39 @@ def _sync_bank_integration(
             detail="У счёта не указан номер счёта — заполните его в справочнике «Счета»",
         )
 
-    token = decrypt_field(integration.credentials_encrypted)
-    if token is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не удалось расшифровать токен интеграции")
+    creds_raw = decrypt_field(integration.credentials_encrypted)
+    if creds_raw is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не удалось расшифровать данные интеграции")
 
-    client = TBankClient(base_url=settings.tbank_base_url, token=token)
+    if integration.provider == "alfa" and date_from is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Для Альфа-Банка нужно указать дату начала периода — выписка запрашивается по дням",
+        )
 
     try:
-        mapped_ops = (map_operation(raw_op) for raw_op in client.fetch_all_operations(account.account_number, date_from, date_to))
+        # client.fetch_all_operations(...) вызывается ЗДЕСЬ, внутри try — это
+        # генератор, сам HTTP-запрос уходит только при первом next() внутри
+        # import_mapped_transactions ниже, поэтому исключение из него ловится
+        # тем же except, что и ошибки самого импорта.
+        if integration.provider == "tinkoff":
+            client = TBankClient(base_url=settings.tbank_base_url, token=creds_raw)
+            raw_ops = client.fetch_all_operations(account.account_number, date_from, date_to)
+            mapped_ops = (map_operation(raw_op) for raw_op in raw_ops)
+        else:  # "alfa"
+            creds = json.loads(creds_raw)
+            client = AlfaBankClient(
+                base_url=settings.alfabank_base_url,
+                api_key=creds["api_key"],
+                cert_pem=creds["cert_pem"],
+                key_pem=creds["key_pem"],
+                key_password=creds["key_password"],
+            )
+            raw_ops = client.fetch_all_operations(account.account_number, date_from, date_to)
+            mapped_ops = (map_alfa_operation(raw_op) for raw_op in raw_ops)
+
         result = import_mapped_transactions(db, user, integration.company_id, account, mapped_ops)
-    except TBankError as exc:
+    except (TBankError, AlfaBankError) as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
@@ -233,9 +260,34 @@ def connect_integration(
 ):
     integration = _get_integration_or_404(db, user, integration_id)
     check_company_role(db, user, integration.company_id, ADMIN_ONLY)
+    if integration.provider == "alfa":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Для Альфа-Банка используйте отдельную форму подключения (сертификат + ключ + API-ключ)",
+        )
     if not payload.token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Токен обязателен")
     integration.credentials_encrypted = encrypt_field(payload.token)
+    integration.is_connected = True
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+@router.post(
+    "/integrations/{integration_id}/connect-alfabank", response_model=IntegrationOut, dependencies=[FINANCE_MODULE]
+)
+def connect_alfabank(
+    integration_id: str,
+    payload: AlfaBankConnectIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    integration = _get_integration_or_404(db, user, integration_id)
+    check_company_role(db, user, integration.company_id, ADMIN_ONLY)
+    if integration.provider != "alfa":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Эта интеграция не Альфа-Банк")
+    integration.credentials_encrypted = encrypt_field(json.dumps(payload.model_dump()))
     integration.is_connected = True
     db.commit()
     db.refresh(integration)

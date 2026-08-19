@@ -342,6 +342,8 @@ export const api = {
       token,
       query: { company_id: companyId, force: force || undefined },
     }),
+  connectAlfaBank: (token, id, payload) =>
+    request(`/integrations/${id}/connect-alfabank`, { method: "POST", token, body: payload }),
   connectAmoCrm: (token, id, payload) =>
     request(`/integrations/${id}/connect-amocrm`, { method: "POST", token, body: payload }),
   syncAmoCrm: (token, id, payload) =>
