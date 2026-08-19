@@ -126,6 +126,43 @@ def test_employee_list_update_delete(client, db_session):
     assert not any(e["id"] == employee["id"] for e in resp.json())
 
 
+def test_delete_employee_with_accrual_deactivates_instead_of_erroring(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    employee = client.post("/payroll/employees", headers=headers, json={"full_name": "С начислением"}).json()
+    client.post(
+        "/payroll/accruals",
+        headers=headers,
+        json={"employee_id": employee["id"], "period": "2026-06-01", "salary": 1000},
+    )
+
+    resp = client.delete(f"/payroll/employees/{employee['id']}", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["deleted"] is False
+    assert body["deactivated"] is True
+
+    # Не удалён физически — остался в списке, но со статусом "dismissed".
+    resp = client.get("/payroll/employees", headers=headers)
+    row = next(e for e in resp.json() if e["id"] == employee["id"])
+    assert row["status"] == "dismissed"
+
+
+def test_toggle_employee_status_flips_between_active_and_dismissed(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    employee = client.post("/payroll/employees", headers=headers, json={"full_name": "Тест"}).json()
+    assert employee["status"] == "active"
+
+    resp = client.post(f"/payroll/employees/{employee['id']}/toggle-status", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "dismissed"
+
+    resp = client.post(f"/payroll/employees/{employee['id']}/toggle-status", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "active"
+
+
 def test_accruals_filtered_by_period(client, db_session):
     admin = make_user(db_session, RoleEnum.admin)
     headers = auth_headers(admin)

@@ -1687,6 +1687,7 @@ function CatalogPanel({
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
   const [formCompanyId, setFormCompanyId] = useState("");
+  const [originalCompanyId, setOriginalCompanyId] = useState("");
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -1701,6 +1702,7 @@ function CatalogPanel({
       create: (payload) => api.createWarehouse(token, payload, formCompanyId || undefined),
       update: (id, payload) => api.updateWarehouse(token, id, payload),
       remove: (id) => api.deleteWarehouse(token, id),
+      moveCompany: (id, companyId) => api.moveWarehouseCompany(token, id, companyId),
     },
     products: {
       label: "Товары",
@@ -1714,6 +1716,7 @@ function CatalogPanel({
       create: (payload) => api.createWhProduct(token, payload, formCompanyId || undefined),
       update: (id, payload) => api.updateWhProduct(token, id, payload),
       remove: (id) => api.deleteWhProduct(token, id),
+      moveCompany: (id, companyId) => api.moveWhProductCompany(token, id, companyId),
     },
     variants: {
       label: "Варианты (калибры)",
@@ -1733,6 +1736,7 @@ function CatalogPanel({
       create: (payload) => api.createWhVariant(token, payload),
       update: (id, payload) => api.updateWhVariant(token, id, payload),
       remove: (id) => api.deleteWhVariant(token, id),
+      moveCompany: null,
     },
   }[tab];
 
@@ -1743,6 +1747,7 @@ function CatalogPanel({
     setForm(empty);
     const preselected = editableCompanies.find((m) => m.company.id === companyId) || editableCompanies[0];
     setFormCompanyId(preselected?.company.id || "");
+    setOriginalCompanyId("");
     setFormError("");
     setModalOpen(true);
   }
@@ -1753,6 +1758,7 @@ function CatalogPanel({
     config.fields.forEach((f) => (next[f.key] = item[f.key] ?? ""));
     setForm(next);
     setFormCompanyId(item.company_id || "");
+    setOriginalCompanyId(item.company_id || "");
     setFormError("");
     setModalOpen(true);
   }
@@ -1763,6 +1769,11 @@ function CatalogPanel({
     setFormError("");
     try {
       if (editingId) {
+        // Перенос в другую компанию — отдельным вызовом раньше остальных правок
+        // (бэкенд блокирует его, если запись уже где-то используется).
+        if (config.moveCompany && multiCompany && formCompanyId && formCompanyId !== originalCompanyId) {
+          await config.moveCompany(editingId, formCompanyId);
+        }
         await config.update(editingId, form);
       } else {
         await config.create(form);
@@ -1878,11 +1889,29 @@ function CatalogPanel({
                 <label>
                   Компания
                   {editingId ? (
-                    <input
-                      type="text"
-                      disabled
-                      value={companies.find((m) => m.company.id === formCompanyId)?.company.name || ""}
-                    />
+                    <>
+                      <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
+                        {!editableCompanies.some((m) => m.company.id === originalCompanyId) &&
+                          originalCompanyId &&
+                          companies
+                            .filter((m) => m.company.id === originalCompanyId)
+                            .map((m) => (
+                              <option key={m.company.id} value={m.company.id}>
+                                {m.company.name}
+                              </option>
+                            ))}
+                        {editableCompanies.map((m) => (
+                          <option key={m.company.id} value={m.company.id}>
+                            {m.company.name}
+                          </option>
+                        ))}
+                      </select>
+                      {formCompanyId !== originalCompanyId && (
+                        <span className="fp-muted" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+                          Перенос сработает, только если запись ещё нигде не используется.
+                        </span>
+                      )}
+                    </>
                   ) : (
                     <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
                       {editableCompanies.map((m) => (

@@ -291,6 +291,9 @@ export const api = {
   updateEmployee: (token, id, payload) =>
     request(`/payroll/employees/${id}`, { method: "PATCH", token, body: payload }),
   deleteEmployee: (token, id) => request(`/payroll/employees/${id}`, { method: "DELETE", token }),
+  toggleEmployeeStatus: (token, id) => request(`/payroll/employees/${id}/toggle-status`, { method: "POST", token }),
+  moveEmployeeCompany: (token, id, companyId) =>
+    request(`/payroll/employees/${id}/company`, { method: "PATCH", token, body: { company_id: companyId } }),
 
   listAccruals: (token, query) => request("/payroll/accruals", { token, query }),
   createAccrual: (token, payload) => request("/payroll/accruals", { method: "POST", token, body: payload }),
@@ -336,6 +339,8 @@ export const api = {
   updateWarehouse: (token, id, payload) =>
     request(`/warehouse/warehouses/${id}`, { method: "PATCH", token, body: payload }),
   deleteWarehouse: (token, id) => request(`/warehouse/warehouses/${id}`, { method: "DELETE", token }),
+  moveWarehouseCompany: (token, id, companyId) =>
+    request(`/warehouse/warehouses/${id}/company`, { method: "PATCH", token, body: { company_id: companyId } }),
 
   listWhProducts: (token, query) => request("/warehouse/products", { token, query }),
   createWhProduct: (token, payload, companyId) =>
@@ -343,6 +348,8 @@ export const api = {
   updateWhProduct: (token, id, payload) =>
     request(`/warehouse/products/${id}`, { method: "PATCH", token, body: payload }),
   deleteWhProduct: (token, id) => request(`/warehouse/products/${id}`, { method: "DELETE", token }),
+  moveWhProductCompany: (token, id, companyId) =>
+    request(`/warehouse/products/${id}/company`, { method: "PATCH", token, body: { company_id: companyId } }),
 
   listWhVariants: (token, query) => request("/warehouse/variants", { token, query }),
   createWhVariant: (token, payload) => request("/warehouse/variants", { method: "POST", token, body: payload }),

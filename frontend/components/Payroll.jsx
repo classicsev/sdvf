@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus, X, Pencil, Trash2, Wallet, ArrowUpRight, AlertTriangle } from "lucide-react";
+import { Plus, X, Pencil, Trash2, Wallet, ArrowUpRight, AlertTriangle, RotateCcw } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
@@ -34,6 +34,7 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPLOYEE_EMPTY);
   const [formCompanyId, setFormCompanyId] = useState("");
+  const [originalCompanyId, setOriginalCompanyId] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -42,6 +43,7 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
     setForm(EMPLOYEE_EMPTY);
     const preselected = editableCompanies.find((m) => m.company.id === companyFilter) || editableCompanies[0];
     setFormCompanyId(preselected?.company.id || "");
+    setOriginalCompanyId("");
     setError("");
     setModalOpen(true);
   }
@@ -55,6 +57,7 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
       bank_details: emp.bank_details || "",
     });
     setFormCompanyId(emp.company_id || "");
+    setOriginalCompanyId(emp.company_id || "");
     setError("");
     setModalOpen(true);
   }
@@ -64,8 +67,16 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
     setSaving(true);
     setError("");
     try {
-      if (editingId) await api.updateEmployee(token, editingId, form);
-      else await api.createEmployee(token, form, formCompanyId || undefined);
+      if (editingId) {
+        // Перенос в другую компанию — отдельным вызовом раньше остальных правок
+        // (бэкенд блокирует его, если у сотрудника уже есть начисления/выплаты).
+        if (multiCompany && formCompanyId && formCompanyId !== originalCompanyId) {
+          await api.moveEmployeeCompany(token, editingId, formCompanyId);
+        }
+        await api.updateEmployee(token, editingId, form);
+      } else {
+        await api.createEmployee(token, form, formCompanyId || undefined);
+      }
       setModalOpen(false);
       reload();
     } catch (err) {
@@ -78,7 +89,22 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
   async function handleDelete(emp) {
     if (!window.confirm(`Удалить сотрудника «${emp.full_name}»?`)) return;
     try {
-      await api.deleteEmployee(token, emp.id);
+      const result = await api.deleteEmployee(token, emp.id);
+      if (result?.deactivated) {
+        window.alert(
+          `«${emp.full_name}» уже есть начисления/выплаты, поэтому не удалён, а помечен как уволенный — ` +
+            `история сохранена. Восстановить можно кнопкой в списке.`
+        );
+      }
+      reload();
+    } catch (err) {
+      window.alert(err.message);
+    }
+  }
+
+  async function handleToggleStatus(emp) {
+    try {
+      await api.toggleEmployeeStatus(token, emp.id);
       reload();
     } catch (err) {
       window.alert(err.message);
@@ -100,12 +126,14 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
             <th>ФИО</th>
             <th>Отдел</th>
             <th>Тип занятости</th>
+            <th>Статус</th>
             <th className="fp-table-actions-col"></th>
           </tr>
         </thead>
         <tbody>
           {(employees || []).map((emp) => {
             const canEditRow = canEditPayroll(roleForCompany(emp.company_id));
+            const dismissed = emp.status === "dismissed";
             return (
             <tr key={emp.id}>
               {showCompanyColumn && (
@@ -114,11 +142,23 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
               <td>{emp.full_name}</td>
               <td className="fp-muted">{emp.department || "—"}</td>
               <td className="fp-muted">{emp.employment_type || "—"}</td>
+              <td>
+                <span className={`fp-status-badge ${dismissed ? "warn" : "ok"}`}>
+                  {dismissed ? "Уволен" : "Работает"}
+                </span>
+              </td>
               <td className="fp-table-actions-col">
                 {canEditRow && (
                   <span className="fp-row-actions">
                     <button className="fp-icon-btn" onClick={() => openEdit(emp)}>
                       <Pencil size={14} />
+                    </button>
+                    <button
+                      className="fp-icon-btn"
+                      onClick={() => handleToggleStatus(emp)}
+                      title={dismissed ? "Восстановить" : "Пометить уволенным"}
+                    >
+                      <RotateCcw size={14} />
                     </button>
                     <button className="fp-icon-btn" onClick={() => handleDelete(emp)}>
                       <Trash2 size={14} />
@@ -131,7 +171,7 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
           })}
           {(employees || []).length === 0 && (
             <tr>
-              <td colSpan={showCompanyColumn ? 5 : 4} className="fp-empty">
+              <td colSpan={showCompanyColumn ? 6 : 5} className="fp-empty">
                 Сотрудников пока нет
               </td>
             </tr>
@@ -153,11 +193,29 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
                 <label className="fp-span-2">
                   Компания
                   {editingId ? (
-                    <input
-                      type="text"
-                      disabled
-                      value={companies.find((m) => m.company.id === formCompanyId)?.company.name || ""}
-                    />
+                    <>
+                      <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
+                        {!editableCompanies.some((m) => m.company.id === originalCompanyId) &&
+                          originalCompanyId &&
+                          companies
+                            .filter((m) => m.company.id === originalCompanyId)
+                            .map((m) => (
+                              <option key={m.company.id} value={m.company.id}>
+                                {m.company.name}
+                              </option>
+                            ))}
+                        {editableCompanies.map((m) => (
+                          <option key={m.company.id} value={m.company.id}>
+                            {m.company.name}
+                          </option>
+                        ))}
+                      </select>
+                      {formCompanyId !== originalCompanyId && (
+                        <span className="fp-muted" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+                          Перенос сработает, только если у сотрудника ещё нет начислений/выплат.
+                        </span>
+                      )}
+                    </>
                   ) : (
                     <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
                       {editableCompanies.map((m) => (

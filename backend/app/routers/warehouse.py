@@ -32,6 +32,7 @@ from app.models import (
 )
 from app.schemas import (
     EmployeeMiniOut,
+    MoveCompanyIn,
     ProductIn,
     ProductOut,
     ProductVariantIn,
@@ -43,7 +44,7 @@ from app.schemas import (
     WarehouseIn,
     WarehouseOut,
 )
-from app.utils import delete_or_deactivate, get_or_404_accessible
+from app.utils import delete_or_deactivate, get_or_404_accessible, move_to_company
 
 router = APIRouter(prefix="/warehouse", tags=["warehouse"])
 
@@ -51,6 +52,9 @@ router = APIRouter(prefix="/warehouse", tags=["warehouse"])
 # и справочниками домена (склады/товары/варианты), и операционными данными (движения) —
 # складским сотрудникам не нужен админ на каждое новое наименование/калибр.
 WAREHOUSE_EDITORS = [RoleEnum.admin, RoleEnum.warehouse_operator]
+# Перенос между компаниями — только admin, как и у справочников
+# (см. reference.py::_move_to_company) — более чувствительное действие.
+ADMIN_ONLY = [RoleEnum.admin]
 
 POSITIVE_DIRECTIONS = {StockDirectionEnum.in_, StockDirectionEnum.production_yield, StockDirectionEnum.transfer_in}
 # Через общий эндпоинт создания движения нельзя завести производственные/трансферные
@@ -149,6 +153,18 @@ def delete_warehouse(warehouse_id: str, db: Session = Depends(get_db), user: Use
     return {"deleted": deleted, "deactivated": not deleted}
 
 
+@router.patch("/warehouses/{warehouse_id}/company", response_model=WarehouseOut, dependencies=[WAREHOUSE_MODULE])
+def move_warehouse_company(
+    warehouse_id: str, payload: MoveCompanyIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    obj = get_or_404_accessible(db, Warehouse, warehouse_id, get_accessible_company_ids(db, user), "Склад не найден")
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
+    check_company_role(db, user, payload.company_id, ADMIN_ONLY)
+    move_to_company(db, obj, payload.company_id, [(StockMovement, "warehouse_id")])
+    db.refresh(obj)
+    return obj
+
+
 # ---------------------------------------------------------------------------
 # Исполнители — только имя, без реквизитов/зарплатных данных. Отдельный эндпоинт,
 # а не /payroll/employees: тот доступен лишь admin/payroll_operator и отдаёт
@@ -216,6 +232,18 @@ def delete_product(product_id: str, db: Session = Depends(get_db), user: User = 
     check_company_role(db, user, obj.company_id, WAREHOUSE_EDITORS)
     deleted = delete_or_deactivate(db, obj, [(ProductVariant, "product_id")])
     return {"deleted": deleted, "deactivated": not deleted}
+
+
+@router.patch("/products/{product_id}/company", response_model=ProductOut, dependencies=[WAREHOUSE_MODULE])
+def move_product_company(
+    product_id: str, payload: MoveCompanyIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    obj = get_or_404_accessible(db, Product, product_id, get_accessible_company_ids(db, user), "Товар не найден")
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
+    check_company_role(db, user, payload.company_id, ADMIN_ONLY)
+    move_to_company(db, obj, payload.company_id, [(ProductVariant, "product_id")])
+    db.refresh(obj)
+    return obj
 
 
 # ---------------------------------------------------------------------------

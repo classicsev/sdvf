@@ -20,19 +20,24 @@ from app.models import Account, Employee, PayrollAccrual, PayrollPayment, Projec
 from app.schemas import (
     EmployeeIn,
     EmployeeOut,
+    MoveCompanyIn,
     PayrollAccrualIn,
     PayrollAccrualOut,
     PayrollPaymentIn,
     PayrollPaymentOut,
 )
 from app.reference_scope import get_visible_or_404
-from app.utils import get_or_404_accessible
+from app.utils import get_or_404_accessible, move_to_company
 
 router = APIRouter(prefix="/payroll", tags=["payroll"])
 
 # Изолированный контур: только admin и payroll_operator. Operator и project_manager
 # сюда не заходят вообще (см. матрицу прав в README).
 PAYROLL_EDITORS = [RoleEnum.admin, RoleEnum.payroll_operator]
+# Перенос между компаниями — только admin (и в исходной, и в целевой), как и у
+# справочников (см. reference.py::_move_to_company) — более чувствительное
+# действие, чем обычное редактирование, payroll_operator сюда не допущен.
+ADMIN_ONLY = [RoleEnum.admin]
 
 # viewer получает только агрегированную сводку без ФИО/реквизитов (см. README);
 # admin/payroll_operator и так видят всё через детальные эндпоинты выше.
@@ -120,13 +125,60 @@ def update_employee(
 
 @router.delete("/employees/{employee_id}", dependencies=[Depends(require_module("finance"))])
 def delete_employee(employee_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    # TODO: запретить удаление, если у сотрудника уже есть начисления/выплаты —
-    # предложить деактивировать (status="dismissed"), а не удалять физически
     obj = _get_or_404(db, user, Employee, employee_id, "Сотрудник не найден")
     check_company_role(db, user, obj.company_id, PAYROLL_EDITORS)
+    # Физическое удаление уронило бы FK-констрейнт, если у сотрудника уже есть
+    # начисления/выплаты (история должна остаться) — тогда вместо удаления
+    # переводим в "dismissed" (тот же паттерн, что и is_active=False для
+    # статей/проектов/счетов/контрагентов, см. utils.delete_or_deactivate —
+    # Employee использует свободный status, а не булев флаг, поэтому не через
+    # общий хелпер).
+    in_use = (
+        db.query(PayrollAccrual).filter(PayrollAccrual.employee_id == obj.id).first() is not None
+        or db.query(PayrollPayment).filter(PayrollPayment.employee_id == obj.id).first() is not None
+    )
+    if in_use:
+        obj.status = "dismissed"
+        db.commit()
+        return {"deleted": False, "deactivated": True}
     db.delete(obj)
     db.commit()
-    return {"deleted": True}
+    return {"deleted": True, "deactivated": False}
+
+
+@router.post(
+    "/employees/{employee_id}/toggle-status",
+    response_model=EmployeeOut,
+    dependencies=[Depends(require_module("finance"))],
+)
+def toggle_employee_status(
+    employee_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    obj = _get_or_404(db, user, Employee, employee_id, "Сотрудник не найден")
+    check_company_role(db, user, obj.company_id, PAYROLL_EDITORS)
+    obj.status = "active" if obj.status == "dismissed" else "dismissed"
+    db.commit()
+    db.refresh(obj)
+    return _employee_to_out(obj)
+
+
+@router.patch(
+    "/employees/{employee_id}/company",
+    response_model=EmployeeOut,
+    dependencies=[Depends(require_module("finance"))],
+)
+def move_employee_company(
+    employee_id: str,
+    payload: MoveCompanyIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    obj = _get_or_404(db, user, Employee, employee_id, "Сотрудник не найден")
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
+    check_company_role(db, user, payload.company_id, ADMIN_ONLY)
+    move_to_company(db, obj, payload.company_id, [(PayrollAccrual, "employee_id"), (PayrollPayment, "employee_id")])
+    db.refresh(obj)
+    return _employee_to_out(obj)
 
 
 @router.get("/accruals", response_model=list[PayrollAccrualOut], dependencies=[Depends(require_module("finance"))])

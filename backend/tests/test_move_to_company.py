@@ -187,6 +187,67 @@ def test_move_requires_admin_in_source_company(client, db_session):
     assert resp.status_code == 403
 
 
+def test_move_unused_employee_succeeds(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    target = _second_company_for(client, headers)
+    employee = client.post("/payroll/employees", headers=headers, json={"full_name": "Тест"}).json()
+
+    resp = client.patch(f"/payroll/employees/{employee['id']}/company", headers=headers, json={"company_id": target})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["company_id"] == target
+
+
+def test_move_employee_blocked_when_has_accrual(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    target = _second_company_for(client, headers)
+    employee = client.post("/payroll/employees", headers=headers, json={"full_name": "Тест"}).json()
+    client.post(
+        "/payroll/accruals",
+        headers=headers,
+        json={"employee_id": employee["id"], "period": "2026-06-01", "salary": 1000},
+    )
+
+    resp = client.patch(f"/payroll/employees/{employee['id']}/company", headers=headers, json={"company_id": target})
+    assert resp.status_code == 400
+
+
+def test_move_unused_warehouse_succeeds(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    target = _second_company_for(client, headers)
+    warehouse = client.post("/warehouse/warehouses", headers=headers, json={"name": "Склад 1"}).json()
+
+    resp = client.patch(
+        f"/warehouse/warehouses/{warehouse['id']}/company", headers=headers, json={"company_id": target}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["company_id"] == target
+
+
+def test_move_unused_product_succeeds(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    target = _second_company_for(client, headers)
+    product = client.post("/warehouse/products", headers=headers, json={"name": "Креветка", "unit": "кг"}).json()
+
+    resp = client.patch(f"/warehouse/products/{product['id']}/company", headers=headers, json={"company_id": target})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["company_id"] == target
+
+
+def test_move_product_blocked_when_has_variant(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    target = _second_company_for(client, headers)
+    product = client.post("/warehouse/products", headers=headers, json={"name": "Креветка", "unit": "кг"}).json()
+    client.post("/warehouse/variants", headers=headers, json={"product_id": product["id"], "name": "40/60"})
+
+    resp = client.patch(f"/warehouse/products/{product['id']}/company", headers=headers, json={"company_id": target})
+    assert resp.status_code == 400
+
+
 def test_move_category_not_found_for_inaccessible_company(client, db_session):
     admin = make_user(db_session, RoleEnum.admin)
     other_company = make_company(db_session, name="Чужая компания")
