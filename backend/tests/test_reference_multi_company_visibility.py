@@ -261,3 +261,63 @@ def test_multi_company_ids_rejects_inaccessible_company(client, db_session):
 
     resp = client.get("/categories", headers=headers, params={"company_ids": [admin.company_id, other.id]})
     assert resp.status_code == 404
+
+
+def test_own_only_excludes_global_category_even_if_owned_by_filtered_company(client, db_session):
+    """Регрессия: категория с is_global=True формально ПРИНАДЛЕЖИТ своей
+    company_id, но реально видна во всех компаниях — own_only должен убирать
+    и такие тоже, а не только чужие. Раньше own_only фильтровал только по
+    company_id.in_(...), из-за чего глобальная статья проходила фильтр, если
+    её владеющая компания совпадала с выбранной — баг, найденный пользователем
+    на живой статье "ЗП чистка Артём" (is_global=True, своя для Щёлоковъ)."""
+    company_b = make_company(db_session, "Компания Б")
+    admin = make_user(db_session, RoleEnum.admin)
+    _add_to_company(db_session, admin, company_b)
+    headers = auth_headers(admin)
+
+    resp = client.post(
+        "/categories", headers=headers, json={"name": "Глобальная своя", "type": "expense", "is_global": True}
+    )
+    assert resp.status_code == 200, resp.text
+    global_id = resp.json()["id"]
+    own_company_id = resp.json()["company_id"]
+
+    resp = client.get("/categories", headers=headers, params={"company_id": own_company_id, "own_only": "true"})
+    assert resp.status_code == 200, resp.text
+    assert not any(c["id"] == global_id for c in resp.json())
+
+
+def test_own_only_multi_company_includes_only_records_exclusive_to_the_filter_set(client, db_session):
+    company_b = make_company(db_session, "Компания Б")
+    company_c = make_company(db_session, "Компания В")
+    admin = make_user(db_session, RoleEnum.admin)
+    _add_to_company(db_session, admin, company_b)
+    _add_to_company(db_session, admin, company_c)
+    headers = auth_headers(admin)
+
+    # Расшарена ТОЛЬКО между А и Б — при own_only-фильтре [А, Б] должна быть видна.
+    resp = client.post(
+        "/categories",
+        headers=headers,
+        json={"name": "Только А и Б", "type": "expense", "visible_company_ids": [company_b.id]},
+    )
+    exclusive_to_ab_id = resp.json()["id"]
+
+    # Расшарена ещё и в В — при own_only-фильтре [А, Б] должна пропасть, т.к.
+    # "утекает" за пределы выбранного набора компаний.
+    resp = client.post(
+        "/categories",
+        headers=headers,
+        json={"name": "А, Б и В", "type": "expense", "visible_company_ids": [company_b.id, company_c.id]},
+    )
+    leaks_to_c_id = resp.json()["id"]
+
+    resp = client.get(
+        "/categories",
+        headers=headers,
+        params={"company_ids": [admin.company_id, company_b.id], "own_only": "true"},
+    )
+    assert resp.status_code == 200, resp.text
+    ids = {c["id"] for c in resp.json()}
+    assert exclusive_to_ab_id in ids
+    assert leaks_to_c_id not in ids

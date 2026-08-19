@@ -21,7 +21,7 @@ from app.config import settings
 from app.database import get_db
 from app.holding_transfers import get_or_create_internal_transfer_category
 from app.integrations.sdvf import SdvfClient, SdvfError
-from app.reference_scope import apply_visibility_filter
+from app.reference_scope import apply_own_only_filter, apply_visibility_filter
 from app.models import (
     Account,
     Category,
@@ -188,7 +188,7 @@ def list_categories(
     db.commit()
     query = db.query(Category)
     if own_only:
-        return query.filter(Category.company_id.in_(filter_ids)).all()
+        return apply_own_only_filter(query, Category, filter_ids).all()
     return apply_visibility_filter(db, query, Category, filter_ids, mode=match).all()
 
 
@@ -285,7 +285,7 @@ def list_projects(
     filter_ids = resolve_company_ids_multi(db, user, company_id, company_ids)
     query = db.query(Project)
     if own_only:
-        return query.filter(Project.company_id.in_(filter_ids)).all()
+        return apply_own_only_filter(query, Project, filter_ids).all()
     return apply_visibility_filter(db, query, Project, filter_ids, mode=match).all()
 
 

@@ -41,6 +41,24 @@ def apply_visibility_filter(db: Session, query, model, company_ids: list[str], m
     )
 
 
+def apply_own_only_filter(query, model, company_ids: list[str]):
+    """"Только свои — без расшаренных": в отличие от простого company_id.in_
+    (который включил бы и глобальные/расшаренные записи, раз они формально
+    ПРИНАДЛЕЖАТ одной из company_ids), тут исключается любая запись, чья
+    видимость выходит ЗА пределы company_ids — is_global (видна вообще
+    везде, включая будущие компании) или visible_company_ids с компанией не
+    из этого набора. Цель — показать записи, эксклюзивные именно для
+    выбранных компаний, а не просто заведённые в одной из них."""
+    assoc_model = CategoryCompany if model is Category else ProjectCompany
+    fk_col = assoc_model.category_id if model is Category else assoc_model.project_id
+    leaks_outside_filter = select(fk_col).where(assoc_model.company_id.notin_(company_ids))
+    return query.filter(
+        model.company_id.in_(company_ids),
+        model.is_global.is_(False),
+        ~model.id.in_(leaks_outside_filter),
+    )
+
+
 def get_visible_or_404(db: Session, model, entity_id: str, company_ids: list[str], detail: str = "Запись не найдена"):
     try:
         uuid.UUID(str(entity_id))
