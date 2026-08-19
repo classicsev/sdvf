@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -42,6 +43,8 @@ from app.schemas import (
     AccountIn,
     AccountOut,
     AccountSetCurrentBalanceIn,
+    BulkVisibilityIn,
+    BulkVisibilityOut,
     CategoryIn,
     CategoryOut,
     CounterpartyContactIn,
@@ -83,6 +86,69 @@ def _sync_visible_companies(db: Session, user: User, obj, is_global: bool, visib
     }
     for cid in manageable:
         db.add(assoc_model(**{fk_name: obj.id, "company_id": cid}))
+
+
+def _bulk_distribute(
+    db: Session,
+    user: User,
+    model,
+    assoc_model,
+    fk_name: str,
+    payload: BulkVisibilityIn,
+    references: list[tuple[type, str]],
+) -> BulkVisibilityOut:
+    """Массово добавляет company_ids к видимости каждой из ids (в отличие от
+    формы редактирования — не заменяет, а дополняет уже настроенную видимость).
+    Если в целевой компании уже есть отдельная запись с тем же названием
+    (заведённая ещё до появления межкомпанийной видимости) — она не дублируется
+    рядом, а сливается в исходную: все ссылки на неё (операции, план) переезжают
+    на исходную запись, дубль удаляется."""
+    target_ids = [] if payload.is_global else [
+        cid for cid in payload.company_ids if get_company_role(db, user, cid) in ADMIN_ONLY
+    ]
+    updated = 0
+    merged_names: list[str] = []
+    objs = db.query(model).filter(model.id.in_(payload.ids)).all()
+    for obj in objs:
+        if get_company_role(db, user, obj.company_id) not in ADMIN_ONLY:
+            continue  # не свой/не управляемый пользователем объект — молча пропускаем
+        if payload.is_global:
+            if not obj.is_global:
+                obj.is_global = True
+                db.query(assoc_model).filter(getattr(assoc_model, fk_name) == obj.id).delete()
+                updated += 1
+            continue
+        if obj.is_global:
+            continue  # уже видна везде, добавлять некуда
+        existing_ids = set(obj.visible_company_ids)
+        touched = False
+        for cid in target_ids:
+            if cid == obj.company_id or cid in existing_ids:
+                continue
+            dup = (
+                db.query(model)
+                .filter(
+                    model.company_id == cid,
+                    model.id != obj.id,
+                    func.lower(func.trim(model.name)) == obj.name.strip().lower(),
+                )
+                .first()
+            )
+            if dup is not None:
+                for ref_model, ref_fk in references:
+                    db.query(ref_model).filter(getattr(ref_model, ref_fk) == dup.id).update(
+                        {ref_fk: obj.id}, synchronize_session=False
+                    )
+                db.query(assoc_model).filter(getattr(assoc_model, fk_name) == dup.id).delete()
+                db.delete(dup)
+                merged_names.append(dup.name)
+            db.add(assoc_model(**{fk_name: obj.id, "company_id": cid}))
+            existing_ids.add(cid)
+            touched = True
+        if touched:
+            updated += 1
+    db.commit()
+    return BulkVisibilityOut(updated=updated, merged_names=merged_names)
 
 
 def _move_to_company(db, user, obj, payload: MoveCompanyIn, references: list[tuple[type, str]]):
@@ -174,6 +240,25 @@ def move_category_company(
     return _move_to_company(db, user, obj, payload, [(Transaction, "category_id"), (Planning, "category_id")])
 
 
+@router.post(
+    "/categories/bulk-visibility",
+    response_model=BulkVisibilityOut,
+    dependencies=[Depends(require_module("finance"))],
+)
+def bulk_visibility_categories(
+    payload: BulkVisibilityIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    return _bulk_distribute(
+        db,
+        user,
+        Category,
+        CategoryCompany,
+        "category_id",
+        payload,
+        [(Transaction, "category_id"), (Planning, "category_id")],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Проекты
 # ---------------------------------------------------------------------------
@@ -252,6 +337,30 @@ def move_project_company(
         db,
         user,
         obj,
+        payload,
+        [
+            (Transaction, "project_id"),
+            (Planning, "project_id"),
+            (PayrollAccrual, "project_id"),
+            (CompanyMember, "project_id"),
+        ],
+    )
+
+
+@router.post(
+    "/projects/bulk-visibility",
+    response_model=BulkVisibilityOut,
+    dependencies=[Depends(require_module("finance"))],
+)
+def bulk_visibility_projects(
+    payload: BulkVisibilityIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    return _bulk_distribute(
+        db,
+        user,
+        Project,
+        ProjectCompany,
+        "project_id",
         payload,
         [
             (Transaction, "project_id"),

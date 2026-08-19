@@ -217,6 +217,12 @@ export const api = {
   deleteCategory: (token, id) => request(`/categories/${id}`, { method: "DELETE", token }),
   moveCategoryCompany: (token, id, companyId) =>
     request(`/categories/${id}/company`, { method: "PATCH", token, body: { company_id: companyId } }),
+  bulkVisibilityCategories: (token, ids, companyIds, isGlobal) =>
+    request("/categories/bulk-visibility", {
+      method: "POST",
+      token,
+      body: { ids, company_ids: companyIds, is_global: isGlobal },
+    }),
 
   listProjects: (token, query) => request("/projects", { token, query }),
   createProject: (token, payload, companyId) =>
@@ -225,6 +231,12 @@ export const api = {
   deleteProject: (token, id) => request(`/projects/${id}`, { method: "DELETE", token }),
   moveProjectCompany: (token, id, companyId) =>
     request(`/projects/${id}/company`, { method: "PATCH", token, body: { company_id: companyId } }),
+  bulkVisibilityProjects: (token, ids, companyIds, isGlobal) =>
+    request("/projects/bulk-visibility", {
+      method: "POST",
+      token,
+      body: { ids, company_ids: companyIds, is_global: isGlobal },
+    }),
 
   listAccounts: (token, query) => request("/accounts", { token, query }),
   createAccount: (token, payload, companyId) =>

@@ -34,6 +34,7 @@ const TABS = {
     update: (token, id, payload) => api.updateCategory(token, id, payload),
     remove: (token, id) => api.deleteCategory(token, id),
     moveCompany: (token, id, companyId) => api.moveCategoryCompany(token, id, companyId),
+    bulkVisibility: (token, ids, companyIds, isGlobal) => api.bulkVisibilityCategories(token, ids, companyIds, isGlobal),
     fields: [
       { key: "name", label: "Название статьи", type: "text", required: true },
       { key: "group_name", label: "Группа", type: "text" },
@@ -63,6 +64,7 @@ const TABS = {
     update: (token, id, payload) => api.updateProject(token, id, payload),
     remove: (token, id) => api.deleteProject(token, id),
     moveCompany: (token, id, companyId) => api.moveProjectCompany(token, id, companyId),
+    bulkVisibility: (token, ids, companyIds, isGlobal) => api.bulkVisibilityProjects(token, ids, companyIds, isGlobal),
     fields: [{ key: "name", label: "Название проекта", type: "text", required: true }],
     columns: [{ key: "name", label: "Проект" }, STATUS_COLUMN],
   },
@@ -290,6 +292,73 @@ export default function Reference() {
   const [formIsGlobal, setFormIsGlobal] = useState(false);
   const [formVisibleCompanyIds, setFormVisibleCompanyIds] = useState([]);
   const supportsCompanyScope = tab === "categories" || tab === "projects";
+  const supportsBulkDistribute = supportsCompanyScope && multiCompany;
+
+  // Массовое распределение выбранных статей/проектов по компаниям — в отличие
+  // от "Видимость по компаниям" в форме одной записи (которая заменяет список
+  // целиком), тут ДОБАВЛЯЕМ компании сразу нескольким выбранным записям, и
+  // бэкенд сам сливает дубли с тем же названием, если они уже есть в целевой
+  // компании (см. reference.py::_bulk_distribute).
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkCompanyIds, setBulkCompanyIds] = useState([]);
+  const [bulkIsGlobal, setBulkIsGlobal] = useState(false);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkError, setBulkError] = useState("");
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [tab, companyFilter]);
+
+  function toggleSelect(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    const selectableIds = (items || [])
+      .filter((i) => canEditReference(roleForCompany(i.company_id)))
+      .map((i) => i.id);
+    setSelectedIds((prev) => (prev.size === selectableIds.length ? new Set() : new Set(selectableIds)));
+  }
+
+  function openBulkModal() {
+    setBulkCompanyIds([]);
+    setBulkIsGlobal(false);
+    setBulkError("");
+    setBulkModalOpen(true);
+  }
+
+  async function handleBulkApply() {
+    setBulkSaving(true);
+    setBulkError("");
+    try {
+      const result = await config.bulkVisibility(
+        token,
+        Array.from(selectedIds),
+        bulkIsGlobal ? [] : bulkCompanyIds,
+        bulkIsGlobal
+      );
+      setBulkModalOpen(false);
+      setSelectedIds(new Set());
+      reload();
+      if (result?.merged_names?.length > 0) {
+        window.alert(
+          `Готово. Обновлено записей: ${result.updated}.\n\n` +
+            `В целевых компаниях нашлись записи с теми же названиями — они объединены с выбранными ` +
+            `(операции и планы переехали на выбранную запись, дубль удалён): ${result.merged_names.join(", ")}`
+        );
+      }
+    } catch (err) {
+      setBulkError(err.message);
+    } finally {
+      setBulkSaving(false);
+    }
+  }
 
   function openAdd() {
     setEditingId(null);
@@ -432,6 +501,11 @@ export default function Reference() {
             <RefreshCw size={13} /> {syncing ? "Синхронизируем…" : "Синхронизировать"}
           </button>
         )}
+        {supportsBulkDistribute && canEditAny && selectedIds.size > 0 && (
+          <button type="button" className="fp-btn-tiny" onClick={openBulkModal}>
+            <Building2 size={13} /> Распределить по компаниям ({selectedIds.size})
+          </button>
+        )}
         {canEditAny && (
           <button type="button" className="fp-btn-tiny" onClick={openAdd}>
             <Plus size={13} /> Добавить
@@ -455,6 +529,19 @@ export default function Reference() {
           <table className="fp-table">
             <thead>
               <tr>
+                {supportsBulkDistribute && canEditAny && (
+                  <th style={{ width: 32 }}>
+                    <input
+                      type="checkbox"
+                      checked={
+                        selectedIds.size > 0 &&
+                        selectedIds.size ===
+                          (items || []).filter((i) => canEditReference(roleForCompany(i.company_id))).length
+                      }
+                      onChange={toggleSelectAll}
+                    />
+                  </th>
+                )}
                 {showCompanyColumn && <th>Компания</th>}
                 {config.columns.map((c) => (
                   <th key={c.key}>{c.label}</th>
@@ -467,6 +554,17 @@ export default function Reference() {
                 const canEditRow = canEditReference(roleForCompany(item.company_id));
                 return (
                   <tr key={item.id}>
+                    {supportsBulkDistribute && canEditAny && (
+                      <td>
+                        {canEditRow && (
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(item.id)}
+                            onChange={() => toggleSelect(item.id)}
+                          />
+                        )}
+                      </td>
+                    )}
                     {showCompanyColumn && (
                       <td>
                         {item.is_global ? (
@@ -761,6 +859,61 @@ export default function Reference() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {bulkModalOpen && (
+        <div className="fp-modal-backdrop" onClick={() => setBulkModalOpen(false)}>
+          <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="fp-modal-head">
+              <h3>Распределить по компаниям ({selectedIds.size})</h3>
+              <button className="fp-icon-btn" onClick={() => setBulkModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <p className="fp-note" style={{ margin: "0 0 10px" }}>
+              Выбранные {tab === "categories" ? "статьи" : "проекты"} станут выбираемыми ещё и в отмеченных ниже
+              компаниях — то, что уже настроено у каждой записи, не потеряется, компании только добавляются. Если в
+              какой-то из компаний уже есть запись с тем же названием — она объединится с выбранной автоматически (её
+              операции и планы переедут на выбранную, а сама она будет удалена).
+            </p>
+            <label className="fp-checkbox-row">
+              <input type="checkbox" checked={bulkIsGlobal} onChange={(e) => setBulkIsGlobal(e.target.checked)} />
+              Все компании (включая те, что появятся позже)
+            </label>
+            {!bulkIsGlobal && (
+              <div style={{ display: "flex", flexDirection: "column", marginTop: 4 }}>
+                {editableCompanies.map((m) => (
+                  <label key={m.company.id} className="fp-checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={bulkCompanyIds.includes(m.company.id)}
+                      onChange={(e) =>
+                        setBulkCompanyIds((prev) =>
+                          e.target.checked ? [...prev, m.company.id] : prev.filter((id) => id !== m.company.id)
+                        )
+                      }
+                    />
+                    {m.company.name}
+                  </label>
+                ))}
+              </div>
+            )}
+            {bulkError && <div className="fp-form-error" style={{ marginTop: 10 }}>{bulkError}</div>}
+            <div className="fp-modal-foot">
+              <button type="button" className="fp-btn-ghost" onClick={() => setBulkModalOpen(false)}>
+                Отмена
+              </button>
+              <button
+                type="button"
+                className="fp-btn-primary"
+                onClick={handleBulkApply}
+                disabled={bulkSaving || (!bulkIsGlobal && bulkCompanyIds.length === 0)}
+              >
+                {bulkSaving ? "Применяем…" : "Применить"}
+              </button>
+            </div>
           </div>
         </div>
       )}

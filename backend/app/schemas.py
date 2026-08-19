@@ -123,6 +123,22 @@ class MoveCompanyIn(BaseModel):
     company_id: str
 
 
+class BulkVisibilityIn(BaseModel):
+    # Массовое "распределение" уже существующих статей/проектов по компаниям
+    # холдинга — в отличие от формы редактирования (которая ПЕРЕЗАПИСЫВАЕТ
+    # видимость целиком), тут ДОБАВЛЯЕМ company_ids к видимости каждой из ids,
+    # не трогая то, что уже было настроено. Если is_global=true — company_ids
+    # игнорируется, статьи/проекты становятся видны везде.
+    ids: list[str] = Field(..., min_items=1, max_items=500)
+    company_ids: list[str] = []
+    is_global: bool = False
+
+
+class BulkVisibilityOut(BaseModel):
+    updated: int
+    merged_names: list[str] = []
+
+
 class CounterpartyContactIn(BaseModel):
     full_name: str
     position: Optional[str] = None
