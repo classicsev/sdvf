@@ -62,6 +62,12 @@ class CategoryIn(BaseModel):
     is_active: bool = True
     is_financing: bool = False
     is_internal_transfer: bool = False
+    # Область видимости в холдинге — по умолчанию только своя company_id (как
+    # раньше). is_global=true — динамически видна во всех компаниях, включая
+    # будущие. Иначе visible_company_ids — конкретные ДОПОЛНИТЕЛЬНЫЕ компании
+    # (сверх своей же), см. models.py::Category.
+    is_global: bool = False
+    visible_company_ids: list[str] = []
 
 
 class CategoryOut(CategoryIn):
@@ -75,6 +81,8 @@ class CategoryOut(CategoryIn):
 class ProjectIn(BaseModel):
     name: str
     is_active: bool = True
+    is_global: bool = False
+    visible_company_ids: list[str] = []
 
 
 class ProjectOut(ProjectIn):

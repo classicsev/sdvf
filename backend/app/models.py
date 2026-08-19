@@ -127,6 +127,28 @@ class Category(Base):
     # сразу — свои переводы не выручка ни там, ни там), но остаётся в списке
     # операций и в остатке счёта.
     is_internal_transfer: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Видна и выбираема во ВСЕХ компаниях холдинга — динамически, включая те,
+    # что появятся позже (не снимок текущего списка). company_id остаётся
+    # "владеющей" компанией — редактировать статью может только её admin,
+    # даже если сама статья глобальная. Когда is_global=False, но статья всё
+    # равно нужна в нескольких (не всех) компаниях — см. category_companies.
+    is_global: Mapped[bool] = mapped_column(Boolean, default=False)
+    visible_companies = relationship("Company", secondary="category_companies", viewonly=True)
+
+    @property
+    def visible_company_ids(self) -> list[str]:
+        return [c.id for c in self.visible_companies]
+
+
+class CategoryCompany(Base):
+    """Доп. компании, где статья выбираема, помимо своей же company_id —
+    только когда is_global=False (иначе избыточно, статья и так видна везде).
+    """
+
+    __tablename__ = "category_companies"
+
+    category_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("categories.id"), primary_key=True)
+    company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"), primary_key=True)
 
 
 class Project(Base):
@@ -136,6 +158,20 @@ class Project(Base):
     company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
     name: Mapped[str] = mapped_column(String(200))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # См. Category.is_global/CategoryCompany — то же самое для проектов.
+    is_global: Mapped[bool] = mapped_column(Boolean, default=False)
+    visible_companies = relationship("Company", secondary="project_companies", viewonly=True)
+
+    @property
+    def visible_company_ids(self) -> list[str]:
+        return [c.id for c in self.visible_companies]
+
+
+class ProjectCompany(Base):
+    __tablename__ = "project_companies"
+
+    project_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("projects.id"), primary_key=True)
+    company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"), primary_key=True)
 
 
 class Counterparty(Base):

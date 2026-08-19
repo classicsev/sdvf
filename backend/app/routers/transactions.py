@@ -22,6 +22,7 @@ from app.automation_engine import apply_rules
 from app.database import get_db
 from app.fx import convert_to_rub
 from app.models import Account, Category, Counterparty, Project, RoleEnum, Transaction, User
+from app.reference_scope import get_visible_or_404
 from app.schemas import TransactionCreate, TransactionOut, TransactionUpdate, TransactionBatchDelete
 from app.utils import get_or_404_accessible
 
@@ -158,9 +159,11 @@ def create_transaction(
     # сама операция — иначе можно было бы создать операцию в одной компании,
     # ссылаясь на справочники другой (утечка между компаниями).
     get_or_404_accessible(db, Account, payload.account_id, [target], "Счёт не найден")
-    get_or_404_accessible(db, Category, payload.category_id, [target], "Статья не найдена")
+    # Статья/проект — не строгое совпадение company_id, а "видна ли компании
+    # target" (своя, глобальная или явно расшаренная — см. reference_scope.py).
+    get_visible_or_404(db, Category, payload.category_id, [target], "Статья не найдена")
     if payload.project_id:
-        get_or_404_accessible(db, Project, payload.project_id, [target], "Проект не найден")
+        get_visible_or_404(db, Project, payload.project_id, [target], "Проект не найден")
     if payload.counterparty_id:
         get_or_404_accessible(db, Counterparty, payload.counterparty_id, [target], "Контрагент не найден")
 
@@ -208,9 +211,9 @@ def update_transaction(
     if changes.get("account_id"):
         get_or_404_accessible(db, Account, changes["account_id"], [tx.company_id], "Счёт не найден")
     if changes.get("category_id"):
-        get_or_404_accessible(db, Category, changes["category_id"], [tx.company_id], "Статья не найдена")
+        get_visible_or_404(db, Category, changes["category_id"], [tx.company_id], "Статья не найдена")
     if changes.get("project_id"):
-        get_or_404_accessible(db, Project, changes["project_id"], [tx.company_id], "Проект не найден")
+        get_visible_or_404(db, Project, changes["project_id"], [tx.company_id], "Проект не найден")
     if changes.get("counterparty_id"):
         get_or_404_accessible(db, Counterparty, changes["counterparty_id"], [tx.company_id], "Контрагент не найден")
 

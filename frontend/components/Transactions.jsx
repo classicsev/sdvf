@@ -73,9 +73,12 @@ export default function Transactions() {
   const [deleting, setDeleting] = useState(false);
 
   const { data: accounts } = useResource(() => api.listAccounts(token), [token]);
-  const { data: categories } = useResource(() => api.listCategories(token), [token]);
-  const { data: projects } = useResource(() => api.listProjects(token), [token]);
-  const { data: counterparties } = useResource(() => api.listCounterparties(token), [token]);
+  const { data: categories, reload: reloadCategories } = useResource(() => api.listCategories(token), [token]);
+  const { data: projects, reload: reloadProjects } = useResource(() => api.listProjects(token), [token]);
+  const { data: counterparties, reload: reloadCounterparties } = useResource(
+    () => api.listCounterparties(token),
+    [token]
+  );
 
   const query = {
     company_id: filters.company || undefined,
@@ -199,6 +202,27 @@ export default function Transactions() {
     setFormCompanyId(companyId);
     // Счёт/статья/проект/контрагент из прошлой компании могут не подойти к новой — сбрасываем.
     setForm((prev) => ({ ...prev, account_id: "", category_id: "", project_id: "", counterparty_id: "" }));
+  }
+
+  // Инлайн-создание статьи/проекта/контрагента прямо из выпадающего списка
+  // операции — не нужно уходить в Справочники, чтобы завести то, чего пока
+  // нет (см. Combobox.jsx::onCreateNew).
+  async function handleCreateCategory(name) {
+    const created = await api.createCategory(token, { name, type: form.type }, formCompanyId || undefined);
+    reloadCategories();
+    return created;
+  }
+
+  async function handleCreateProject(name) {
+    const created = await api.createProject(token, { name }, formCompanyId || undefined);
+    reloadProjects();
+    return created;
+  }
+
+  async function handleCreateCounterparty(name) {
+    const created = await api.createCounterparty(token, { name }, formCompanyId || undefined);
+    reloadCounterparties();
+    return created;
   }
 
   async function handleSubmit(e) {
@@ -724,6 +748,7 @@ export default function Transactions() {
                   }))}
                   placeholder="Выберите статью"
                   required
+                  onCreateNew={handleCreateCategory}
                 />
               </label>
               <label>
@@ -736,6 +761,7 @@ export default function Transactions() {
                     name: `${p.name}${p.is_active === false ? " — деактивирован" : ""}`
                   }))}
                   placeholder="— не указан —"
+                  onCreateNew={handleCreateProject}
                 />
               </label>
 
@@ -749,6 +775,7 @@ export default function Transactions() {
                     name: `${c.name}${c.is_active === false ? " — деактивирован" : ""}`
                   }))}
                   placeholder="— не указан —"
+                  onCreateNew={handleCreateCounterparty}
                 />
               </label>
 

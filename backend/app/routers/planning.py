@@ -14,6 +14,7 @@ from app.auth import (
 )
 from app.database import get_db
 from app.models import Category, Planning, Project, RoleEnum, User
+from app.reference_scope import get_visible_or_404
 from app.schemas import PlanningIn, PlanningOut
 from app.utils import get_or_404_accessible
 
@@ -48,9 +49,9 @@ def create_planning(
     user: User = Depends(get_current_user),
 ):
     target = resolve_write_company_id(db, user, company_id, ADMIN_ONLY)
-    get_or_404_accessible(db, Category, payload.category_id, [target], "Статья не найдена")
+    get_visible_or_404(db, Category, payload.category_id, [target], "Статья не найдена")
     if payload.project_id:
-        get_or_404_accessible(db, Project, payload.project_id, [target], "Проект не найден")
+        get_visible_or_404(db, Project, payload.project_id, [target], "Проект не найден")
     obj = Planning(**payload.model_dump(), company_id=target)
     db.add(obj)
     db.commit()
@@ -66,9 +67,9 @@ def update_planning(
         db, Planning, planning_id, get_accessible_company_ids(db, user), "Плановая запись не найдена"
     )
     check_company_role(db, user, obj.company_id, ADMIN_ONLY)
-    get_or_404_accessible(db, Category, payload.category_id, [obj.company_id], "Статья не найдена")
+    get_visible_or_404(db, Category, payload.category_id, [obj.company_id], "Статья не найдена")
     if payload.project_id:
-        get_or_404_accessible(db, Project, payload.project_id, [obj.company_id], "Проект не найден")
+        get_visible_or_404(db, Project, payload.project_id, [obj.company_id], "Проект не найден")
     for field, value in payload.model_dump().items():
         setattr(obj, field, value)
     db.commit()

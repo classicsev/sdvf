@@ -50,6 +50,7 @@ from app.schemas import (
     IntegrationSyncIn,
     IntegrationSyncResult,
 )
+from app.reference_scope import get_visible_or_404
 from app.utils import get_or_404_accessible
 
 router = APIRouter(tags=["automation"])
@@ -87,10 +88,10 @@ def _validate_rule_action(db: Session, action_json: dict, company_id: str) -> No
     # незаметно проставить в операцию статью/проект другой компании.
     category_id = (action_json or {}).get("set_category")
     if category_id:
-        get_or_404_accessible(db, Category, category_id, [company_id], "Статья не найдена")
+        get_visible_or_404(db, Category, category_id, [company_id], "Статья не найдена")
     project_id = (action_json or {}).get("set_project")
     if project_id:
-        get_or_404_accessible(db, Project, project_id, [company_id], "Проект не найден")
+        get_visible_or_404(db, Project, project_id, [company_id], "Проект не найден")
 
 
 def _get_integration_or_404(db: Session, user: User, integration_id: str) -> Integration:

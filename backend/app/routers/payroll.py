@@ -25,6 +25,7 @@ from app.schemas import (
     PayrollPaymentIn,
     PayrollPaymentOut,
 )
+from app.reference_scope import get_visible_or_404
 from app.utils import get_or_404_accessible
 
 router = APIRouter(prefix="/payroll", tags=["payroll"])
@@ -154,7 +155,7 @@ def create_accrual(
     employee = _get_or_404(db, user, Employee, payload.employee_id, "Сотрудник не найден")
     check_company_role(db, user, employee.company_id, PAYROLL_EDITORS)
     if payload.project_id:
-        get_or_404_accessible(db, Project, payload.project_id, [employee.company_id], "Проект не найден")
+        get_visible_or_404(db, Project, payload.project_id, [employee.company_id], "Проект не найден")
 
     total = payload.salary + payload.bonus - payload.deductions
     accrual = PayrollAccrual(**payload.model_dump(), company_id=employee.company_id, total=total)

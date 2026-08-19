@@ -284,6 +284,13 @@ export default function Reference() {
     }
   }
 
+  // Область видимости статьи/проекта по компаниям холдинга — отдельно от
+  // generic form (у Account/Counterparty таких полей нет вовсе, схема бы не
+  // приняла is_global/visible_company_ids). См. TABS.categories/projects.
+  const [formIsGlobal, setFormIsGlobal] = useState(false);
+  const [formVisibleCompanyIds, setFormVisibleCompanyIds] = useState([]);
+  const supportsCompanyScope = tab === "categories" || tab === "projects";
+
   function openAdd() {
     setEditingId(null);
     setForm(defaultFormFor(config.fields));
@@ -292,6 +299,8 @@ export default function Reference() {
     setFormCompanyId(preselected?.company.id || "");
     setOriginalCompanyId("");
     setFormIsActive(true);
+    setFormIsGlobal(false);
+    setFormVisibleCompanyIds([]);
     setFormError("");
     setCurrentBalanceInput("");
     setBalanceMessage("");
@@ -307,6 +316,8 @@ export default function Reference() {
     setFormCompanyId(item.company_id || "");
     setOriginalCompanyId(item.company_id || "");
     setFormIsActive(item.is_active !== false);
+    setFormIsGlobal(!!item.is_global);
+    setFormVisibleCompanyIds(item.visible_company_ids || []);
     setFormError("");
     setCurrentBalanceInput("");
     setBalanceMessage("");
@@ -327,6 +338,10 @@ export default function Reference() {
       config.fields.forEach((f) => {
         if (f.type === "number") payload[f.key] = Number(payload[f.key] || 0);
       });
+      if (supportsCompanyScope) {
+        payload.is_global = formIsGlobal;
+        payload.visible_company_ids = formIsGlobal ? [] : formVisibleCompanyIds;
+      }
       if (editingId) {
         // Перенос в другую компанию — отдельным вызовом (бэкенд блокирует его,
         // если запись уже где-то используется, см. move_to_company) и раньше
@@ -453,7 +468,20 @@ export default function Reference() {
                 return (
                   <tr key={item.id}>
                     {showCompanyColumn && (
-                      <td>{companies.find((m) => m.company.id === item.company_id)?.company.name || "—"}</td>
+                      <td>
+                        {item.is_global ? (
+                          <span className="fp-status-badge ok">Все компании</span>
+                        ) : (
+                          <>
+                            {companies.find((m) => m.company.id === item.company_id)?.company.name || "—"}
+                            {item.visible_company_ids?.length > 0 && (
+                              <span className="fp-muted" style={{ marginLeft: 6, fontSize: 11.5 }}>
+                                +{item.visible_company_ids.length}
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </td>
                     )}
                     {config.columns.map((c) => (
                       <td key={c.key}>{c.render ? c.render(item[c.key], item) : item[c.key] || "—"}</td>
@@ -554,6 +582,55 @@ export default function Reference() {
                   )}
                 </label>
               ))}
+
+              {supportsCompanyScope && multiCompany && (
+                <div
+                  className="fp-span-2"
+                  style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, marginTop: 4 }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>Видимость по компаниям</div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 400 }}>
+                    <input
+                      type="checkbox"
+                      checked={formIsGlobal}
+                      onChange={(e) => setFormIsGlobal(e.target.checked)}
+                      style={{ width: "auto" }}
+                    />
+                    Все компании (включая те, что появятся позже)
+                  </label>
+                  {!formIsGlobal && (
+                    <>
+                      <p className="fp-note" style={{ margin: "8px 0 6px" }}>
+                        Кроме «своей» компании — где ещё выбирать эт{tab === "categories" ? "у статью" : "от проект"}:
+                      </p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {companies
+                          .filter((m) => canEditReference(m.role) && m.company.id !== formCompanyId)
+                          .map((m) => (
+                            <label
+                              key={m.company.id}
+                              style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 400 }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={formVisibleCompanyIds.includes(m.company.id)}
+                                onChange={(e) =>
+                                  setFormVisibleCompanyIds((prev) =>
+                                    e.target.checked
+                                      ? [...prev, m.company.id]
+                                      : prev.filter((id) => id !== m.company.id)
+                                  )
+                                }
+                                style={{ width: "auto" }}
+                              />
+                              {m.company.name}
+                            </label>
+                          ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
 
               {tab === "accounts" && editingId && (
                 <div

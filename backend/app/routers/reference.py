@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.auth import (
     check_company_role,
     get_accessible_company_ids,
+    get_company_role,
     get_current_user,
     require_module,
     resolve_company_ids,
@@ -18,9 +19,11 @@ from app.config import settings
 from app.database import get_db
 from app.holding_transfers import get_or_create_internal_transfer_category
 from app.integrations.sdvf import SdvfClient, SdvfError
+from app.reference_scope import apply_visibility_filter
 from app.models import (
     Account,
     Category,
+    CategoryCompany,
     Company,
     CompanyMember,
     Counterparty,
@@ -29,6 +32,7 @@ from app.models import (
     PayrollPayment,
     Planning,
     Project,
+    ProjectCompany,
     RoleEnum,
     Transaction,
     TxTypeEnum,
@@ -62,6 +66,25 @@ def _get_or_404(db: Session, user: User, model, entity_id: str):
     return get_or_404_accessible(db, model, entity_id, get_accessible_company_ids(db, user))
 
 
+def _sync_visible_companies(db: Session, user: User, obj, is_global: bool, visible_company_ids: list[str]) -> None:
+    """Перезаписывает *_companies целиком под новый список — не накопительно.
+    Компании, которыми пользователь не управляет (не admin), молча
+    отбрасываются — иначе можно было бы "подарить" видимость статьи в чужую
+    компанию через один API-запрос."""
+    assoc_model = CategoryCompany if isinstance(obj, Category) else ProjectCompany
+    fk_name = "category_id" if isinstance(obj, Category) else "project_id"
+    db.query(assoc_model).filter(getattr(assoc_model, fk_name) == obj.id).delete()
+    if is_global:
+        return
+    manageable = {
+        cid
+        for cid in visible_company_ids
+        if cid != obj.company_id and get_company_role(db, user, cid) in ADMIN_ONLY
+    }
+    for cid in manageable:
+        db.add(assoc_model(**{fk_name: obj.id, "company_id": cid}))
+
+
 def _move_to_company(db, user, obj, payload: MoveCompanyIn, references: list[tuple[type, str]]):
     """Перенос справочной записи в другую компанию — только между компаниями,
     где пользователь admin (и в исходной, и в целевой: иначе можно было бы
@@ -91,7 +114,7 @@ def list_categories(
         get_or_create_internal_transfer_category(db, TxTypeEnum.income, cid)
         get_or_create_internal_transfer_category(db, TxTypeEnum.expense, cid)
     db.commit()
-    return db.query(Category).filter(Category.company_id.in_(company_ids)).all()
+    return apply_visibility_filter(db, db.query(Category), Category, company_ids).all()
 
 
 @router.post("/categories", response_model=CategoryOut, dependencies=[Depends(require_module("finance"))])
@@ -102,8 +125,11 @@ def create_category(
     user: User = Depends(get_current_user),
 ):
     target = resolve_write_company_id(db, user, company_id, ADMIN_ONLY)
-    obj = Category(**payload.model_dump(), company_id=target)
+    fields = payload.model_dump(exclude={"visible_company_ids"})
+    obj = Category(**fields, company_id=target)
     db.add(obj)
+    db.flush()
+    _sync_visible_companies(db, user, obj, payload.is_global, payload.visible_company_ids)
     db.commit()
     db.refresh(obj)
     return obj
@@ -117,8 +143,9 @@ def update_category(
 ):
     obj = _get_or_404(db, user, Category, category_id)
     check_company_role(db, user, obj.company_id, ADMIN_ONLY)
-    for k, v in payload.model_dump().items():
+    for k, v in payload.model_dump(exclude={"visible_company_ids"}).items():
         setattr(obj, k, v)
+    _sync_visible_companies(db, user, obj, payload.is_global, payload.visible_company_ids)
     db.commit()
     db.refresh(obj)
     return obj
@@ -157,7 +184,7 @@ def list_projects(
     company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
     company_ids = resolve_company_ids(db, user, company_id)
-    return db.query(Project).filter(Project.company_id.in_(company_ids)).all()
+    return apply_visibility_filter(db, db.query(Project), Project, company_ids).all()
 
 
 @router.post("/projects", response_model=ProjectOut, dependencies=[Depends(require_module("finance"))])
@@ -168,8 +195,11 @@ def create_project(
     user: User = Depends(get_current_user),
 ):
     target = resolve_write_company_id(db, user, company_id, ADMIN_ONLY)
-    obj = Project(**payload.model_dump(), company_id=target)
+    fields = payload.model_dump(exclude={"visible_company_ids"})
+    obj = Project(**fields, company_id=target)
     db.add(obj)
+    db.flush()
+    _sync_visible_companies(db, user, obj, payload.is_global, payload.visible_company_ids)
     db.commit()
     db.refresh(obj)
     return obj
@@ -183,8 +213,9 @@ def update_project(
 ):
     obj = _get_or_404(db, user, Project, project_id)
     check_company_role(db, user, obj.company_id, ADMIN_ONLY)
-    for k, v in payload.model_dump().items():
+    for k, v in payload.model_dump(exclude={"visible_company_ids"}).items():
         setattr(obj, k, v)
+    _sync_visible_companies(db, user, obj, payload.is_global, payload.visible_company_ids)
     db.commit()
     db.refresh(obj)
     return obj
