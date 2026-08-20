@@ -64,6 +64,11 @@ class Company(Base):
     # вручную самой компанией на странице "Модули" (PATCH /companies/me/modules)
     module_finance_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     module_warehouse_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Работа с КНР: реквизиты компаний, зарегистрированных в Китае (см.
+    # cn_org_*), и двуязычные (RU/中文) документы для китайских контрагентов.
+    # Независим от company_type — включается и российской компанией, которая
+    # просто торгует с КНР, не только теми, что сами зарегистрированы там.
+    module_china_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # Автогенерация Счёт/УПД в СДВФ при отгрузке заказа — поле зарезервировано
     # на будущее (см. routers/orders.py), сейчас не используется: цены по
     # позициям заказа вводятся вручную в момент генерации, автоматический
@@ -83,8 +88,20 @@ class Company(Base):
     owner_user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=True)
     # 'legal_entity' (ООО/ИП, с реквизитами) | 'individual' — личные счета
     # физлица, участвуют в той же отчётности наравне с компаниями, без
-    # обязательных юридических реквизитов.
+    # обязательных юридических реквизитов | 'cn_legal_entity' — компания,
+    # зарегистрированная в КНР (营业执照), свои реквизиты — см. cn_org_*.
     company_type: Mapped[str] = mapped_column(String(20), default="legal_entity")
+    # Реквизиты компании из свидетельства о регистрации КНР (营业执照) —
+    # заполняются, только если company_type == 'cn_legal_entity'. Единый
+    # соц.-кредитный код (统一社会信用代码) заменяет собой ИНН+ОГРН разом —
+    # в КНР других номеров у юрлица нет.
+    cn_org_name_zh: Mapped[str] = mapped_column(String(300), nullable=True)
+    cn_org_credit_code: Mapped[str] = mapped_column(String(32), nullable=True)
+    cn_org_legal_rep: Mapped[str] = mapped_column(String(200), nullable=True)
+    cn_org_address_zh: Mapped[str] = mapped_column(Text, nullable=True)
+    cn_org_registered_capital: Mapped[float] = mapped_column(Numeric(14, 2), nullable=True)
+    cn_org_established_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    cn_org_business_scope_zh: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

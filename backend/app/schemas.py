@@ -314,6 +314,7 @@ class CompanyOut(BaseModel):
     name: str
     module_finance_enabled: bool
     module_warehouse_enabled: bool
+    module_china_enabled: bool = False
     sdvf_auto_generate_documents: bool = False
     sdvf_org_naming: Optional[str] = None
     sdvf_org_inn: Optional[str] = None
@@ -322,6 +323,13 @@ class CompanyOut(BaseModel):
     sdvf_org_address: Optional[str] = None
     sdvf_org_phone: Optional[str] = None
     company_type: str = "legal_entity"
+    cn_org_name_zh: Optional[str] = None
+    cn_org_credit_code: Optional[str] = None
+    cn_org_legal_rep: Optional[str] = None
+    cn_org_address_zh: Optional[str] = None
+    cn_org_registered_capital: Optional[float] = None
+    cn_org_established_date: Optional[date] = None
+    cn_org_business_scope_zh: Optional[str] = None
 
 
 class CompanyMembershipOut(BaseModel):
@@ -363,6 +371,7 @@ class CompanyMemberUpdate(BaseModel):
 class CompanyModulesIn(BaseModel):
     module_finance_enabled: Optional[bool] = None
     module_warehouse_enabled: Optional[bool] = None
+    module_china_enabled: Optional[bool] = None
     # Реквизиты "нашей" организации для интеграции с СДВФ (создание Счёт/УПД) —
     # вводятся один раз, см. models.py::Company.
     sdvf_org_naming: Optional[str] = None
@@ -371,6 +380,15 @@ class CompanyModulesIn(BaseModel):
     sdvf_org_ogrn: Optional[str] = None
     sdvf_org_address: Optional[str] = None
     sdvf_org_phone: Optional[str] = None
+    # Реквизиты компании из свидетельства о регистрации КНР (营业执照), см.
+    # models.py::Company.cn_org_*.
+    cn_org_name_zh: Optional[str] = None
+    cn_org_credit_code: Optional[str] = None
+    cn_org_legal_rep: Optional[str] = None
+    cn_org_address_zh: Optional[str] = None
+    cn_org_registered_capital: Optional[float] = None
+    cn_org_established_date: Optional[date] = None
+    cn_org_business_scope_zh: Optional[str] = None
 
 
 class DadataPartyOut(BaseModel):

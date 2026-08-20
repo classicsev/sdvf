@@ -208,12 +208,26 @@ def dashboard_summary(
     account_rows = []
     total_balance_rub = Decimal("0")
     balance_by_company: dict[str, Decimal] = {cid: Decimal("0") for cid in company_ids}
+    # Разбивка по валютам рядом с общим RUB-итогом — держит натуральный остаток
+    # видимым (важно для держателей счетов не в RUB, например CNY), не подменяя
+    # собой сводную рублёвую цифру, на которую завязаны остальные отчёты.
+    balance_by_currency: dict[str, Decimal] = {}
+    # None, пока ни один счёт этой валюты не удалось сконвертировать (нет курса
+    # на дату) — отличаем от честного нулевого остатка, чтобы фронт показал
+    # "нет курса", а не вводящий в заблуждение "0,00 ₽".
+    balance_rub_by_currency: dict[str, Optional[Decimal]] = {}
     for account in accounts:
         balance = _account_balance(db, account, today)
         balance_rub = convert_to_rub(db, account.currency, balance, today)
         if balance_rub is not None:
             total_balance_rub += balance_rub
             balance_by_company[account.company_id] = balance_by_company.get(account.company_id, Decimal("0")) + balance_rub
+            balance_rub_by_currency[account.currency] = (
+                balance_rub_by_currency.get(account.currency) or Decimal("0")
+            ) + balance_rub
+        else:
+            balance_rub_by_currency.setdefault(account.currency, None)
+        balance_by_currency[account.currency] = balance_by_currency.get(account.currency, Decimal("0")) + balance
         account_rows.append(
             {
                 "id": account.id,
@@ -224,6 +238,17 @@ def dashboard_summary(
                 "balance_rub": float(balance_rub) if balance_rub is not None else None,
             }
         )
+
+    by_currency = [
+        {
+            "currency": currency,
+            "total_balance": float(amount),
+            "total_balance_rub": (
+                float(balance_rub_by_currency[currency]) if balance_rub_by_currency.get(currency) is not None else None
+            ),
+        }
+        for currency, amount in sorted(balance_by_currency.items())
+    ]
 
     forced_project = scope_project_filter(user)
     period_income, period_expense, income_by_company, expense_by_company = _income_expense_for_range(
@@ -262,6 +287,7 @@ def dashboard_summary(
         "prev_period_expense_rub": float(prev_expense),
         "prev_net_flow_rub": float(prev_net_flow),
         "by_company": by_company,
+        "by_currency": by_currency,
     }
 
 

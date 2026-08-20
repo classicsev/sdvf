@@ -391,6 +391,43 @@ export default function Dashboard() {
           </table>
         </section>
       )}
+
+      {summary.by_currency && summary.by_currency.length > 1 && (
+        <section className="fp-panel fp-table-panel">
+          <div className="fp-panel-head" style={{ padding: "16px 16px 0" }}>
+            <h3>По валютам</h3>
+            <span className="fp-muted" style={{ fontSize: 12 }}>
+              на сегодня, без взаимозачёта — остаток каждой валюты в своих деньгах
+            </span>
+          </div>
+          <table className="fp-table">
+            <thead>
+              <tr>
+                <th>Валюта</th>
+                <th className="right">Остаток</th>
+                <th className="right">≈ RUB</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.by_currency.map((row) => (
+                <tr key={row.currency}>
+                  <td>
+                    <span className={`fp-currency-badge ${row.currency}`}>{row.currency}</span>
+                  </td>
+                  <td className="right">{fmt(row.total_balance, row.currency)}</td>
+                  <td className="right fp-muted">
+                    {row.currency === "RUB"
+                      ? "—"
+                      : row.total_balance_rub === null
+                      ? "нет курса"
+                      : fmt(row.total_balance_rub, "RUB")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
     </div>
   );
 }

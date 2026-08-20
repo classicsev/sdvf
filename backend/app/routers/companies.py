@@ -20,7 +20,7 @@ from app.utils import get_or_404
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
-VALID_COMPANY_TYPES = {"legal_entity", "individual"}
+VALID_COMPANY_TYPES = {"legal_entity", "individual", "cn_legal_entity"}
 
 
 def _find_membership_or_404(db: Session, user_id: str, company_id: str) -> CompanyMember:

@@ -16,6 +16,11 @@ const MODULES = [
     title: "Склад",
     description: "Остатки, движения, заказы, производство.",
   },
+  {
+    key: "module_china_enabled",
+    title: "Китай (中国)",
+    description: "Реквизиты компаний КНР, двуязычные RU/中文 документы и учёт по CNY.",
+  },
 ];
 
 const SDVF_FIELDS = [
@@ -27,8 +32,19 @@ const SDVF_FIELDS = [
   { key: "sdvf_org_phone", label: "Телефон" },
 ];
 
+const CN_FIELDS = [
+  { key: "cn_org_name_zh", label: "Название (中文名称)", required: true },
+  { key: "cn_org_credit_code", label: "Единый соц.-кредитный код (统一社会信用代码)", required: true },
+  { key: "cn_org_legal_rep", label: "Директор/учредитель (法定代表人)", required: true },
+  { key: "cn_org_address_zh", label: "Юридический адрес (住所)" },
+  { key: "cn_org_registered_capital", label: "Уставный капитал, CNY (注册资本)", type: "number" },
+  { key: "cn_org_established_date", label: "Дата регистрации (成立日期)", type: "date" },
+  { key: "cn_org_business_scope_zh", label: "Виды деятельности (经营范围)", textarea: true },
+];
+
 const EDIT_FORM_EMPTY = { name: "", company_type: "legal_entity" };
 const SDVF_FORM_EMPTY = Object.fromEntries(SDVF_FIELDS.map((f) => [f.key, ""]));
+const CN_FORM_EMPTY = Object.fromEntries(CN_FIELDS.map((f) => [f.key, ""]));
 
 export default function CompanyModules() {
   const { token, user, refreshUser } = useAuth();
@@ -56,6 +72,9 @@ export default function CompanyModules() {
   const [sdvfSaving, setSdvfSaving] = useState(false);
   const [sdvfSaved, setSdvfSaved] = useState(false);
   const [innLookup, setInnLookup] = useState({ loading: false, message: "", error: "" });
+  const [cnForm, setCnForm] = useState(CN_FORM_EMPTY);
+  const [cnSaving, setCnSaving] = useState(false);
+  const [cnSaved, setCnSaved] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [deleting, setDeleting] = useState(false);
 
@@ -125,6 +144,8 @@ export default function CompanyModules() {
     setSdvfForm(Object.fromEntries(SDVF_FIELDS.map((f) => [f.key, company[f.key] || ""])));
     setSdvfSaved(false);
     setInnLookup({ loading: false, message: "", error: "" });
+    setCnForm(Object.fromEntries(CN_FIELDS.map((f) => [f.key, company[f.key] || ""])));
+    setCnSaved(false);
     setDeleteError("");
   }
 
@@ -199,6 +220,23 @@ export default function CompanyModules() {
     }
   }
 
+  async function saveCnForm(e) {
+    e.preventDefault();
+    setEditError("");
+    setCnSaving(true);
+    setCnSaved(false);
+    try {
+      await api.updateCompanyModulesFor(token, settingsFor, cnForm);
+      await refreshCompanies();
+      await refreshUser();
+      setCnSaved(true);
+    } catch (err) {
+      setEditError(err.message || "Не удалось сохранить");
+    } finally {
+      setCnSaving(false);
+    }
+  }
+
   async function deleteCompany() {
     if (!window.confirm(`Удалить компанию «${activeCompany.name}»? Это необратимо.`)) return;
     setDeleteError("");
@@ -251,6 +289,7 @@ export default function CompanyModules() {
               <select value={newCompanyType} onChange={(e) => setNewCompanyType(e.target.value)}>
                 <option value="legal_entity">Юрлицо/ИП</option>
                 <option value="individual">Личные счета (физлицо)</option>
+                <option value="cn_legal_entity">Юрлицо в КНР (中国公司)</option>
               </select>
             </label>
             <div className="fp-modal-foot fp-span-2" style={{ justifyContent: "flex-start" }}>
@@ -281,7 +320,12 @@ export default function CompanyModules() {
                 <div>
                   <div style={{ fontWeight: 600 }}>{m.company.name}</div>
                   <div className="fp-muted" style={{ fontSize: 12 }}>
-                    {m.company.company_type === "individual" ? "Личные счета" : "Юрлицо/ИП"} ·{" "}
+                    {m.company.company_type === "individual"
+                      ? "Личные счета"
+                      : m.company.company_type === "cn_legal_entity"
+                      ? "Юрлицо в КНР"
+                      : "Юрлицо/ИП"}{" "}
+                    ·{" "}
                     {ROLE_LABELS[m.role] || m.role}
                     {m.company.sdvf_org_inn ? " · связана с СДВФ" : ""}
                   </div>
@@ -438,6 +482,7 @@ export default function CompanyModules() {
                       >
                         <option value="legal_entity">Юрлицо/ИП</option>
                         <option value="individual">Личные счета (физлицо)</option>
+                        <option value="cn_legal_entity">Юрлицо в КНР (中国公司)</option>
                       </select>
                     </label>
                     <div className="fp-modal-foot fp-span-2" style={{ justifyContent: "flex-start" }}>
@@ -482,6 +527,7 @@ export default function CompanyModules() {
                     </div>
                   </div>
 
+                  {activeCompany.company_type !== "cn_legal_entity" && (
                   <div>
                     <div style={{ fontWeight: 600 }}>Реквизиты для СДВФ</div>
                     <p className="fp-note" style={{ margin: "4px 0 12px" }}>
@@ -544,6 +590,49 @@ export default function CompanyModules() {
                       </div>
                     </form>
                   </div>
+                  )}
+
+                  {activeCompany.company_type === "cn_legal_entity" && (
+                  <div>
+                    <div style={{ fontWeight: 600 }}>Реквизиты 营业执照 (свидетельство о регистрации КНР)</div>
+                    <p className="fp-note" style={{ margin: "4px 0 12px" }}>
+                      Из свидетельства о регистрации бизнеса КНР — нужны для двуязычных документов и отчётности.
+                    </p>
+                    <form className="fp-form-grid" onSubmit={saveCnForm}>
+                      {CN_FIELDS.map((f) => (
+                        <label key={f.key} className={f.textarea ? "fp-span-2" : undefined}>
+                          {f.label}
+                          {f.textarea ? (
+                            <textarea
+                              rows={3}
+                              value={cnForm[f.key]}
+                              onChange={(e) => {
+                                setCnSaved(false);
+                                setCnForm((p) => ({ ...p, [f.key]: e.target.value }));
+                              }}
+                            />
+                          ) : (
+                            <input
+                              required={f.required}
+                              type={f.type || "text"}
+                              value={cnForm[f.key]}
+                              onChange={(e) => {
+                                setCnSaved(false);
+                                setCnForm((p) => ({ ...p, [f.key]: e.target.value }));
+                              }}
+                            />
+                          )}
+                        </label>
+                      ))}
+                      <div className="fp-modal-foot fp-span-2" style={{ justifyContent: "flex-start" }}>
+                        <button type="submit" className="fp-btn-primary" disabled={cnSaving}>
+                          {cnSaving ? "Сохраняем…" : "Сохранить реквизиты"}
+                        </button>
+                        {cnSaved && <span className="fp-muted" style={{ fontSize: 12.5 }}>Сохранено</span>}
+                      </div>
+                    </form>
+                  </div>
+                  )}
 
                   <div style={{ borderTop: "1px solid var(--line)", paddingTop: 12 }}>
                     {deleteError && <div className="fp-form-error" style={{ marginBottom: 8 }}>{deleteError}</div>}
