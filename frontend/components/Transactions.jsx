@@ -9,16 +9,17 @@ import { fmt, fmtDate } from "../lib/format";
 import { canEditTransactions } from "../lib/roles";
 import { Combobox } from "./Combobox";
 import { backdropClickProps } from "../lib/modalBackdrop";
+import { useTranslation } from "../lib/i18n";
 
 const SOURCE_LABELS = { tbank: "Т-Банк", amocrm: "amoCRM", alfabank: "Альфа-Банк" };
 
-function sourceBadge(externalRef) {
+function sourceBadge(externalRef, t) {
   if (!externalRef) return null;
   const provider = externalRef.split(":")[0];
   const label = SOURCE_LABELS[provider];
   if (!label) return null;
   return (
-    <span className={`fp-source-badge ${provider}`} title="Источник операции">
+    <span className={`fp-source-badge ${provider}`} title={t("tx.sourceTitle")}>
       {label}
     </span>
   );
@@ -40,6 +41,7 @@ const EMPTY_FORM = {
 
 export default function Transactions() {
   const { token, user } = useAuth();
+  const { t } = useTranslation();
   const companies = user.companies || [];
   const multiCompany = companies.length > 1;
   const roleForCompany = (companyId) => companies.find((m) => m.company.id === companyId)?.role;
@@ -263,7 +265,7 @@ export default function Transactions() {
   }
 
   async function handleDelete(tx) {
-    if (!window.confirm("Удалить операцию?")) return;
+    if (!window.confirm(t("tx.deleteConfirm"))) return;
     try {
       await api.deleteTransaction(token, tx.id);
       reload();
@@ -304,13 +306,13 @@ export default function Transactions() {
 
   async function handleBatchDelete() {
     if (!selectedAllMatching && selectedTransactionIds.size === 0) {
-      window.alert("Выберите операции для удаления");
+      window.alert(t("tx.selectToDelete"));
       return;
     }
 
     const confirmText = selectedAllMatching
-      ? `Удалить все подходящие операции (${matchingCount ?? "?"})?`
-      : `Удалить ${selectedTransactionIds.size} операций?`;
+      ? t("tx.confirmDeleteAllMatching", { count: matchingCount ?? "?" })
+      : t("tx.confirmDeleteCount", { count: selectedTransactionIds.size });
     if (!window.confirm(confirmText)) return;
 
     setDeleting(true);
@@ -331,7 +333,7 @@ export default function Transactions() {
       setSelectedTransactionIds(new Set());
       setSelectedAllMatching(false);
       reload();
-      window.alert(`Удалено ${result.deleted} операций`);
+      window.alert(t("tx.deletedCount", { count: result.deleted }));
     } catch (err) {
       window.alert(err.message);
     } finally {
@@ -384,7 +386,7 @@ export default function Transactions() {
                 value={filters.company}
                 onChange={(val) => setFilters((f) => ({ ...f, company: val }))}
                 options={companies.map((m) => ({ id: m.company.id, name: m.company.name }))}
-                placeholder="Все компании"
+                placeholder={t("dashboard.allCompanies")}
               />
             </div>
           )}
@@ -393,7 +395,7 @@ export default function Transactions() {
               value={filters.project}
               onChange={(val) => setFilters((f) => ({ ...f, project: val }))}
               options={(projects || []).map((p) => ({ id: p.id, name: p.name }))}
-              placeholder="Все проекты"
+              placeholder={t("tx.filter.allProjects")}
             />
           </div>
           <div className="fp-filter-combobox">
@@ -401,7 +403,7 @@ export default function Transactions() {
               value={filters.account}
               onChange={(val) => setFilters((f) => ({ ...f, account: val }))}
               options={(accounts || []).map((a) => ({ id: a.id, name: `${a.name} (${a.currency})` }))}
-              placeholder="Все счета"
+              placeholder={t("tx.filter.allAccounts")}
             />
           </div>
           <div className="fp-filter-combobox">
@@ -409,7 +411,7 @@ export default function Transactions() {
               value={filters.category}
               onChange={(val) => setFilters((f) => ({ ...f, category: val }))}
               options={(categories || []).map((c) => ({ id: c.id, name: c.name }))}
-              placeholder="Все статьи"
+              placeholder={t("tx.filter.allCategories")}
             />
           </div>
           <input
@@ -427,25 +429,34 @@ export default function Transactions() {
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {canSyncIntegrations && (
             <button className="fp-btn-ghost" onClick={() => runIntegrationSync(true)} disabled={syncing}>
-              <RefreshCw size={15} /> {syncing ? "Синхронизируем…" : "Синхронизировать"}
+              <RefreshCw size={15} /> {syncing ? t("dashboard.syncing") : t("dashboard.sync")}
             </button>
           )}
           <button className="fp-btn-ghost" onClick={handleExport} disabled={exporting}>
-            <Download size={15} /> {exporting ? "Экспорт…" : "Экспорт в Excel"}
+            <Download size={15} /> {exporting ? t("tx.exporting") : t("tx.exportExcel")}
           </button>
           {canEdit && (selectedAllMatching || selectedTransactionIds.size > 0) && (
             <button
               className="fp-btn-danger"
               onClick={handleBatchDelete}
               disabled={deleting}
-              title={selectedAllMatching ? `Удалить все подходящие операции (${matchingCount ?? "?"})` : `Удалить ${selectedTransactionIds.size} операций`}
+              title={
+                selectedAllMatching
+                  ? t("tx.deleteAllMatching", { count: matchingCount ?? "?" })
+                  : t("tx.confirmDeleteCount", { count: selectedTransactionIds.size })
+              }
             >
-              <Trash2 size={16} /> {deleting ? "Удаляем…" : selectedAllMatching ? `Удалить все подходящие (${matchingCount ?? "?"})` : `Удалить (${selectedTransactionIds.size})`}
+              <Trash2 size={16} />{" "}
+              {deleting
+                ? t("tx.deleting")
+                : selectedAllMatching
+                ? t("tx.deleteAllMatching", { count: matchingCount ?? "?" })
+                : t("tx.deleteCount", { count: selectedTransactionIds.size })}
             </button>
           )}
           {canEdit && (
             <button className="fp-btn-primary" onClick={openAdd}>
-              <Plus size={16} /> Новая операция
+              <Plus size={16} /> {t("tx.newTransaction")}
             </button>
           )}
         </div>
@@ -462,7 +473,7 @@ export default function Transactions() {
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <label style={{ fontSize: "13px", color: "var(--ink-soft)" }}>
-            Строк на странице:
+            {t("tx.rowsPerPage")}
             <select
               value={useAllForDates ? "dates" : String(pageSize)}
               onChange={(e) => {
@@ -485,13 +496,13 @@ export default function Transactions() {
               <option value="20">20</option>
               <option value="50">50</option>
               <option value="100">100</option>
-              {hasDateFilter && <option value="dates">Выбранные даты</option>}
+              {hasDateFilter && <option value="dates">{t("tx.selectedDates")}</option>}
             </select>
           </label>
         </div>
         {selectedAllMatching ? (
           <div style={{ fontSize: "13px", color: "var(--ink-soft)" }}>
-            Выбрано: все подходящие ({matchingCount ?? "?"})
+            {t("tx.selectedAllMatching", { count: matchingCount ?? "?" })}
             <button
               type="button"
               onClick={() => {
@@ -509,12 +520,12 @@ export default function Transactions() {
                 padding: 0,
               }}
             >
-              Снять выбор
+              {t("tx.clearSelection")}
             </button>
           </div>
         ) : selectedTransactionIds.size > 0 ? (
           <div style={{ fontSize: "13px", color: "var(--ink-soft)" }}>
-            Выбрано: {selectedTransactionIds.size}
+            {t("tx.selectedCount", { count: selectedTransactionIds.size })}
             {matchingCount > selectedTransactionIds.size && !useAllForDates && (
               <button
                 type="button"
@@ -530,7 +541,7 @@ export default function Transactions() {
                   padding: 0,
                 }}
               >
-                Выбрать все подходящие ({matchingCount ?? "?"})
+                {t("tx.selectAllMatching", { count: matchingCount ?? "?" })}
               </button>
             )}
           </div>
@@ -539,9 +550,9 @@ export default function Transactions() {
 
       <div className="fp-panel fp-table-panel">
         {loading ? (
-          <div className="fp-loading">Загрузка…</div>
+          <div className="fp-loading">{t("common.loading")}</div>
         ) : (transactions || []).length === 0 ? (
-          <div className="fp-empty">Операций не найдено</div>
+          <div className="fp-empty">{t("tx.notFound")}</div>
         ) : (
           <table className="fp-table">
             <thead>
@@ -552,87 +563,87 @@ export default function Transactions() {
                       type="checkbox"
                       checked={selectedAllMatching || (selectedTransactionIds.size === (transactions || []).length && transactions.length > 0)}
                       onChange={toggleSelectAll}
-                      title={selectedAllMatching || selectedTransactionIds.size > 0 ? "Отменить выбор всех" : "Выбрать все"}
+                      title={selectedAllMatching || selectedTransactionIds.size > 0 ? t("tx.deselectAllTitle") : t("tx.selectAllTitle")}
                       style={{ cursor: "pointer" }}
                     />
                   </th>
                 )}
-                {showCompanyColumn && <th>Компания</th>}
-                <th>Дата</th>
-                <th>Счёт</th>
-                <th>Статья</th>
-                <th>Проект</th>
-                <th>Контрагент</th>
-                <th>Комментарий</th>
-                <th>Источник</th>
-                <th className="right">Комиссия</th>
+                {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
+                <th>{t("tx.col.date")}</th>
+                <th>{t("tx.col.account")}</th>
+                <th>{t("tx.col.category")}</th>
+                <th>{t("tx.col.project")}</th>
+                <th>{t("tx.col.counterparty")}</th>
+                <th>{t("tx.col.comment")}</th>
+                <th>{t("tx.col.source")}</th>
+                <th className="right">{t("tx.col.commission")}</th>
                 <th className="right fp-table-amount-col" style={{ right: canEdit ? 90 : 0 }}>
-                  Сумма
+                  {t("tx.col.amount")}
                 </th>
                 {canEdit && <th className="fp-table-actions-col"></th>}
               </tr>
             </thead>
             <tbody>
-              {transactions.map((t) => {
-                const acc = accountsById[t.account_id];
-                const cat = categoriesById[t.category_id];
-                const proj = t.project_id ? projectsById[t.project_id] : null;
-                const cp = t.counterparty_id ? counterpartiesById[t.counterparty_id] : null;
-                const rowRole = roleForCompany(t.company_id);
+              {transactions.map((tx) => {
+                const acc = accountsById[tx.account_id];
+                const cat = categoriesById[tx.category_id];
+                const proj = tx.project_id ? projectsById[tx.project_id] : null;
+                const cp = tx.counterparty_id ? counterpartiesById[tx.counterparty_id] : null;
+                const rowRole = roleForCompany(tx.company_id);
                 const canEditRow =
-                  canEditTransactions(rowRole) && (rowRole === "admin" || t.created_by === user.id);
+                  canEditTransactions(rowRole) && (rowRole === "admin" || tx.created_by === user.id);
                 return (
-                  <tr key={t.id}>
+                  <tr key={tx.id}>
                     {canEdit && (
                       <td style={{ width: 40, textAlign: "center", paddingLeft: 8 }}>
                         <input
                           type="checkbox"
-                          checked={selectedAllMatching || selectedTransactionIds.has(t.id)}
-                          onChange={() => toggleTransactionSelection(t.id)}
+                          checked={selectedAllMatching || selectedTransactionIds.has(tx.id)}
+                          onChange={() => toggleTransactionSelection(tx.id)}
                           style={{ cursor: "pointer" }}
                         />
                       </td>
                     )}
                     {showCompanyColumn && (
-                      <td>{companies.find((m) => m.company.id === t.company_id)?.company.name || "—"}</td>
+                      <td>{companies.find((m) => m.company.id === tx.company_id)?.company.name || "—"}</td>
                     )}
-                    <td>{fmtDate(t.date_odds)}</td>
+                    <td>{fmtDate(tx.date_odds)}</td>
                     <td>
                       {acc?.name || "—"}
                       {acc && <span className={`fp-currency-badge ${acc.currency}`}>{acc.currency}</span>}
                     </td>
                     <td>
-                      <span className={`fp-cat-dot ${t.type}`} />
+                      <span className={`fp-cat-dot ${tx.type}`} />
                       {cat?.name || "—"}
                     </td>
                     <td>{proj?.name || <span className="fp-muted">—</span>}</td>
                     <td>{cp?.name || <span className="fp-muted">—</span>}</td>
                     <td
                       className="fp-muted fp-table-comment-col"
-                      title={[t.comment, t.bank_payment_purpose].filter(Boolean).join(" / ")}
+                      title={[tx.comment, tx.bank_payment_purpose].filter(Boolean).join(" / ")}
                     >
-                      {t.comment || t.bank_payment_purpose || "—"}
+                      {tx.comment || tx.bank_payment_purpose || "—"}
                     </td>
-                    <td>{sourceBadge(t.external_ref) || <span className="fp-muted">Вручную</span>}</td>
-                    <td className="right fp-mono">{t.commission ? fmt(t.commission, t.currency) : "—"}</td>
+                    <td>{sourceBadge(tx.external_ref, t) || <span className="fp-muted">{t("tx.manually")}</span>}</td>
+                    <td className="right fp-mono">{tx.commission ? fmt(tx.commission, tx.currency) : "—"}</td>
                     <td
-                      className={`right fp-mono fp-amount-${t.type} fp-table-amount-col`}
+                      className={`right fp-mono fp-amount-${tx.type} fp-table-amount-col`}
                       style={{ right: canEdit ? 90 : 0 }}
                     >
-                      {t.type === "expense" ? "-" : ""}
-                      {fmt(t.amount, t.currency)}
-                      {t.currency !== "RUB" && (
-                        <div className="fp-sub-value">≈ {fmt(t.amount_rub, "RUB")}</div>
+                      {tx.type === "expense" ? "-" : ""}
+                      {fmt(tx.amount, tx.currency)}
+                      {tx.currency !== "RUB" && (
+                        <div className="fp-sub-value">≈ {fmt(tx.amount_rub, "RUB")}</div>
                       )}
                     </td>
                     {canEdit && (
                       <td className="fp-table-actions-col">
                         {canEditRow ? (
                           <span className="fp-row-actions">
-                            <button className="fp-icon-btn" onClick={() => openEdit(t)}>
+                            <button className="fp-icon-btn" onClick={() => openEdit(tx)}>
                               <Pencil size={14} />
                             </button>
-                            <button className="fp-icon-btn" onClick={() => handleDelete(t)}>
+                            <button className="fp-icon-btn" onClick={() => handleDelete(tx)}>
                               <Trash2 size={14} />
                             </button>
                           </span>
@@ -651,8 +662,8 @@ export default function Transactions() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderTop: "1px solid var(--line)" }}>
             <div style={{ fontSize: "13px", color: "var(--ink-soft)" }}>
               {useAllForDates
-                ? `Все ${(transactions || []).length} результатов за выбранный период`
-                : `Страница ${currentPage + 1} • ${(transactions || []).length} результатов на странице`}
+                ? t("tx.allForPeriod", { count: (transactions || []).length })
+                : t("tx.pageInfo", { page: currentPage + 1, count: (transactions || []).length })}
             </div>
             {!useAllForDates && (
               <div style={{ display: "flex", gap: 8 }}>
@@ -661,14 +672,14 @@ export default function Transactions() {
                   onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
                   disabled={currentPage === 0 || loading}
                 >
-                  ← Предыдущая
+                  {t("tx.pagePrev")}
                 </button>
                 <button
                   className="fp-btn-ghost"
                   onClick={() => setCurrentPage(currentPage + 1)}
                   disabled={(transactions || []).length < pageSize || loading}
                 >
-                  Следующая →
+                  {t("tx.pageNext")}
                 </button>
               </div>
             )}
@@ -676,7 +687,7 @@ export default function Transactions() {
         )}
         {!canEdit && (
           <div className="fp-viewer-note">
-            <Lock size={13} /> Режим «Только просмотр» — добавление и редактирование операций недоступно
+            <Lock size={13} /> {t("tx.viewerNote")}
           </div>
         )}
       </div>
@@ -685,7 +696,7 @@ export default function Transactions() {
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>{editing ? "Редактировать операцию" : "Новая операция"}</h3>
+              <h3>{editing ? t("tx.editTransaction") : t("tx.newTransaction")}</h3>
               <button className="fp-icon-btn" onClick={() => setModalOpen(false)}>
                 <X size={18} />
               </button>
@@ -697,21 +708,21 @@ export default function Transactions() {
                 className={form.type === "income" ? "active income" : ""}
                 onClick={() => updateField("type", "income")}
               >
-                Приход
+                {t("tx.income")}
               </button>
               <button
                 type="button"
                 className={form.type === "expense" ? "active expense" : ""}
                 onClick={() => updateField("type", "expense")}
               >
-                Расход
+                {t("tx.expense")}
               </button>
             </div>
 
             <form className="fp-form-grid" onSubmit={handleSubmit}>
               {multiCompany && (
                 <label className="fp-span-2">
-                  Компания
+                  {t("tx.form.company")}
                   {editing ? (
                     <input
                       type="text"
@@ -734,7 +745,7 @@ export default function Transactions() {
                 </label>
               )}
               <label>
-                Дата операции
+                {t("tx.form.date")}
                 <input
                   type="date"
                   required
@@ -743,68 +754,68 @@ export default function Transactions() {
                 />
               </label>
               <label>
-                Счёт
+                {t("tx.form.account")}
                 <Combobox
                   value={form.account_id}
                   onChange={(val) => updateField("account_id", val)}
                   options={selectableAccounts.map((a) => ({
                     id: a.id,
-                    name: `${a.name} (${a.currency})${a.is_active === false ? " — деактивирован" : ""}`
+                    name: `${a.name} (${a.currency})${a.is_active === false ? t("tx.deactivatedSuffix") : ""}`
                   }))}
-                  placeholder="Выберите счёт"
+                  placeholder={t("tx.form.selectAccount")}
                   required
                 />
               </label>
 
               <label>
-                Статья
+                {t("tx.form.category")}
                 <Combobox
                   value={form.category_id}
                   onChange={(val) => updateField("category_id", val)}
                   options={filteredCategories.map((c) => ({
                     id: c.id,
-                    name: `${c.name}${c.is_active === false ? " — деактивирована" : ""}`
+                    name: `${c.name}${c.is_active === false ? t("tx.deactivatedSuffixF") : ""}`
                   }))}
-                  placeholder="Выберите статью"
+                  placeholder={t("tx.form.selectCategory")}
                   required
                   onCreateNew={handleCreateCategory}
                 />
               </label>
               <label>
-                Проект
+                {t("tx.form.project")}
                 <Combobox
                   value={form.project_id}
                   onChange={(val) => updateField("project_id", val)}
                   options={selectableProjects.map((p) => ({
                     id: p.id,
-                    name: `${p.name}${p.is_active === false ? " — деактивирован" : ""}`
+                    name: `${p.name}${p.is_active === false ? t("tx.deactivatedSuffix") : ""}`
                   }))}
-                  placeholder="— не указан —"
+                  placeholder={t("tx.form.notSpecified")}
                   onCreateNew={handleCreateProject}
                 />
               </label>
 
               <label>
-                Контрагент
+                {t("tx.form.counterparty")}
                 <Combobox
                   value={form.counterparty_id}
                   onChange={(val) => updateField("counterparty_id", val)}
                   options={selectableCounterparties.map((c) => ({
                     id: c.id,
-                    name: `${c.name}${c.is_active === false ? " — деактивирован" : ""}`
+                    name: `${c.name}${c.is_active === false ? t("tx.deactivatedSuffix") : ""}`
                   }))}
-                  placeholder="— не указан —"
+                  placeholder={t("tx.form.notSpecified")}
                   onCreateNew={handleCreateCounterparty}
                 />
               </label>
 
               <label>
-                Валюта
+                {t("tx.form.currency")}
                 <input value={form.currency} onChange={(e) => updateField("currency", e.target.value.toUpperCase())} />
               </label>
 
               <label>
-                Сумма
+                {t("tx.form.amount")}
                 <input
                   type="number"
                   step="0.01"
@@ -814,7 +825,7 @@ export default function Transactions() {
                 />
               </label>
               <label>
-                Комиссия
+                {t("tx.form.commission")}
                 <input
                   type="number"
                   step="0.01"
@@ -824,20 +835,20 @@ export default function Transactions() {
               </label>
 
               <label className="fp-span-2">
-                Назначение платежа {editing?.external_ref ? "(из банка)" : "(опц.)"}
+                {t("tx.form.bankPurpose")} {editing?.external_ref ? t("tx.form.fromBank") : t("tx.form.optional")}
                 <input
                   value={form.bank_payment_purpose}
                   onChange={(e) => updateField("bank_payment_purpose", e.target.value)}
-                  placeholder="Подставляется автоматически при импорте из банка"
+                  placeholder={t("tx.form.bankPurposePlaceholder")}
                 />
               </label>
 
               <label className="fp-span-2">
-                Комментарий
+                {t("tx.form.comment")}
                 <input
                   value={form.comment}
                   onChange={(e) => updateField("comment", e.target.value)}
-                  placeholder="Своя заметка — не путать с назначением платежа выше"
+                  placeholder={t("tx.form.commentPlaceholder")}
                 />
               </label>
 
@@ -845,10 +856,10 @@ export default function Transactions() {
 
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setModalOpen(false)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={saving}>
-                  {saving ? "Сохраняем…" : "Сохранить"}
+                  {saving ? t("common.saving") : t("common.save")}
                 </button>
               </div>
             </form>
