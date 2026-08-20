@@ -32,6 +32,26 @@ def test_single_condition_contains_matches(db_session, _default_company):
     assert overrides == {"category_id": "cat-wb", "project_id": "proj-wb"}
 
 
+def test_comment_condition_matches_bank_payment_purpose_too(db_session, _default_company):
+    """Регрессия: назначение платежа из банка раньше писалось прямо в
+    comment, теперь — в отдельном bank_payment_purpose (см. models.py).
+    Правила "комментарий содержит X", настроенные ещё тогда, не должны
+    молча переставать срабатывать."""
+    db_session.add(
+        AutomationRule(
+            company_id=_default_company.id,
+            condition_json={"field": "comment", "op": "contains", "value": "аренд"},
+            action_json={"set_category": "cat-rent"},
+        )
+    )
+    db_session.commit()
+
+    overrides = apply_rules(
+        db_session, _payload(comment=None, bank_payment_purpose="Оплата за аренду офиса"), _default_company.id
+    )
+    assert overrides == {"category_id": "cat-rent"}
+
+
 def test_condition_does_not_match_returns_empty(db_session, _default_company):
     cp = make_counterparty(db_session, "ООО Ромашка")
     db_session.add(

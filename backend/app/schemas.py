@@ -19,6 +19,10 @@ class TransactionBase(BaseModel):
     currency: str
     commission: float = 0
     comment: Optional[str] = None
+    # Назначение платежа из банка — отдельно от comment (своя заметка
+    # пользователя). Заполняется автоматически при импорте, но остаётся
+    # редактируемым. См. models.py::Transaction.bank_payment_purpose.
+    bank_payment_purpose: Optional[str] = None
 
 
 class TransactionCreate(TransactionBase):
@@ -48,6 +52,7 @@ class TransactionUpdate(BaseModel):
     currency: Optional[str] = None
     commission: Optional[float] = None
     comment: Optional[str] = None
+    bank_payment_purpose: Optional[str] = None
 
 
 class TransactionBatchDelete(BaseModel):

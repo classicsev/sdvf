@@ -125,7 +125,10 @@ def import_mapped_transactions(
                 amount=mapped["amount"],
                 currency=account.currency,
                 amount_rub=amount_rub,
-                comment=mapped["comment"],
+                # Текст из банка — в bank_payment_purpose, не в comment (это
+                # заметка пользователя, изначально пустая для импортированных
+                # операций — см. models.py::Transaction.bank_payment_purpose).
+                bank_payment_purpose=mapped["comment"],
                 external_ref=mapped["external_ref"],
                 created_by=user.id,
             )

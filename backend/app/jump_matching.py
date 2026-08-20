@@ -120,8 +120,8 @@ def match_payments(
         tx.counterparty_id = counterparty.id
         tx.jump_payment_id = payment_id
         purpose = payment.get("payment_purpose")
-        if purpose and not tx.comment:
-            tx.comment = purpose
+        if purpose and not tx.bank_payment_purpose:
+            tx.bank_payment_purpose = purpose
 
         if counterparty.default_category_id:
             tx.category_id = counterparty.default_category_id
@@ -140,6 +140,7 @@ def match_payments(
                 currency=tx.currency,
                 commission=tx.commission or 0,
                 comment=tx.comment,
+                bank_payment_purpose=tx.bank_payment_purpose,
             )
             overrides = apply_rules(db, fake_payload, company_id)
             if overrides.get("category_id"):

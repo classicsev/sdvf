@@ -18,7 +18,12 @@ def _field_value(field: str, payload: TransactionCreate, counterparty_name: Opti
     if field == "counterparty":
         return counterparty_name or ""
     if field == "comment":
-        return payload.comment or ""
+        # Правило "комментарий содержит X" исторически ловило текст из банка
+        # (раньше писался прямо в comment) — теперь он в отдельном
+        # bank_payment_purpose (см. models.py), проверяем оба, чтобы уже
+        # настроенные пользователем правила не сломались молча.
+        purpose = getattr(payload, "bank_payment_purpose", None) or ""
+        return f"{payload.comment or ''} {purpose}".strip()
     if field == "amount":
         return payload.amount
     if field == "category":

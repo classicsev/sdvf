@@ -62,6 +62,41 @@ def test_update_transaction_with_date_odds_in_payload_does_not_crash_audit_log(c
     assert resp.json()["category_id"] == other_category.id
 
 
+def test_bank_payment_purpose_and_comment_are_independent_fields(client, db_session):
+    """Назначение платежа из банка (bank_payment_purpose) и собственная
+    заметка пользователя (comment) — разные поля, правка одного не должна
+    затирать другое."""
+    admin = make_user(db_session, RoleEnum.admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.expense)
+
+    created = client.post(
+        "/transactions",
+        headers=auth_headers(admin),
+        json={
+            "date_odds": "2026-06-01",
+            "account_id": account.id,
+            "category_id": category.id,
+            "type": "expense",
+            "amount": 100,
+            "currency": "RUB",
+            "bank_payment_purpose": "Оплата по счёту №71 от 20.08.2026",
+        },
+    ).json()
+    assert created["bank_payment_purpose"] == "Оплата по счёту №71 от 20.08.2026"
+    assert created["comment"] is None
+
+    resp = client.patch(
+        f"/transactions/{created['id']}",
+        headers=auth_headers(admin),
+        json={"comment": "уточнить у бухгалтера"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["comment"] == "уточнить у бухгалтера"
+    assert body["bank_payment_purpose"] == "Оплата по счёту №71 от 20.08.2026"
+
+
 def test_create_transaction_foreign_currency_without_rate_fails(client, db_session):
     admin = make_user(db_session, RoleEnum.admin)
     account = make_account(db_session, currency="USD")

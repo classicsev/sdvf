@@ -390,6 +390,12 @@ class Transaction(Base):
     amount_rub: Mapped[float] = mapped_column(Numeric(14, 2))
     commission: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
     comment: Mapped[str] = mapped_column(Text, nullable=True)
+    # Назначение платежа из банковской выписки — отдельно от comment (это уже
+    # СВОЯ заметка пользователя). Раньше банковский текст писался прямо в
+    # comment, из-за чего некуда было деть собственный комментарий, не потеряв
+    # оригинальный текст банка. Заполняется только при импорте (bank_import.py),
+    # но остаётся редактируемым — если банк/OCR распознал не совсем то.
+    bank_payment_purpose: Mapped[str] = mapped_column(Text, nullable=True)
     # Ключ дедупликации для синка из внешних систем (напр. "tbank:<operationId>") —
     # NULL для операций, внесённых вручную. Уникален в рамках компании (не глобально) —
     # разные компании синкают свои собственные банки/CRM независимо.

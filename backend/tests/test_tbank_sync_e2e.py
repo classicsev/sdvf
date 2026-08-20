@@ -75,7 +75,7 @@ def test_sync_creates_transactions_and_dedupes_on_rerun(client, db_session, monk
     income_tx = by_ref["tbank:op-1"]
     assert income_tx.type.value == "income"
     assert income_tx.amount == Decimal("31500.00")
-    assert income_tx.comment == "ТД-620 от 26.05"
+    assert income_tx.bank_payment_purpose == "ТД-620 от 26.05"
     expense_tx = by_ref["tbank:op-2"]
     assert expense_tx.type.value == "expense"
     assert expense_tx.amount == Decimal("4990.00")

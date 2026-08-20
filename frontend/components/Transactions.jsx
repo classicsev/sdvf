@@ -8,6 +8,7 @@ import { useResource } from "../lib/useResource";
 import { fmt, fmtDate } from "../lib/format";
 import { canEditTransactions } from "../lib/roles";
 import { Combobox } from "./Combobox";
+import { backdropClickProps } from "../lib/modalBackdrop";
 
 const SOURCE_LABELS = { tbank: "Т-Банк", amocrm: "amoCRM", alfabank: "Альфа-Банк" };
 
@@ -34,6 +35,7 @@ const EMPTY_FORM = {
   currency: "RUB",
   commission: "0",
   comment: "",
+  bank_payment_purpose: "",
 };
 
 export default function Transactions() {
@@ -181,6 +183,7 @@ export default function Transactions() {
       currency: tx.currency,
       commission: String(tx.commission || 0),
       comment: tx.comment || "",
+      bank_payment_purpose: tx.bank_payment_purpose || "",
     });
     setFormCompanyId(tx.company_id || "");
     setFormError("");
@@ -241,6 +244,7 @@ export default function Transactions() {
         currency: form.currency,
         commission: Number(form.commission || 0),
         comment: form.comment || null,
+        bank_payment_purpose: form.bank_payment_purpose || null,
       };
       if (editing) {
         await api.updateTransaction(token, editing.id, payload);
@@ -603,8 +607,11 @@ export default function Transactions() {
                     </td>
                     <td>{proj?.name || <span className="fp-muted">—</span>}</td>
                     <td>{cp?.name || <span className="fp-muted">—</span>}</td>
-                    <td className="fp-muted fp-table-comment-col" title={t.comment || ""}>
-                      {t.comment || "—"}
+                    <td
+                      className="fp-muted fp-table-comment-col"
+                      title={[t.comment, t.bank_payment_purpose].filter(Boolean).join(" / ")}
+                    >
+                      {t.comment || t.bank_payment_purpose || "—"}
                     </td>
                     <td>{sourceBadge(t.external_ref) || <span className="fp-muted">Вручную</span>}</td>
                     <td className="right fp-mono">{t.commission ? fmt(t.commission, t.currency) : "—"}</td>
@@ -675,7 +682,7 @@ export default function Transactions() {
       </div>
 
       {modalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>{editing ? "Редактировать операцию" : "Новая операция"}</h3>
@@ -817,8 +824,21 @@ export default function Transactions() {
               </label>
 
               <label className="fp-span-2">
+                Назначение платежа {editing?.external_ref ? "(из банка)" : "(опц.)"}
+                <input
+                  value={form.bank_payment_purpose}
+                  onChange={(e) => updateField("bank_payment_purpose", e.target.value)}
+                  placeholder="Подставляется автоматически при импорте из банка"
+                />
+              </label>
+
+              <label className="fp-span-2">
                 Комментарий
-                <input value={form.comment} onChange={(e) => updateField("comment", e.target.value)} />
+                <input
+                  value={form.comment}
+                  onChange={(e) => updateField("comment", e.target.value)}
+                  placeholder="Своя заметка — не путать с назначением платежа выше"
+                />
               </label>
 
               {formError && <div className="fp-form-error fp-span-2">{formError}</div>}
