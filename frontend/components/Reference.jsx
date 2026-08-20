@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { fmt, fmtDate } from "../lib/format";
 import { canEditReference } from "../lib/roles";
+import { backdropClickProps } from "../lib/modalBackdrop";
 import Counterparties from "./Counterparties";
 
 const STATUS_COLUMN = {
@@ -762,7 +763,7 @@ export default function Reference() {
       </div>
 
       {modalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>{editingId ? `Редактировать ${config.noun}` : `Новый(ая) ${config.noun}`}</h3>
@@ -1014,7 +1015,7 @@ export default function Reference() {
       )}
 
       {bulkModalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setBulkModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setBulkModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>Распределить по компаниям ({selectedIds.size})</h3>

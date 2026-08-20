@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { fmt, fmtDate } from "../lib/format";
 import { canEditPlanning } from "../lib/roles";
+import { backdropClickProps } from "../lib/modalBackdrop";
 
 const TABS = [
   { key: "cashflow", label: "Движение денег" },
@@ -481,7 +482,7 @@ function PlanningPanel({ token, year, categories, projects, planning, reload, co
       </table>
 
       {modalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>{editingId ? "Редактировать план" : "Новый план"}</h3>

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
+import { backdropClickProps } from "../lib/modalBackdrop";
 
 const GENDER_LABELS = { M: "Мужской", F: "Женский" };
 
@@ -57,7 +58,7 @@ export default function ProfileModal({ onClose }) {
   }
 
   return (
-    <div className="fp-modal-backdrop" onClick={onClose}>
+    <div className="fp-modal-backdrop" {...backdropClickProps(onClose)}>
       <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
         <div className="fp-modal-head">
           <h3>Редактировать профиль</h3>

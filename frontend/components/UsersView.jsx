@@ -6,6 +6,7 @@ import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { ROLE_LABELS } from "../lib/roles";
+import { backdropClickProps } from "../lib/modalBackdrop";
 
 const FORM_EMPTY = { email: "", full_name: "", password: "", role: "viewer", project_id: "" };
 
@@ -210,7 +211,7 @@ export default function UsersView() {
       </div>
 
       {modalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>{editingId ? "Редактировать пользователя" : "Новый пользователь"}</h3>

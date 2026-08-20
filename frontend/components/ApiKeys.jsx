@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { backdropClickProps } from "../lib/modalBackdrop";
 import { Plus, X, Trash2, Copy, Check } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
@@ -129,7 +130,7 @@ export default function ApiKeys() {
       </div>
 
       {modalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>Новый API-ключ</h3>

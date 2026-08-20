@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { fmt, fmtDate } from "../lib/format";
 import { canEditPayroll } from "../lib/roles";
+import { backdropClickProps } from "../lib/modalBackdrop";
 
 function KpiCard({ label, value, tone, icon }) {
   return (
@@ -180,7 +181,7 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
       </table>
 
       {modalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>{editingId ? "Редактировать сотрудника" : "Новый сотрудник"}</h3>
@@ -372,7 +373,7 @@ function AccrualsPanel({ token, employees, projects, accruals, reload, companyFi
       </table>
 
       {modalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>Новое начисление</h3>
@@ -555,7 +556,7 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload,
       </table>
 
       {modalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>Новая выплата</h3>

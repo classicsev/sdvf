@@ -6,6 +6,7 @@ import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { fmtDate } from "../lib/format";
+import { backdropClickProps } from "../lib/modalBackdrop";
 
 const PROVIDER_LABELS = {
   tinkoff: "Т-Банк",
@@ -272,7 +273,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
       </div>
 
       {connectTarget && (
-        <div className="fp-modal-backdrop" onClick={() => setConnectTarget(null)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setConnectTarget(null))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>Подключить «{PROVIDER_LABELS[connectTarget.provider] || connectTarget.provider}»</h3>
@@ -418,7 +419,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
       )}
 
       {syncTarget && (
-        <div className="fp-modal-backdrop" onClick={() => setSyncTarget(null)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setSyncTarget(null))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>Синхронизация «{PROVIDER_LABELS[syncTarget.provider] || syncTarget.provider}»</h3>
@@ -785,7 +786,7 @@ export default function Automation() {
       />
 
       {modalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>Новое правило</h3>

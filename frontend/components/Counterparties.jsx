@@ -6,6 +6,7 @@ import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { canEditReference } from "../lib/roles";
+import { backdropClickProps } from "../lib/modalBackdrop";
 
 const FORM_EMPTY = {
   name: "",
@@ -394,7 +395,7 @@ export default function Counterparties() {
       </div>
 
       {modalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>{editing ? "Карточка контрагента" : "Новый контрагент"}</h3>
@@ -515,7 +516,7 @@ export default function Counterparties() {
       )}
 
       {linkFor && (
-        <div className="fp-modal-backdrop" onClick={() => setLinkFor(null)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setLinkFor(null))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>Привязать «{linkFor.name}» к карточке СДВФ</h3>
@@ -579,7 +580,7 @@ export default function Counterparties() {
       )}
 
       {contactsTarget && (
-        <div className="fp-modal-backdrop" onClick={() => setContactsFor(null)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setContactsFor(null))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>Контактные лица — {contactsTarget.name}</h3>

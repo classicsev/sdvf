@@ -25,6 +25,7 @@ import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { fmtDate } from "../lib/format";
 import { canEditWarehouse } from "../lib/roles";
+import { backdropClickProps } from "../lib/modalBackdrop";
 
 const DIRECTION_LABELS = {
   in: "Приход",
@@ -408,7 +409,7 @@ function MovementsPanel({
       </div>
 
       {modalOpen === "movement" && (
-        <div className="fp-modal-backdrop" onClick={() => setModalOpen(null)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(null))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>{DIRECTION_LABELS[form.direction]}</h3>
@@ -522,7 +523,7 @@ function MovementsPanel({
       )}
 
       {modalOpen === "transfer" && (
-        <div className="fp-modal-backdrop" onClick={() => setModalOpen(null)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(null))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>Перемещение между складами</h3>
@@ -925,7 +926,7 @@ function OrdersPanel({
       </div>
 
       {modalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>Новый заказ</h3>
@@ -1051,7 +1052,7 @@ function OrdersPanel({
       )}
 
       {docModal && (
-        <div className="fp-modal-backdrop" onClick={() => setDocModal(null)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setDocModal(null))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>{docModal.type === "invoice" ? "Сформировать счёт" : "Сформировать УПД"}</h3>
@@ -1442,7 +1443,7 @@ function ProductionPanel({
       )}
 
       {recipeModalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setRecipeModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setRecipeModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>{editingRecipeId ? "Редактировать техкарту" : "Новая техкарта"}</h3>
@@ -1573,7 +1574,7 @@ function ProductionPanel({
       )}
 
       {runModalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setRunModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setRunModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>Новая партия производства</h3>
@@ -1876,7 +1877,7 @@ function CatalogPanel({
       </div>
 
       {modalOpen && (
-        <div className="fp-modal-backdrop" onClick={() => setModalOpen(false)}>
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
               <h3>{editingId ? "Редактировать" : "Добавить"}</h3>
