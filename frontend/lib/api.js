@@ -333,6 +333,11 @@ export const api = {
   disconnectIntegration: (token, id) => request(`/integrations/${id}/disconnect`, { method: "POST", token }),
   syncIntegration: (token, id, payload) =>
     request(`/integrations/${id}/sync`, { method: "POST", token, body: payload }),
+  // Jump.Finance не создаёт операции сам — только сопоставляет уже
+  // загруженные (обычно из Т-Банка) со своими выплатами и подставляет
+  // контрагента/статью/проект (см. HANDOVER.md).
+  syncJumpFinance: (token, id, payload) =>
+    request(`/integrations/${id}/sync-jump`, { method: "POST", token, body: payload }),
   // Синк всех подключённых банковских интеграций разом, с троттлингом на
   // бэкенде (integration.autosync_interval_minutes) — безопасно дёргать при
   // каждом открытии страницы, force=true — для кнопки "Синхронизировать сейчас".

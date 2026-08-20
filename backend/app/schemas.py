@@ -523,6 +523,20 @@ class IntegrationSyncAllResult(BaseModel):
     message: str
 
 
+class JumpSyncIn(BaseModel):
+    account_id: str
+    date_from: date
+    date_to: Optional[date] = None
+
+
+class JumpMatchResult(BaseModel):
+    matched: int
+    category_set_from_default: int
+    category_set_from_rule: int
+    unmatched: int
+    ambiguous: int
+
+
 class StatementTransactionPreview(BaseModel):
     date_odds: date
     type: TxTypeEnum

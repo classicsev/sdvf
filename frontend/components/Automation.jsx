@@ -15,9 +15,10 @@ const PROVIDER_LABELS = {
   yookassa: "ЮKassa",
   amocrm: "amoCRM",
   "1c": "1С:УНФ",
+  jump: "Jump.Finance",
 };
 
-const SYNC_SUPPORTED = ["tinkoff", "alfa", "amocrm"];
+const SYNC_SUPPORTED = ["tinkoff", "alfa", "amocrm", "jump"];
 
 const FIELD_OPTIONS = [
   { value: "counterparty", label: "Контрагент" },
@@ -177,6 +178,12 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
               account_id: syncForm.account_id,
               date_from: syncForm.date_from || null,
             })
+          : syncTarget.provider === "jump"
+          ? await api.syncJumpFinance(token, syncTarget.id, {
+              account_id: syncForm.account_id,
+              date_from: syncForm.date_from,
+              date_to: syncForm.date_to || null,
+            })
           : await api.syncIntegration(token, syncTarget.id, {
               account_id: syncForm.account_id,
               date_from: syncForm.date_from,
@@ -257,9 +264,10 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
           </tbody>
         </table>
         <p className="fp-note" style={{ padding: "0 16px 16px" }}>
-          Реальная синхронизация реализована для Т-Банка и Альфа-Банка (выписки по счёту) и amoCRM (контакты →
-          контрагенты, сделки в статусе «Успешно реализовано» → доходные транзакции). Остальные — заглушки
-          каталога на будущее.
+          Реальная синхронизация реализована для Т-Банка и Альфа-Банка (выписки по счёту), amoCRM (контакты →
+          контрагенты, сделки в статусе «Успешно реализовано» → доходные транзакции) и Jump.Finance (сопоставляет
+          выплаты исполнителям с уже загруженными операциями Т-Банка — сама операций не создаёт). Остальные —
+          заглушки каталога на будущее.
         </p>
       </div>
 
@@ -384,12 +392,14 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                 </>
               ) : (
                 <label className="fp-span-2">
-                  API-токен
+                  {connectTarget.provider === "jump" ? "Client-Key (Jump.Finance)" : "API-токен"}
                   <input
                     required
                     value={connectTokenValue}
                     onChange={(e) => setConnectTokenValue(e.target.value)}
-                    placeholder="Для теста Т-Банка: TBankSandboxToken"
+                    placeholder={
+                      connectTarget.provider === "jump" ? "" : "Для теста Т-Банка: TBankSandboxToken"
+                    }
                   />
                 </label>
               )}
@@ -471,6 +481,13 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                   />
                 </label>
               )}
+              {syncTarget.provider === "jump" && (
+                <div className="fp-note fp-span-2">
+                  Jump.Finance не загружает новые операции — только находит среди уже загруженных (обычно из
+                  Т-Банка) те, что были выплатами через Jump, и подставляет туда исполнителя как контрагента (плюс
+                  статью/проект, если получится определить). После синка Т-Банка это происходит само.
+                </div>
+              )}
               {syncTarget.provider === "alfa" && (
                 <label className="fp-span-2">
                   Тестовый номер счёта для песочницы (опц.)
@@ -500,7 +517,15 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                   {syncResult.deals_skipped}.
                 </div>
               )}
-              {syncResult && syncTarget.provider !== "amocrm" && (
+              {syncResult && syncTarget.provider === "jump" && (
+                <div className="fp-note fp-span-2">
+                  Сопоставлено: {syncResult.matched} (статья по контрагенту: {syncResult.category_set_from_default},
+                  по правилу автоматизации: {syncResult.category_set_from_rule}). Не найдено пары:{" "}
+                  {syncResult.unmatched}
+                  {syncResult.ambiguous > 0 ? `, неоднозначных совпадений: ${syncResult.ambiguous}` : ""}.
+                </div>
+              )}
+              {syncResult && syncTarget.provider !== "amocrm" && syncTarget.provider !== "jump" && (
                 <div className="fp-note fp-span-2">
                   <div>
                     Загружено новых операций: {syncResult.created}. Пропущено: {syncResult.skipped}.{" "}

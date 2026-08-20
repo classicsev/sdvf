@@ -204,6 +204,18 @@ class Counterparty(Base):
     sdvf_synced_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     amocrm_company_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
 
+    # Статья/проект по умолчанию для операций с этим контрагентом — заполняются
+    # не вручную отдельной формой, а сами запоминаются, когда пользователь
+    # поправляет статью/проект у операции, сопоставленной с Jump.Finance (см.
+    # jump_matching.py и routers/transactions.py::update_transaction). При
+    # следующем сопоставлении с тем же контрагентом подставляются автоматически.
+    default_category_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("categories.id"), nullable=True
+    )
+    default_project_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("projects.id"), nullable=True
+    )
+
     contacts: Mapped[list["CounterpartyContact"]] = relationship(
         back_populates="counterparty", cascade="all, delete-orphan"
     )
@@ -382,6 +394,12 @@ class Transaction(Base):
     # NULL для операций, внесённых вручную. Уникален в рамках компании (не глобально) —
     # разные компании синкают свои собственные банки/CRM независимо.
     external_ref: Mapped[str] = mapped_column(String(150), nullable=True)
+    # id выплаты в Jump.Finance, с которой сопоставлена ЭТА (уже существующая,
+    # пришедшая из банка) операция — см. jump_matching.py. Не участвует в
+    # дедупликации при импорте (это не источник самой операции, а обогащение
+    # задним числом), только помечает "уже сопоставлено", чтобы не сопоставлять
+    # повторно при следующем автозапуске после синка Т-Банка.
+    jump_payment_id: Mapped[str] = mapped_column(String(50), nullable=True)
 
     created_by: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

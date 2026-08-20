@@ -224,6 +224,19 @@ def update_transaction(
     if {"amount", "currency", "date_odds"} & changes.keys():
         tx.amount_rub = _convert_to_rub(db, tx.currency, tx.amount, tx.date_odds)
 
+    # Операция, сопоставленная с выплатой Jump.Finance (jump_payment_id
+    # заполнен — см. jump_matching.py) — при ручной правке статьи/проекта
+    # запоминаем выбор на самом контрагенте (Counterparty.default_category_id/
+    # default_project_id), чтобы при следующем сопоставлении с тем же
+    # исполнителем статья/проект подставились сами, без правил автоматизации.
+    if tx.jump_payment_id and tx.counterparty_id and ({"category_id", "project_id"} & changes.keys()):
+        counterparty = db.get(Counterparty, tx.counterparty_id)
+        if counterparty:
+            if "category_id" in changes:
+                counterparty.default_category_id = tx.category_id
+            if "project_id" in changes:
+                counterparty.default_project_id = tx.project_id
+
     tx.updated_by = user.id
     db.commit()
     db.refresh(tx)

@@ -26,7 +26,9 @@ from app.fx import convert_to_rub
 from app.integrations.alfabank import AlfaBankClient, AlfaBankError
 from app.integrations.alfabank import map_operation as map_alfa_operation
 from app.integrations.amocrm import AmoCrmClient, AmoCrmError, map_company, map_contact, map_lead
+from app.integrations.jumpfinance import JumpFinanceClient, JumpFinanceError
 from app.integrations.tbank import TBankClient, TBankError, map_operation
+from app.jump_matching import match_payments
 from app.models import (
     Account,
     AutomationRule,
@@ -52,6 +54,8 @@ from app.schemas import (
     IntegrationSyncAllResult,
     IntegrationSyncIn,
     IntegrationSyncResult,
+    JumpMatchResult,
+    JumpSyncIn,
 )
 from app.reference_scope import get_visible_or_404
 from app.utils import get_or_404_accessible
@@ -71,6 +75,7 @@ INTEGRATION_CATALOG = [
     ("yookassa", "ЮKassa", "acquiring"),
     ("amocrm", "amoCRM", "crm"),
     ("1c", "1С:УНФ", "accounting"),
+    ("jump", "Jump.Finance", "payroll"),
 ]
 
 # На данный момент реально реализован синк для Т-Банка и Альфа-Банка (см.
@@ -205,7 +210,49 @@ def _sync_bank_integration(
         details={"created": result["created"], "skipped": result["skipped"], "account_id": account.id},
         company_id=integration.company_id,
     )
+
+    if integration.provider == "tinkoff" and date_from is not None:
+        # Автосопоставление с Jump.Finance после каждого синка Т-Банка (по
+        # прямой просьбе пользователя) — best-effort: если Jump не подключён
+        # или ответил ошибкой, сам синк Т-Банка это не должно ронять, только
+        # молча пропустить (см. _run_jump_matching).
+        _run_jump_matching(db, user, integration.company_id, account, date_from, date_to)
+
     return IntegrationSyncResult(**result)
+
+
+def _run_jump_matching(
+    db: Session, user: User, company_id: str, account: Account, date_from: date, date_to: Optional[date]
+) -> Optional[JumpMatchResult]:
+    jump_integration = (
+        db.query(Integration)
+        .filter(Integration.company_id == company_id, Integration.provider == "jump", Integration.is_connected.is_(True))
+        .first()
+    )
+    if jump_integration is None or not jump_integration.credentials_encrypted:
+        return None
+    client_key = decrypt_field(jump_integration.credentials_encrypted)
+    if client_key is None:
+        return None
+    try:
+        client = JumpFinanceClient(base_url=settings.jumpfinance_base_url, client_key=client_key)
+        payments = client.fetch_all_payments(date_from, date_to or date.today())
+        result = match_payments(db, user, company_id, account.id, payments)
+    except JumpFinanceError:
+        db.rollback()
+        return None
+    jump_integration.last_sync_at = datetime.utcnow()
+    db.commit()
+    log_action(
+        db,
+        user,
+        action="jump_match",
+        entity_type="integration",
+        entity_id=jump_integration.id,
+        details=result,
+        company_id=company_id,
+    )
+    return JumpMatchResult(**result)
 
 
 @router.get("/automation-rules", response_model=list[AutomationRuleOut], dependencies=[FINANCE_MODULE])
@@ -346,6 +393,53 @@ def sync_integration(
     return _sync_bank_integration(
         db, user, integration, account, payload.date_from, payload.date_to, payload.account_number_override
     )
+
+
+@router.post("/integrations/{integration_id}/sync-jump", response_model=JumpMatchResult, dependencies=[FINANCE_MODULE])
+def sync_jump_integration(
+    integration_id: str,
+    payload: JumpSyncIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Ручной запуск сопоставления Jump.Finance с уже загруженными операциями
+    по выбранному счёту и периоду — отдельно от автозапуска после синка
+    Т-Банка (см. _run_jump_matching), для дозапуска без повторного синка
+    самого банка (например, после того как переопределили статью по
+    умолчанию у контрагента)."""
+    integration = _get_integration_or_404(db, user, integration_id)
+    check_company_role(db, user, integration.company_id, ADMIN_ONLY)
+    if integration.provider != "jump":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Эта интеграция не Jump.Finance")
+    if not integration.is_connected or not integration.credentials_encrypted:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Интеграция не подключена")
+    account = get_or_404_accessible(db, Account, payload.account_id, [integration.company_id], "Счёт не найден")
+
+    client_key = decrypt_field(integration.credentials_encrypted)
+    if client_key is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не удалось расшифровать данные интеграции")
+
+    try:
+        client = JumpFinanceClient(base_url=settings.jumpfinance_base_url, client_key=client_key)
+        payments = client.fetch_all_payments(payload.date_from, payload.date_to or date.today())
+        result = match_payments(db, user, integration.company_id, account.id, payments)
+    except JumpFinanceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+    integration.last_sync_at = datetime.utcnow()
+    integration.account_id = account.id
+    db.commit()
+    log_action(
+        db,
+        user,
+        action="jump_match",
+        entity_type="integration",
+        entity_id=integration.id,
+        details=result,
+        company_id=integration.company_id,
+    )
+    return JumpMatchResult(**result)
 
 
 @router.post("/integrations/sync-all", response_model=IntegrationSyncAllResult, dependencies=[FINANCE_MODULE])
