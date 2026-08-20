@@ -22,7 +22,9 @@ const BANK_LABELS = {
   tbank: "Т-Банк",
   sberbank: "Сбербанк",
   alfabank: "Альфа-Банк",
+  alfabank_business: "Альфа-Бизнес",
   vtb: "ВТБ",
+  client_bank_1c: "1С:Клиент-Банк",
 };
 
 const TABS = {
@@ -922,11 +924,12 @@ export default function Reference() {
                   style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, marginTop: 4 }}
                 >
                   <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
-                    Импорт из справки/выписки банка (PDF)
+                    Импорт из справки/выписки банка (PDF или 1С:Клиент-Банк)
                   </div>
                   <p className="fp-note" style={{ margin: "0 0 8px" }}>
-                    Для счетов физлиц без API банка — Т-Банк, Сбербанк, Альфа-Банк, ВТБ. Банк определяется
-                    автоматически по содержимому файла.
+                    Для счетов без API банка — PDF-справки Т-Банка/Сбербанка/Альфа-Банка/ВТБ (физлица), либо
+                    файл выгрузки 1С:Клиент-Банк (.txt — Альфа-Бизнес и другие банки для юрлиц/ИП). Формат
+                    определяется автоматически по содержимому файла.
                     {!editingId && " Счёт сохранится автоматически, как только выберете файл — укажите хотя бы название выше."}
                   </p>
                   <label className="fp-btn-ghost" style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
@@ -934,7 +937,7 @@ export default function Reference() {
                     {statementFile ? statementFile.name : "Выбрать файл"}
                     <input
                       type="file"
-                      accept="application/pdf"
+                      accept="application/pdf,.pdf,.txt,text/plain"
                       onChange={handleStatementFileChange}
                       disabled={statementBusy}
                       style={{ display: "none" }}

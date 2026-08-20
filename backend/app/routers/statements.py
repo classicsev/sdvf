@@ -31,15 +31,18 @@ def import_statement(
     user: User = Depends(get_current_user),
 ):
     """Разбирает PDF-справку/выписку банка (Т-Банк, Сбербанк, Альфа-Банк, ВТБ —
-    для счетов физлиц без доступа к API) и импортирует операции на выбранный счёт
-    тем же пайплайном, что и синк по API (см. app/bank_import.py). По умолчанию
-    dry_run=True — только считает, что было бы создано/пропущено, без записи в БД,
-    чтобы показать пользователю предпросмотр перед подтверждением."""
+    для счетов физлиц без доступа к API) либо текстовый файл выгрузки 1С:Клиент-Банк
+    (для юрлиц/ИП без доступа к API — Альфа-Бизнес и другие банки) и импортирует
+    операции на выбранный счёт тем же пайплайном, что и синк по API (см.
+    app/bank_import.py). По умолчанию dry_run=True — только считает, что было бы
+    создано/пропущено, без записи в БД, чтобы показать пользователю предпросмотр
+    перед подтверждением."""
     account = get_or_404_accessible(db, Account, account_id, get_accessible_company_ids(db, user), "Счёт не найден")
     check_company_role(db, user, account.company_id, ADMIN_ONLY)
 
-    if file.content_type not in ("application/pdf", "application/octet-stream"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ожидается файл PDF")
+    ALLOWED_CONTENT_TYPES = ("application/pdf", "application/octet-stream", "text/plain")
+    if file.content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ожидается файл PDF или выгрузка 1С:Клиент-Банк (.txt)")
 
     contents = file.file.read()
     if len(contents) > MAX_STATEMENT_SIZE_BYTES:

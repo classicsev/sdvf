@@ -92,6 +92,28 @@ def import_mapped_transactions(
         ):
             skipped_duplicate += 1
             continue
+        # Разбор PDF-выписки/1С-обмена не знает настоящий id операции банка —
+        # его external_ref (префикс "statement:...") синтетический хэш по
+        # (дата, сумма, описание) и НИКОГДА не совпадёт с external_ref той же
+        # операции, пришедшей через синк по API (там "alfa:<uuid>"/"tbank:<id>"
+        # и т.п.) — проверка выше её не поймает. Если счёт уже синкается по API
+        # (или начнёт синкаться позже за уже импортированный период), выписка
+        # задвоила бы каждую операцию. Подстраховка: для операций из выписки
+        # дополнительно ищем совпадение по смыслу (счёт+дата+сумма+тип) среди
+        # ЛЮБЫХ уже существующих операций, независимо от их external_ref.
+        if mapped["external_ref"].startswith("statement:") and (
+            db.query(Transaction)
+            .filter(
+                Transaction.company_id == company_id,
+                Transaction.account_id == account.id,
+                Transaction.date_odds == mapped["date_odds"],
+                Transaction.amount == mapped["amount"],
+                Transaction.type == mapped["type"],
+            )
+            .first()
+        ):
+            skipped_duplicate += 1
+            continue
         seen_refs_in_batch.add(mapped["external_ref"])
 
         amount_rub = convert_to_rub(db, account.currency, mapped["amount"], mapped["date_odds"])

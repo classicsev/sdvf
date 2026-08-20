@@ -3,8 +3,16 @@ from decimal import Decimal
 
 import pytest
 
-from app.statement_parsers import StatementParseError, alfabank_pdf, sberbank_pdf, tbank_pdf, vtb_pdf
-from app.statement_parsers.dispatch import _PARSERS
+from app.statement_parsers import (
+    StatementParseError,
+    alfabank_business_pdf,
+    alfabank_pdf,
+    client_bank_1c,
+    sberbank_pdf,
+    tbank_pdf,
+    vtb_pdf,
+)
+from app.statement_parsers.dispatch import _PARSERS, detect_and_parse
 
 # Синтетические тексты ниже воспроизводят реальную структуру справок/выписок
 # (сверено на настоящих документах Т-Банка/Сбербанка/Альфа-Банка/ВТБ — контрольные
@@ -140,6 +148,179 @@ def test_vtb_parses_table_rows_and_counterparty_column():
     assert expense["counterparty_name"] == "Петр Петрович"
     assert income["type"] == "income" and income["amount"] == Decimal("10000.00")
     assert income["counterparty_name"] == "Иванов Петр Иванович"
+
+
+CLIENT_BANK_1C_TEXT = """1CClientBankExchange
+ВерсияФормата=1.03
+Кодировка=Windows
+Отправитель=Альфа-Бизнес Онлайн
+Получатель=
+ДатаСоздания=15.03.2026
+ВремяСоздания=09:57:58
+ДатаНачала=01.01.2026
+ДатаКонца=15.03.2026
+РасчСчет=40702810000000000005
+
+СекцияРасчСчет
+ДатаНачала=01.01.2026
+ДатаКонца=15.03.2026
+РасчСчет=40702810000000000005
+НачальныйОстаток=100.00
+ВсегоПоступило=10000.00
+ВсегоСписано=500.00
+КонечныйОстаток=9600.00
+КонецРасчСчет
+
+СекцияДокумент=Платежное поручение
+Номер=1
+Дата=10.03.2026
+Сумма=500.00
+ПлательщикСчет=40702810000000000005
+ДатаСписано=10.03.2026
+Плательщик=ООО "РОМАШКА"
+ПлательщикИНН=1234567890
+ПлательщикРасчСчет=40702810000000000005
+ПолучательСчет=40702810000000000099
+ДатаПоступило=
+Получатель=ООО "ПОСТАВЩИК"
+ПолучательИНН=9876543210
+ПолучательРасчСчет=40702810000000000099
+НазначениеПлатежа=Оплата по счету N 10 за товар
+КонецДокумента
+
+СекцияДокумент=Платежное поручение
+Номер=2
+Дата=05.03.2026
+Сумма=10000.00
+ПлательщикСчет=40702810000000000042
+ДатаСписано=
+Плательщик=ООО "ПОКУПАТЕЛЬ"
+ПлательщикИНН=1112223330
+ПлательщикРасчСчет=40702810000000000042
+ПолучательСчет=40702810000000000005
+ДатаПоступило=05.03.2026
+Получатель=ООО "РОМАШКА"
+ПолучательИНН=1234567890
+ПолучательРасчСчет=40702810000000000005
+НазначениеПлатежа=Оплата по договору N 5
+КонецДокумента
+
+КонецВыписки
+"""
+
+
+ALFABANK_BUSINESS_TEXT = """АО «АЛЬФА-БАНК»
+ДО "Дальневосточный" в ФИЛИАЛ "ХАБАРОВСКИЙ" АО "АЛЬФА-БАНК"
+690000, г.Владивосток, ул. Семеновская, д.26
+Выписка по счёту
+к/сч. 30101810800000000770 в ОКЦ № 2 ДГУ Банка России
+БИК 040813770 ИНН 7728168971
+Счёт: 40817 810 0 00000 000006 Документ передан в электронном виде
+15.03.2026
+Владелец счёта: ООО "РОМАШКА" Иванов Иван Иванович
+Период: c 01.01.2026 по 15.03.2026 БИК: 040813770
+Валюта счёта: Российский рубль Корр. 30101 810 8 00000 000770
+ИНН: 1234567890 Адрес: 690000, г.Владивосток
+100,00 RUR 10000,00 RUR
+Остаток входящий: Обороты по дебету:
+9600,00 RUR 500,00 RUR
+Остаток исходящий: Обороты по кредиту:
+31.12.2025
+Дата предыдущей операции по счёту:
+Контрагент Код
+Дата Номер Дебет Кредит Назначение платежа Документ
+Наименование, ИНН, КПП, счёт Банк (БИК, наименование) дебитор
+"""
+
+ALFABANK_BUSINESS_ROWS = [
+    ["Дата", "Номер", "Дебет", "Кредит", "Контрагент", None, "Назначение платежа", "Код\nдебитор", "Документ"],
+    [None, None, None, None, "Наименование, ИНН, КПП, счёт", "Банк (БИК, наименование)", None, None, None],
+    [
+        "10.03.2026",
+        "1",
+        "500,00",
+        "",
+        'ООО "ПОСТАВЩИК"\nИНН: 9998887770 КПП: 999888777\nСчёт: 40702810000000000099',
+        "БИК: 044525593\nБанк: АО \"АЛЬФА-БАНК\" г Москва",
+        "Оплата по счету N 10 за товар",
+        "",
+        "Платежное\nпоручение",
+    ],
+    [
+        "05.03.2026",
+        "2",
+        "",
+        "10000,00",
+        'ООО "ПОКУПАТЕЛЬ"\nИНН: 1112223330\nСчёт: 40702810000000000042',
+        "БИК: 044525225\nБанк: ПАО Сбербанк г Москва",
+        "Оплата по договору N 5",
+        "",
+        "Платежное\nпоручение",
+    ],
+]
+
+
+def test_alfabank_business_splits_debet_credit_by_table_column():
+    stmt = alfabank_business_pdf.parse_rows(ALFABANK_BUSINESS_TEXT, ALFABANK_BUSINESS_ROWS)
+    assert stmt.account_number == "40817810000000000006"
+    assert stmt.period_from == date(2026, 1, 1)
+    assert stmt.period_to == date(2026, 3, 15)
+    assert stmt.opening_balance == Decimal("100.00")
+    assert stmt.closing_balance == Decimal("9600.00")
+    assert len(stmt.transactions) == 2
+    expense, income = stmt.transactions
+    assert expense["type"] == "expense" and expense["amount"] == Decimal("500.00")
+    assert expense["counterparty_name"] == 'ООО "ПОСТАВЩИК"'
+    assert expense["comment"] == "Оплата по счету N 10 за товар"
+    assert income["type"] == "income" and income["amount"] == Decimal("10000.00")
+    assert income["counterparty_name"] == 'ООО "ПОКУПАТЕЛЬ"'
+
+
+def test_alfabank_business_sniff_wins_over_personal_alfabank_parser():
+    # У обеих выписок в шапке встречается "АО «АЛЬФА-БАНК»" — sniff личного
+    # парсера (alfabank_pdf) слишком общий и матчит и бизнес-выписку тоже.
+    # alfabank_business_pdf должен стоять раньше в _PARSERS и перехватывать её
+    # первым — иначе бизнес-выписка ошибочно уйдёт в парсер для физлиц.
+    assert alfabank_pdf.sniff(ALFABANK_BUSINESS_TEXT) is True
+    assert alfabank_business_pdf.sniff(ALFABANK_BUSINESS_TEXT) is True
+    assert _PARSERS.index(alfabank_business_pdf) < _PARSERS.index(alfabank_pdf)
+
+
+def test_client_bank_1c_reads_balances_and_splits_by_own_account():
+    stmt = client_bank_1c.parse_text(CLIENT_BANK_1C_TEXT)
+    assert stmt.account_number == "40702810000000000005"
+    assert stmt.period_from == date(2026, 1, 1)
+    assert stmt.period_to == date(2026, 3, 15)
+    assert stmt.opening_balance == Decimal("100.00")
+    assert stmt.closing_balance == Decimal("9600.00")
+    assert len(stmt.transactions) == 2
+    expense, income = stmt.transactions
+    assert expense["type"] == "expense" and expense["amount"] == Decimal("500.00")
+    assert expense["counterparty_name"] == "ООО \"ПОСТАВЩИК\""
+    assert expense["comment"] == "Оплата по счету N 10 за товар"
+    assert expense["date_odds"] == date(2026, 3, 10)
+    assert income["type"] == "income" and income["amount"] == Decimal("10000.00")
+    assert income["counterparty_name"] == "ООО \"ПОКУПАТЕЛЬ\""
+    assert income["date_odds"] == date(2026, 3, 5)
+
+
+def test_client_bank_1c_sniff_bytes_handles_cp1251_encoding():
+    raw = CLIENT_BANK_1C_TEXT.encode("cp1251")
+    assert client_bank_1c.sniff_bytes(raw) is True
+    stmt = client_bank_1c.parse(raw)
+    assert len(stmt.transactions) == 2
+
+
+def test_client_bank_1c_sniff_bytes_rejects_pdf_and_other_banks():
+    assert client_bank_1c.sniff_bytes(TBANK_TEXT.encode("utf-8")) is False
+    assert client_bank_1c.sniff_bytes(b"%PDF-1.4 not a 1c file") is False
+
+
+def test_detect_and_parse_routes_1c_exchange_file_before_pdf_attempt():
+    # Байтовый sniff 1С-обмена должен сработать раньше попытки открыть файл как
+    # PDF (иначе на текстовом файле упадём с "Не удалось прочитать файл").
+    stmt = detect_and_parse(CLIENT_BANK_1C_TEXT.encode("cp1251"))
+    assert stmt.bank == "client_bank_1c"
 
 
 def test_dedup_key_is_deterministic_and_unique_for_repeated_identical_rows():

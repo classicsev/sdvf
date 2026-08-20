@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
   X,
@@ -19,6 +19,8 @@ import {
   ArrowUpDown,
   FileText,
   Receipt,
+  Building2,
+  ChevronDown,
 } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
@@ -88,18 +90,111 @@ const BALANCE_COLUMNS = [
   { key: "available", label: "Доступно", type: "number", align: "right" },
 ];
 
-function BalancesPanel({ token, companyId, companies, showCompanyColumn }) {
+// Универсальный выпадающий мультивыбор с чекбоксами и опцией "выбрать всё"
+// (пустой selectedIds = "всё"). Стиль/разметка — как в фильтре компаний в
+// Reference.jsx (fp-combobox-popup/fp-checkbox-row), для визуальной
+// консистентности с остальными списками справочников.
+function MultiSelectFilter({ icon: Icon, allLabel, countLabel, options, selectedIds, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [open]);
+
+  function toggle(id) {
+    onChange(selectedIds.includes(id) ? selectedIds.filter((x) => x !== id) : [...selectedIds, id]);
+  }
+
+  const buttonText =
+    selectedIds.length === 0
+      ? allLabel
+      : selectedIds.length === 1
+      ? options.find((o) => o.id === selectedIds[0])?.label || "1"
+      : `${countLabel}: ${selectedIds.length}`;
+
+  return (
+    <div style={{ position: "relative" }} ref={ref}>
+      <button type="button" className="fp-btn-tiny" onClick={() => setOpen((v) => !v)}>
+        {Icon && <Icon size={13} />}
+        {buttonText}
+        <ChevronDown size={13} className={`fp-combobox-chevron ${open ? "rotated" : ""}`} />
+      </button>
+      {open && (
+        <div className="fp-combobox-popup" style={{ width: 260, padding: "6px 0", maxHeight: 320, overflowY: "auto" }}>
+          <label className="fp-checkbox-row" style={{ fontWeight: selectedIds.length === 0 ? 600 : 400 }}>
+            <input type="checkbox" checked={selectedIds.length === 0} onChange={() => onChange([])} />
+            {allLabel}
+          </label>
+          <div style={{ borderTop: "1px solid var(--line)", margin: "4px 0" }} />
+          {options.map((o) => (
+            <label key={o.id} className="fp-checkbox-row">
+              <input type="checkbox" checked={selectedIds.includes(o.id)} onChange={() => toggle(o.id)} />
+              {o.label}
+            </label>
+          ))}
+          {options.length === 0 && (
+            <div className="fp-note" style={{ padding: "4px 12px" }}>
+              Нет данных
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BalancesPanel({ token, companies, multiCompany }) {
   const [hideZero, setHideZero] = useState(false);
+  // Остатки — единственная вкладка склада с полностью независимым набором
+  // фильтров (компании/склады/товары, каждый — мультивыбор с "выбрать всё"),
+  // не завязанным на общий одиночный переключатель компании в шапке раздела
+  // "Склад" (тот продолжает управлять только Движениями/Заказами/Производством/
+  // Справочниками — там он определяет контекст создаваемой записи).
+  const [companyFilterIds, setCompanyFilterIds] = useState([]);
+  const [warehouseFilterIds, setWarehouseFilterIds] = useState([]);
+  const [productFilterIds, setProductFilterIds] = useState([]);
   const {
     data: balances,
     loading,
     error,
-  } = useResource(
-    () => api.listWhBalances(token, { include_empty: true, company_id: companyId || undefined }),
-    [token, companyId]
-  );
+  } = useResource(() => api.listWhBalances(token, { include_empty: true }), [token]);
   const [sortKey, setSortKey] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
+
+  // Опции складов/товаров считаются из уже загруженных остатков (include_empty
+  // гарантирует полный список активных складов/товаров, даже с нулевым
+  // остатком), а не отдельным запросом — так набор фильтров всегда точно
+  // соответствует тому, что реально можно отфильтровать на этой вкладке.
+  const warehouseOptions = useMemo(() => {
+    const seen = new Map();
+    for (const b of balances || []) {
+      if (companyFilterIds.length === 0 || companyFilterIds.includes(b.company_id)) {
+        if (!seen.has(b.warehouse_id)) seen.set(b.warehouse_id, b.warehouse_name);
+      }
+    }
+    return [...seen.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "ru"));
+  }, [balances, companyFilterIds]);
+
+  const productOptions = useMemo(() => {
+    const seen = new Map();
+    for (const b of balances || []) {
+      if (companyFilterIds.length === 0 || companyFilterIds.includes(b.company_id)) {
+        if (!seen.has(b.product_id)) seen.set(b.product_id, b.product_name);
+      }
+    }
+    return [...seen.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "ru"));
+  }, [balances, companyFilterIds]);
 
   function toggleSort(col) {
     if (sortKey === col.key) {
@@ -113,6 +208,9 @@ function BalancesPanel({ token, companyId, companies, showCompanyColumn }) {
   const sortedBalances = useMemo(() => {
     let rows = [...(balances || [])];
     if (hideZero) rows = rows.filter((b) => b.quantity !== 0 || b.reserved !== 0);
+    if (companyFilterIds.length) rows = rows.filter((b) => companyFilterIds.includes(b.company_id));
+    if (warehouseFilterIds.length) rows = rows.filter((b) => warehouseFilterIds.includes(b.warehouse_id));
+    if (productFilterIds.length) rows = rows.filter((b) => productFilterIds.includes(b.product_id));
     if (!sortKey) return rows; // порядок по умолчанию — уже отсортирован бэкендом
     const col = BALANCE_COLUMNS.find((c) => c.key === sortKey);
     rows.sort((a, b) => {
@@ -123,15 +221,50 @@ function BalancesPanel({ token, companyId, companies, showCompanyColumn }) {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return rows;
-  }, [balances, sortKey, sortDir, hideZero]);
+  }, [balances, sortKey, sortDir, hideZero, companyFilterIds, warehouseFilterIds, productFilterIds]);
+
+  const showCompanyColumn = multiCompany;
 
   return (
     <div className="fp-panel fp-table-panel">
-      <div style={{ display: "flex", gap: 18, padding: "12px 16px 0", fontSize: 13 }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", padding: "12px 16px 0", fontSize: 13 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
           <input type="checkbox" checked={hideZero} onChange={(e) => setHideZero(e.target.checked)} />
           Скрыть нулевые остатки
         </label>
+        {multiCompany && (
+          <MultiSelectFilter
+            icon={Building2}
+            allLabel="Все компании"
+            countLabel="Компаний"
+            options={companies.map((m) => ({ id: m.company.id, label: m.company.name }))}
+            selectedIds={companyFilterIds}
+            onChange={(ids) => {
+              setCompanyFilterIds(ids);
+              // Смена набора компаний может исключить ранее выбранные склады/
+              // товары из доступных опций — убираем те, что больше не видны.
+              setWarehouseFilterIds((prev) =>
+                prev.filter((id) => ids.length === 0 || warehouseOptions.some((o) => o.id === id))
+              );
+            }}
+          />
+        )}
+        <MultiSelectFilter
+          icon={Boxes}
+          allLabel="Все склады"
+          countLabel="Складов"
+          options={warehouseOptions}
+          selectedIds={warehouseFilterIds}
+          onChange={setWarehouseFilterIds}
+        />
+        <MultiSelectFilter
+          icon={Package}
+          allLabel="Все товары"
+          countLabel="Товаров"
+          options={productOptions}
+          selectedIds={productFilterIds}
+          onChange={setProductFilterIds}
+        />
       </div>
       {loading ? (
         <div className="fp-loading">Загрузка…</div>
