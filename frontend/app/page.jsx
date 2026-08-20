@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { AuthProvider, useAuth } from "../lib/auth-context";
+import { LanguageProvider } from "../lib/i18n";
 import Login from "../components/Login";
 import Register from "../components/Register";
 import Shell from "../components/Shell";
@@ -18,8 +19,10 @@ function Gate() {
 
 export default function Page() {
   return (
-    <AuthProvider>
-      <Gate />
-    </AuthProvider>
+    <LanguageProvider>
+      <AuthProvider>
+        <Gate />
+      </AuthProvider>
+    </LanguageProvider>
   );
 }

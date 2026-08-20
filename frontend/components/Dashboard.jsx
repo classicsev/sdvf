@@ -21,14 +21,9 @@ import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { fmt, fmtDate } from "../lib/format";
 import { canEditReference } from "../lib/roles";
+import { useTranslation } from "../lib/i18n";
 
-const RANGE_OPTIONS = [
-  { key: "today", label: "Сегодня" },
-  { key: "week", label: "Неделя" },
-  { key: "month", label: "Месяц" },
-  { key: "quarter", label: "Квартал" },
-  { key: "year", label: "Год" },
-];
+const RANGE_KEYS = ["today", "week", "month", "quarter", "year"];
 
 function formatPeriodLabel(from, to) {
   if (!from || !to) return "";
@@ -45,6 +40,7 @@ function trendPct(current, prev) {
 }
 
 function TrendBadge({ pct, invert }) {
+  const { t } = useTranslation();
   if (pct === null || !Number.isFinite(pct)) return null;
   // invert: для расхода рост числа — это "хуже", красным, даже если pct > 0
   const isGood = invert ? pct <= 0 : pct >= 0;
@@ -59,7 +55,7 @@ function TrendBadge({ pct, invert }) {
         fontFamily: "'IBM Plex Mono', monospace",
         color: isGood ? "var(--accent)" : "var(--expense)",
       }}
-      title="К прошлому периоду"
+      title={t("dashboard.trendTitle")}
     >
       <Icon size={12} />
       {pct >= 0 ? "+" : ""}
@@ -90,6 +86,7 @@ function KpiCard({ label, value, tone, icon, periodLabel, trendPctValue, invertT
 
 export default function Dashboard() {
   const { token, user } = useAuth();
+  const { t } = useTranslation();
   const companies = user?.companies || [];
   const multiCompany = companies.length > 1;
 
@@ -147,7 +144,7 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyFilter, canEditAny]);
 
-  if (loading) return <div className="fp-loading">Загрузка…</div>;
+  if (loading) return <div className="fp-loading">{t("common.loading")}</div>;
   if (error) return <div className="fp-error-banner">{error}</div>;
   if (!summary) return null;
 
@@ -162,13 +159,13 @@ export default function Dashboard() {
     <div className="fp-dash">
       <div className="fp-tabs-row" style={{ marginBottom: 4 }}>
         <div className="fp-tabs">
-          {RANGE_OPTIONS.map((opt) => (
-            <button key={opt.key} className={range === opt.key ? "active" : ""} onClick={() => setRange(opt.key)}>
-              {opt.label}
+          {RANGE_KEYS.map((key) => (
+            <button key={key} className={range === key ? "active" : ""} onClick={() => setRange(key)}>
+              {t(`dashboard.range.${key}`)}
             </button>
           ))}
           <button className={isCustom ? "active" : ""} onClick={() => setRange("custom")}>
-            Свой период
+            {t("dashboard.range.custom")}
           </button>
         </div>
         {isCustom && (
@@ -180,7 +177,7 @@ export default function Dashboard() {
         )}
         {multiCompany && (
           <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>
-            <option value="">Все компании</option>
+            <option value="">{t("dashboard.allCompanies")}</option>
             {companies.map((m) => (
               <option key={m.company.id} value={m.company.id}>
                 {m.company.name}
@@ -190,7 +187,7 @@ export default function Dashboard() {
         )}
         {canEditAny && (
           <button type="button" className="fp-btn-tiny" onClick={() => runIntegrationSync(true)} disabled={syncing}>
-            <RefreshCw size={13} /> {syncing ? "Синхронизируем…" : "Синхронизировать"}
+            <RefreshCw size={13} /> {syncing ? t("dashboard.syncing") : t("dashboard.sync")}
           </button>
         )}
       </div>
@@ -203,14 +200,14 @@ export default function Dashboard() {
 
       <section className="fp-kpi-row">
         <KpiCard
-          label="Общий остаток"
+          label={t("dashboard.kpi.totalBalance")}
           value={fmt(summary.total_balance_rub, "RUB")}
           tone="neutral"
           icon={<Wallet size={16} />}
-          periodLabel="на сегодня"
+          periodLabel={t("dashboard.kpi.asOfToday")}
         />
         <KpiCard
-          label="Приход"
+          label={t("dashboard.kpi.income")}
           value={fmt(summary.period_income_rub, "RUB")}
           tone="income"
           icon={<ArrowUpRight size={16} />}
@@ -218,7 +215,7 @@ export default function Dashboard() {
           trendPctValue={trendPct(summary.period_income_rub, summary.prev_period_income_rub)}
         />
         <KpiCard
-          label="Расход"
+          label={t("dashboard.kpi.expense")}
           value={fmt(summary.period_expense_rub, "RUB")}
           tone="expense"
           icon={<ArrowDownRight size={16} />}
@@ -227,11 +224,11 @@ export default function Dashboard() {
           invertTrend
         />
         <KpiCard
-          label="Чистый поток"
+          label={t("dashboard.kpi.netFlow")}
           value={`${netFlow >= 0 ? "+" : ""}${fmt(netFlow, "RUB")}`}
           tone={netFlow >= 0 ? "income" : "expense"}
           icon={netFlow >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
-          periodLabel="Приход − Расход за период"
+          periodLabel={t("dashboard.kpi.netFlowSub")}
           trendPctValue={trendPct(netFlow, prevNetFlow)}
         />
       </section>
@@ -239,10 +236,10 @@ export default function Dashboard() {
       <section className="fp-grid-2">
         <div className="fp-panel">
           <div className="fp-panel-head">
-            <h3>Движение денег по месяцам</h3>
+            <h3>{t("dashboard.chart.title")}</h3>
           </div>
           {chartData.length === 0 ? (
-            <div className="fp-empty">Пока нет операций для построения графика</div>
+            <div className="fp-empty">{t("dashboard.chart.empty")}</div>
           ) : (
             <ResponsiveContainer width="100%" height={260}>
               <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -264,12 +261,22 @@ export default function Dashboard() {
                   formatter={(v) => fmt(v, "RUB")}
                   contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 13, border: "1px solid #E7E1D3", borderRadius: 6 }}
                 />
-                <Legend
-                  wrapperStyle={{ fontFamily: "IBM Plex Sans", fontSize: 12.5 }}
-                  formatter={(value) => (value === "Приход" ? "Приход" : "Расход")}
+                <Legend wrapperStyle={{ fontFamily: "IBM Plex Sans", fontSize: 12.5 }} />
+                <Area
+                  type="monotone"
+                  dataKey="income"
+                  name={t("dashboard.kpi.income")}
+                  stroke="#2F6F5E"
+                  fill="#DCEAE4"
+                  strokeWidth={2}
                 />
-                <Area type="monotone" dataKey="income" name="Приход" stroke="#2F6F5E" fill="#DCEAE4" strokeWidth={2} />
-                <Bar dataKey="expense" name="Расход" fill="#A8503F" radius={[3, 3, 0, 0]} barSize={22} />
+                <Bar
+                  dataKey="expense"
+                  name={t("dashboard.kpi.expense")}
+                  fill="#A8503F"
+                  radius={[3, 3, 0, 0]}
+                  barSize={22}
+                />
               </ComposedChart>
             </ResponsiveContainer>
           )}
@@ -277,10 +284,10 @@ export default function Dashboard() {
 
         <div className="fp-panel">
           <div className="fp-panel-head">
-            <h3>Остатки по счетам</h3>
+            <h3>{t("dashboard.accounts.title")}</h3>
           </div>
           {summary.accounts.length === 0 ? (
-            <div className="fp-empty">Нет счетов</div>
+            <div className="fp-empty">{t("dashboard.accounts.empty")}</div>
           ) : (
             <div className="fp-ledger">
               {summary.accounts.map((a) => (
@@ -306,10 +313,10 @@ export default function Dashboard() {
       {forecastData.length > 1 && (
         <section className="fp-panel">
           <div className="fp-panel-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-            <h3>Прогноз остатка на 30 дней</h3>
+            <h3>{t("dashboard.forecast.title")}</h3>
             <span className="fp-muted" style={{ fontSize: 12.5 }}>
-              По плановым операциям (Отчёты → Планирование): {forecastDelta >= 0 ? "+" : ""}
-              {fmt(forecastDelta, "RUB")} к {fmtDate(forecast.horizon_end)}
+              {t("dashboard.forecast.basedOn")}: {forecastDelta >= 0 ? "+" : ""}
+              {fmt(forecastDelta, "RUB")} {t("dashboard.forecast.to")} {fmtDate(forecast.horizon_end)}
             </span>
           </div>
           <ResponsiveContainer width="100%" height={200}>
@@ -339,7 +346,7 @@ export default function Dashboard() {
               <Area
                 type="monotone"
                 dataKey="projected_balance_rub"
-                name="Прогнозный остаток"
+                name={t("dashboard.forecast.seriesName")}
                 stroke="#2F6F5E"
                 fill="#DCEAE4"
                 strokeWidth={2}
@@ -352,7 +359,7 @@ export default function Dashboard() {
       {summary.by_company && summary.by_company.length > 1 && (
         <section className="fp-panel fp-table-panel">
           <div className="fp-panel-head" style={{ padding: "16px 16px 0" }}>
-            <h3>По компаниям</h3>
+            <h3>{t("dashboard.byCompany.title")}</h3>
             <span className="fp-muted" style={{ fontSize: 12 }}>
               {periodLabel}
             </span>
@@ -360,11 +367,11 @@ export default function Dashboard() {
           <table className="fp-table">
             <thead>
               <tr>
-                <th>Компания</th>
-                <th className="right">Остаток</th>
-                <th className="right">Приход</th>
-                <th className="right">Расход</th>
-                <th className="right">Чистый поток</th>
+                <th>{t("dashboard.table.company")}</th>
+                <th className="right">{t("dashboard.table.balance")}</th>
+                <th className="right">{t("dashboard.table.income")}</th>
+                <th className="right">{t("dashboard.table.expense")}</th>
+                <th className="right">{t("dashboard.table.netFlow")}</th>
               </tr>
             </thead>
             <tbody>
@@ -395,17 +402,17 @@ export default function Dashboard() {
       {summary.by_currency && summary.by_currency.length > 1 && (
         <section className="fp-panel fp-table-panel">
           <div className="fp-panel-head" style={{ padding: "16px 16px 0" }}>
-            <h3>По валютам</h3>
+            <h3>{t("dashboard.byCurrency.title")}</h3>
             <span className="fp-muted" style={{ fontSize: 12 }}>
-              на сегодня, без взаимозачёта — остаток каждой валюты в своих деньгах
+              {t("dashboard.byCurrency.hint")}
             </span>
           </div>
           <table className="fp-table">
             <thead>
               <tr>
-                <th>Валюта</th>
-                <th className="right">Остаток</th>
-                <th className="right">≈ RUB</th>
+                <th>{t("dashboard.table.currency")}</th>
+                <th className="right">{t("dashboard.table.balance")}</th>
+                <th className="right">{t("dashboard.table.rubEquiv")}</th>
               </tr>
             </thead>
             <tbody>
@@ -419,7 +426,7 @@ export default function Dashboard() {
                     {row.currency === "RUB"
                       ? "—"
                       : row.total_balance_rub === null
-                      ? "нет курса"
+                      ? t("dashboard.byCurrency.noRate")
                       : fmt(row.total_balance_rub, "RUB")}
                   </td>
                 </tr>

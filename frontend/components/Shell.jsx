@@ -14,9 +14,11 @@ import {
   Warehouse as WarehouseIcon,
   ToggleLeft,
   UserCircle,
+  Languages,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
+import { useTranslation } from "../lib/i18n";
 import { ROLE_LABELS, ROLE_NAV, NAV_MODULE, isModuleEnabled } from "../lib/roles";
 import ProfileModal from "./ProfileModal";
 import Dashboard from "./Dashboard";
@@ -32,32 +34,18 @@ import WarehouseView from "./Warehouse";
 import CompanyModules from "./CompanyModules";
 
 const NAV_ITEMS = [
-  { key: "dashboard", label: "Дашборд", icon: LayoutDashboard },
-  { key: "transactions", label: "Операции", icon: FileText },
-  { key: "payroll", label: "Зарплата", icon: Users },
-  { key: "reports", label: "Отчёты", icon: Landmark },
-  { key: "automation", label: "Автоматизация", icon: Zap },
-  { key: "reference", label: "Справочники", icon: Settings },
-  { key: "audit", label: "Аудит", icon: History },
-  { key: "users", label: "Пользователи", icon: Users },
-  { key: "api-keys", label: "API-ключи", icon: KeyRound },
-  { key: "warehouse", label: "Склад", icon: WarehouseIcon },
-  { key: "modules", label: "Модули", icon: ToggleLeft },
+  { key: "dashboard", icon: LayoutDashboard },
+  { key: "transactions", icon: FileText },
+  { key: "payroll", icon: Users },
+  { key: "reports", icon: Landmark },
+  { key: "automation", icon: Zap },
+  { key: "reference", icon: Settings },
+  { key: "audit", icon: History },
+  { key: "users", icon: Users },
+  { key: "api-keys", icon: KeyRound },
+  { key: "warehouse", icon: WarehouseIcon },
+  { key: "modules", icon: ToggleLeft },
 ];
-
-const VIEW_META = {
-  dashboard: { eyebrow: "Обзор", title: "Дашборд" },
-  transactions: { eyebrow: "Оперативный учёт", title: "Операции" },
-  payroll: { eyebrow: "Начислено · Выплачено · Остаток", title: "Зарплата" },
-  reports: { eyebrow: "Управленческая отчётность", title: "Отчёты" },
-  automation: { eyebrow: "Автоматизация ввода данных", title: "Автоматизация" },
-  reference: { eyebrow: "Настройка справочников", title: "Справочники" },
-  audit: { eyebrow: "Журнал действий пользователей", title: "Аудит" },
-  users: { eyebrow: "Управление доступом", title: "Пользователи" },
-  "api-keys": { eyebrow: "Доступ для внешних систем", title: "API-ключи" },
-  warehouse: { eyebrow: "Остатки · Движения · Производство", title: "Склад" },
-  modules: { eyebrow: "Тариф компании", title: "Модули" },
-};
 
 const VIEW_COMPONENTS = {
   dashboard: Dashboard,
@@ -79,6 +67,7 @@ const MODULES_NAV_ROLES = ["admin"];
 
 export default function Shell() {
   const { user, token, logout } = useAuth();
+  const { locale, setLocale, t } = useTranslation();
   const companies = user.companies || [];
   const userRoles = [...new Set(companies.map((m) => m.role))];
   const allowed = [
@@ -92,7 +81,7 @@ export default function Shell() {
   const [profileOpen, setProfileOpen] = useState(false);
 
   const ActiveView = VIEW_COMPONENTS[view] || (() => null);
-  const meta = VIEW_META[view] || {};
+  const meta = { eyebrow: t(`view.${view}.eyebrow`), title: t(`view.${view}.title`) };
 
   async function handleResend() {
     setResendState("busy");
@@ -109,13 +98,13 @@ export default function Shell() {
       {/* У OAuth-пользователей без email (user.email пуст) подтверждать нечего */}
       {!user.email_verified && user.email && (
         <div className="fp-verify-banner">
-          <span>Email не подтверждён. Проверьте почту (и папку «Спам»).</span>
+          <span>{t("shell.verifyBanner")}</span>
           <button onClick={handleResend} disabled={resendState !== "idle"}>
             {resendState === "sent"
-              ? "Письмо отправлено"
+              ? t("shell.resendSent")
               : resendState === "busy"
-              ? "Отправляем…"
-              : "Отправить письмо повторно"}
+              ? t("shell.resendBusy")
+              : t("shell.resendIdle")}
           </button>
         </div>
       )}
@@ -124,8 +113,8 @@ export default function Shell() {
         <div className="fp-brand">
           <div className="fp-brand-mark">₽</div>
           <div>
-            <div className="fp-brand-name">Учёт&nbsp;Движения</div>
-            <div className="fp-brand-sub">финансовый контур</div>
+            <div className="fp-brand-name">{t("shell.brandName")}</div>
+            <div className="fp-brand-sub">{t("shell.brandSub")}</div>
           </div>
         </div>
 
@@ -137,22 +126,30 @@ export default function Shell() {
               onClick={() => setView(item.key)}
             >
               <item.icon size={18} strokeWidth={1.75} />
-              {item.label}
+              {t(`nav.${item.key}`)}
             </button>
           ))}
         </nav>
 
         <div className="fp-sidebar-foot">
+          <button
+            type="button"
+            className="fp-logout-btn"
+            onClick={() => setLocale(locale === "ru" ? "zh" : "ru")}
+            title="RU / 中文"
+          >
+            <Languages size={14} /> {t("shell.languageToggle")}
+          </button>
           <div className="fp-role-box">{ROLE_LABELS[user.role] || user.role}</div>
           <div className="fp-role-hint">
             {user.full_name}
             {user.email ? ` · ${user.email}` : ""}
           </div>
           <button className="fp-logout-btn" onClick={() => setProfileOpen(true)}>
-            <UserCircle size={14} /> Профиль
+            <UserCircle size={14} /> {t("shell.profile")}
           </button>
           <button className="fp-logout-btn" onClick={logout}>
-            <LogOut size={14} /> Выйти
+            <LogOut size={14} /> {t("shell.logout")}
           </button>
         </div>
       </aside>

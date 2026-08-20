@@ -4,32 +4,24 @@ import { useState } from "react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { ROLE_LABELS, ROLE_DESCRIPTIONS } from "../lib/roles";
+import { useTranslation } from "../lib/i18n";
 
 const MODULES = [
-  {
-    key: "module_finance_enabled",
-    title: "Учёт",
-    description: "Операции, отчёты, зарплата, автоматизация и интеграции банков/CRM.",
-  },
-  {
-    key: "module_warehouse_enabled",
-    title: "Склад",
-    description: "Остатки, движения, заказы, производство.",
-  },
-  {
-    key: "module_china_enabled",
-    title: "Китай (中国)",
-    description: "Реквизиты компаний КНР, двуязычные RU/中文 документы и учёт по CNY.",
-  },
+  { key: "module_finance_enabled", titleKey: "modules.module.finance.title", descKey: "modules.module.finance.description" },
+  { key: "module_warehouse_enabled", titleKey: "modules.module.warehouse.title", descKey: "modules.module.warehouse.description" },
+  { key: "module_china_enabled", titleKey: "modules.module.china.title", descKey: "modules.module.china.description" },
 ];
 
+// Подписи полей 营业执照/СДВФ уже двуязычные (RU/中文) вне зависимости от
+// выбранного языка интерфейса — это названия юридических полей документа,
+// а не UI-текст, переводить их отдельно не нужно.
 const SDVF_FIELDS = [
-  { key: "sdvf_org_naming", label: "Наименование организации", required: true },
-  { key: "sdvf_org_inn", label: "ИНН", required: true },
-  { key: "sdvf_org_kpp", label: "КПП" },
-  { key: "sdvf_org_ogrn", label: "ОГРН/ОГРНИП" },
-  { key: "sdvf_org_address", label: "Адрес" },
-  { key: "sdvf_org_phone", label: "Телефон" },
+  { key: "sdvf_org_naming", labelKey: "modules.sdvf.naming", required: true },
+  { key: "sdvf_org_inn", labelKey: "modules.sdvf.inn", required: true },
+  { key: "sdvf_org_kpp", labelKey: "modules.sdvf.kpp" },
+  { key: "sdvf_org_ogrn", labelKey: "modules.sdvf.ogrn" },
+  { key: "sdvf_org_address", labelKey: "modules.sdvf.address" },
+  { key: "sdvf_org_phone", labelKey: "modules.sdvf.phone" },
 ];
 
 const CN_FIELDS = [
@@ -48,6 +40,7 @@ const CN_FORM_EMPTY = Object.fromEntries(CN_FIELDS.map((f) => [f.key, ""]));
 
 export default function CompanyModules() {
   const { token, user, refreshUser } = useAuth();
+  const { t } = useTranslation();
   const [error, setError] = useState("");
 
   const [companies, setCompanies] = useState(user.companies || []);
@@ -111,7 +104,7 @@ export default function CompanyModules() {
       await refreshCompanies();
       await refreshUser();
     } catch (err) {
-      setError(err.message || "Не удалось создать компанию");
+      setError(err.message || t("modules.err.createCompany"));
     } finally {
       setCompanySaving(false);
     }
@@ -131,7 +124,7 @@ export default function CompanyModules() {
       setInviteForm({ email: "", role: "viewer", full_name: "", password: "" });
       setInviteOpenFor(null);
     } catch (err) {
-      setInviteError(err.message || "Не удалось добавить пользователя");
+      setInviteError(err.message || t("modules.err.addMember"));
     } finally {
       setInviteSaving(false);
     }
@@ -158,7 +151,7 @@ export default function CompanyModules() {
       await refreshCompanies();
       await refreshUser();
     } catch (err) {
-      setEditError(err.message || "Не удалось сохранить");
+      setEditError(err.message || t("modules.err.save"));
     } finally {
       setEditSaving(false);
     }
@@ -171,7 +164,7 @@ export default function CompanyModules() {
       await refreshCompanies();
       await refreshUser();
     } catch (err) {
-      setEditError(err.message || "Не удалось сохранить");
+      setEditError(err.message || t("modules.err.save"));
     } finally {
       setModuleBusyKey(null);
     }
@@ -195,11 +188,11 @@ export default function CompanyModules() {
       setSdvfSaved(false);
       setInnLookup({
         loading: false,
-        message: `Найдено: ${found.name}. Проверьте и нажмите «Сохранить».`,
+        message: t("modules.foundByInn", { name: found.name }),
         error: "",
       });
     } catch (err) {
-      setInnLookup({ loading: false, message: "", error: err.message || "Не удалось найти по ИНН" });
+      setInnLookup({ loading: false, message: "", error: err.message || t("modules.err.findByInn") });
     }
   }
 
@@ -214,7 +207,7 @@ export default function CompanyModules() {
       await refreshUser();
       setSdvfSaved(true);
     } catch (err) {
-      setEditError(err.message || "Не удалось сохранить");
+      setEditError(err.message || t("modules.err.save"));
     } finally {
       setSdvfSaving(false);
     }
@@ -231,14 +224,14 @@ export default function CompanyModules() {
       await refreshUser();
       setCnSaved(true);
     } catch (err) {
-      setEditError(err.message || "Не удалось сохранить");
+      setEditError(err.message || t("modules.err.save"));
     } finally {
       setCnSaving(false);
     }
   }
 
   async function deleteCompany() {
-    if (!window.confirm(`Удалить компанию «${activeCompany.name}»? Это необратимо.`)) return;
+    if (!window.confirm(t("modules.deleteConfirm", { name: activeCompany.name }))) return;
     setDeleteError("");
     setDeleting(true);
     try {
@@ -247,7 +240,7 @@ export default function CompanyModules() {
       await refreshCompanies();
       await refreshUser();
     } catch (err) {
-      setDeleteError(err.message || "Не удалось удалить компанию");
+      setDeleteError(err.message || t("modules.err.deleteCompany"));
     } finally {
       setDeleting(false);
     }
@@ -256,16 +249,16 @@ export default function CompanyModules() {
   return (
     <div className="fp-dash">
       <div className="fp-tabs-row">
-        <h3 style={{ margin: 0, fontFamily: "'Fraunces', serif" }}>Модули</h3>
+        <h3 style={{ margin: 0, fontFamily: "'Fraunces', serif" }}>{t("modules.pageTitle")}</h3>
       </div>
 
       {error && <div className="fp-error-banner">{error}</div>}
 
       <div className="fp-panel" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontWeight: 600 }}>Мои компании</div>
+          <div style={{ fontWeight: 600 }}>{t("modules.myCompanies")}</div>
           <button type="button" className="fp-btn-primary" onClick={() => setNewCompanyOpen((v) => !v)}>
-            + Добавить компанию
+            {t("modules.addCompany")}
           </button>
         </div>
 
@@ -276,28 +269,28 @@ export default function CompanyModules() {
             style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12 }}
           >
             <label className="fp-span-2">
-              Название
+              {t("modules.name")}
               <input
                 required
                 value={newCompanyName}
                 onChange={(e) => setNewCompanyName(e.target.value)}
-                placeholder='Например, ООО "Тихоокеанская Фактория" или "Личные счета"'
+                placeholder={t("modules.namePlaceholder")}
               />
             </label>
             <label>
-              Тип
+              {t("modules.type")}
               <select value={newCompanyType} onChange={(e) => setNewCompanyType(e.target.value)}>
-                <option value="legal_entity">Юрлицо/ИП</option>
-                <option value="individual">Личные счета (физлицо)</option>
-                <option value="cn_legal_entity">Юрлицо в КНР (中国公司)</option>
+                <option value="legal_entity">{t("modules.type.legal_entity")}</option>
+                <option value="individual">{t("modules.type.individual")}</option>
+                <option value="cn_legal_entity">{t("modules.type.cn_legal_entity")}</option>
               </select>
             </label>
             <div className="fp-modal-foot fp-span-2" style={{ justifyContent: "flex-start" }}>
               <button type="submit" className="fp-btn-primary" disabled={companySaving}>
-                {companySaving ? "Создаём…" : "Создать"}
+                {companySaving ? t("modules.creating") : t("modules.create")}
               </button>
               <button type="button" className="fp-btn-ghost" onClick={cancelNewCompany} disabled={companySaving}>
-                Отмена
+                {t("common.cancel")}
               </button>
             </div>
           </form>
@@ -321,26 +314,26 @@ export default function CompanyModules() {
                   <div style={{ fontWeight: 600 }}>{m.company.name}</div>
                   <div className="fp-muted" style={{ fontSize: 12 }}>
                     {m.company.company_type === "individual"
-                      ? "Личные счета"
+                      ? t("modules.companyLabel.individual")
                       : m.company.company_type === "cn_legal_entity"
-                      ? "Юрлицо в КНР"
-                      : "Юрлицо/ИП"}{" "}
+                      ? t("modules.companyLabel.cn")
+                      : t("modules.companyLabel.legal")}{" "}
                     ·{" "}
                     {ROLE_LABELS[m.role] || m.role}
-                    {m.company.sdvf_org_inn ? " · связана с СДВФ" : ""}
+                    {m.company.sdvf_org_inn ? ` · ${t("modules.linkedToSdvf")}` : ""}
                   </div>
                 </div>
                 {m.role === "admin" && (
                   <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                     <button type="button" className="fp-btn-ghost" onClick={() => openSettings(m.company)}>
-                      {settingsFor === m.company.id ? "Скрыть настройки" : "Настроить"}
+                      {settingsFor === m.company.id ? t("modules.hideSettings") : t("modules.configure")}
                     </button>
                     <button
                       type="button"
                       className="fp-btn-ghost"
                       onClick={() => setInviteOpenFor(inviteOpenFor === m.company.id ? null : m.company.id)}
                     >
-                      + Пользователь
+                      {t("modules.addUser")}
                     </button>
                   </span>
                 )}
@@ -353,7 +346,7 @@ export default function CompanyModules() {
                   style={{ border: "1px solid var(--line)", borderTop: "none", borderRadius: "0 0 8px 8px", padding: 12 }}
                 >
                   <label>
-                    Email
+                    {t("modules.email")}
                     <input
                       required
                       type="email"
@@ -362,7 +355,7 @@ export default function CompanyModules() {
                     />
                   </label>
                   <label>
-                    Роль
+                    {t("modules.role")}
                     <select
                       value={inviteForm.role}
                       onChange={(e) => setInviteForm((f) => ({ ...f, role: e.target.value }))}
@@ -395,7 +388,7 @@ export default function CompanyModules() {
                         textDecoration: "underline",
                       }}
                     >
-                      {rolesHelpOpen ? "Скрыть описание ролей" : "Что даёт каждая роль?"}
+                      {rolesHelpOpen ? t("modules.rolesHelpHide") : t("modules.rolesHelpShow")}
                     </button>
                     {rolesHelpOpen && (
                       <div
@@ -421,18 +414,17 @@ export default function CompanyModules() {
                     )}
                   </div>
                   <div className="fp-span-2 fp-note" style={{ margin: 0 }}>
-                    Если у этого email уже есть аккаунт в Учёте — просто получит доступ. Если нет —
-                    укажите имя и пароль, чтобы создать новый.
+                    {t("modules.inviteNote")}
                   </div>
                   <label>
-                    Имя (для нового аккаунта)
+                    {t("modules.fullNameNew")}
                     <input
                       value={inviteForm.full_name}
                       onChange={(e) => setInviteForm((f) => ({ ...f, full_name: e.target.value }))}
                     />
                   </label>
                   <label>
-                    Пароль (для нового аккаунта)
+                    {t("modules.passwordNew")}
                     <input
                       type="password"
                       value={inviteForm.password}
@@ -442,10 +434,10 @@ export default function CompanyModules() {
                   {inviteError && <div className="fp-form-error fp-span-2">{inviteError}</div>}
                   <div className="fp-modal-foot fp-span-2" style={{ justifyContent: "flex-start" }}>
                     <button type="submit" className="fp-btn-primary" disabled={inviteSaving}>
-                      {inviteSaving ? "Добавляем…" : "Добавить"}
+                      {inviteSaving ? t("modules.inviting") : t("modules.invite")}
                     </button>
                     <button type="button" className="fp-btn-ghost" onClick={cancelInvite} disabled={inviteSaving}>
-                      Отмена
+                      {t("common.cancel")}
                     </button>
                   </div>
                 </form>
@@ -467,7 +459,7 @@ export default function CompanyModules() {
 
                   <form className="fp-form-grid" onSubmit={saveCompanyEdit}>
                     <label className="fp-span-2">
-                      Название
+                      {t("modules.name")}
                       <input
                         required
                         value={editForm.name}
@@ -475,25 +467,25 @@ export default function CompanyModules() {
                       />
                     </label>
                     <label>
-                      Тип
+                      {t("modules.type")}
                       <select
                         value={editForm.company_type}
                         onChange={(e) => setEditForm((f) => ({ ...f, company_type: e.target.value }))}
                       >
-                        <option value="legal_entity">Юрлицо/ИП</option>
-                        <option value="individual">Личные счета (физлицо)</option>
-                        <option value="cn_legal_entity">Юрлицо в КНР (中国公司)</option>
+                        <option value="legal_entity">{t("modules.type.legal_entity")}</option>
+                        <option value="individual">{t("modules.type.individual")}</option>
+                        <option value="cn_legal_entity">{t("modules.type.cn_legal_entity")}</option>
                       </select>
                     </label>
                     <div className="fp-modal-foot fp-span-2" style={{ justifyContent: "flex-start" }}>
                       <button type="submit" className="fp-btn-primary" disabled={editSaving}>
-                        {editSaving ? "Сохраняем…" : "Сохранить название"}
+                        {editSaving ? t("modules.saveNameSaving") : t("modules.saveName")}
                       </button>
                     </div>
                   </form>
 
                   <div>
-                    <div style={{ fontWeight: 600, marginBottom: 8 }}>Модули</div>
+                    <div style={{ fontWeight: 600, marginBottom: 8 }}>{t("modules.modulesHeading")}</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {MODULES.map((mod) => (
                         <label
@@ -517,9 +509,9 @@ export default function CompanyModules() {
                             style={{ marginTop: 3 }}
                           />
                           <div>
-                            <div style={{ fontWeight: 600 }}>{mod.title}</div>
+                            <div style={{ fontWeight: 600 }}>{t(mod.titleKey)}</div>
                             <div className="fp-muted" style={{ fontSize: 12.5 }}>
-                              {mod.description}
+                              {t(mod.descKey)}
                             </div>
                           </div>
                         </label>
@@ -529,15 +521,15 @@ export default function CompanyModules() {
 
                   {activeCompany.company_type !== "cn_legal_entity" && (
                   <div>
-                    <div style={{ fontWeight: 600 }}>Реквизиты для СДВФ</div>
+                    <div style={{ fontWeight: 600 }}>{t("modules.sdvfHeading")}</div>
                     <p className="fp-note" style={{ margin: "4px 0 12px" }}>
-                      Нужны для генерации Счёт/УПД и для синхронизации контрагентов — заполняются один раз.
+                      {t("modules.sdvfNote")}
                     </p>
                     <form className="fp-form-grid" onSubmit={saveSdvfForm}>
                       {SDVF_FIELDS.map((f) =>
                         f.key === "sdvf_org_inn" ? (
                           <label key={f.key}>
-                            {f.label}
+                            {t(f.labelKey)}
                             <div style={{ display: "flex", gap: 6 }}>
                               <input
                                 required={f.required}
@@ -555,16 +547,20 @@ export default function CompanyModules() {
                                 className="fp-btn-ghost"
                                 onClick={fillFromInn}
                                 disabled={!innIsValid || innLookup.loading}
-                                title={innIsValid ? "Подставить реквизиты из ЕГРЮЛ/ЕГРИП" : "Введите ИНН: 10 цифр или 12 для ИП"}
+                                title={
+                                  innIsValid
+                                    ? t("modules.fillFromInnTooltipValid")
+                                    : t("modules.fillFromInnTooltipInvalid")
+                                }
                                 style={{ whiteSpace: "nowrap" }}
                               >
-                                {innLookup.loading ? "Ищем…" : "Заполнить по ИНН"}
+                                {innLookup.loading ? t("modules.fillFromInnSearching") : t("modules.fillFromInn")}
                               </button>
                             </div>
                           </label>
                         ) : (
                           <label key={f.key}>
-                            {f.label}
+                            {t(f.labelKey)}
                             <input
                               required={f.required}
                               value={sdvfForm[f.key]}
@@ -584,9 +580,9 @@ export default function CompanyModules() {
                       {innLookup.error && <div className="fp-form-error fp-span-2">{innLookup.error}</div>}
                       <div className="fp-modal-foot fp-span-2" style={{ justifyContent: "flex-start" }}>
                         <button type="submit" className="fp-btn-primary" disabled={sdvfSaving}>
-                          {sdvfSaving ? "Сохраняем…" : "Сохранить реквизиты"}
+                          {sdvfSaving ? t("modules.saveNameSaving") : t("modules.saveRequisites")}
                         </button>
-                        {sdvfSaved && <span className="fp-muted" style={{ fontSize: 12.5 }}>Сохранено</span>}
+                        {sdvfSaved && <span className="fp-muted" style={{ fontSize: 12.5 }}>{t("modules.saved")}</span>}
                       </div>
                     </form>
                   </div>
@@ -594,9 +590,9 @@ export default function CompanyModules() {
 
                   {activeCompany.company_type === "cn_legal_entity" && (
                   <div>
-                    <div style={{ fontWeight: 600 }}>Реквизиты 营业执照 (свидетельство о регистрации КНР)</div>
+                    <div style={{ fontWeight: 600 }}>{t("modules.cnHeading")}</div>
                     <p className="fp-note" style={{ margin: "4px 0 12px" }}>
-                      Из свидетельства о регистрации бизнеса КНР — нужны для двуязычных документов и отчётности.
+                      {t("modules.cnNote")}
                     </p>
                     <form className="fp-form-grid" onSubmit={saveCnForm}>
                       {CN_FIELDS.map((f) => (
@@ -626,9 +622,9 @@ export default function CompanyModules() {
                       ))}
                       <div className="fp-modal-foot fp-span-2" style={{ justifyContent: "flex-start" }}>
                         <button type="submit" className="fp-btn-primary" disabled={cnSaving}>
-                          {cnSaving ? "Сохраняем…" : "Сохранить реквизиты"}
+                          {cnSaving ? t("modules.saveNameSaving") : t("modules.saveRequisites")}
                         </button>
-                        {cnSaved && <span className="fp-muted" style={{ fontSize: 12.5 }}>Сохранено</span>}
+                        {cnSaved && <span className="fp-muted" style={{ fontSize: 12.5 }}>{t("modules.saved")}</span>}
                       </div>
                     </form>
                   </div>
@@ -643,11 +639,10 @@ export default function CompanyModules() {
                       onClick={deleteCompany}
                       disabled={deleting}
                     >
-                      {deleting ? "Удаляем…" : "Удалить компанию"}
+                      {deleting ? t("modules.deleting") : t("modules.deleteCompany")}
                     </button>
                     <p className="fp-note" style={{ margin: "6px 0 0" }}>
-                      Удалить можно только компанию без данных (счетов, операций, контрагентов и т.п.) —
-                      если данные уже есть, отключите модули вместо удаления.
+                      {t("modules.deleteNote")}
                     </p>
                   </div>
                 </div>
