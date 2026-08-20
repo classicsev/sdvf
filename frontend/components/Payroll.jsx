@@ -292,7 +292,11 @@ function AccrualsPanel({ token, employees, projects, accruals, reload, companyFi
   // Проект должен принадлежать той же компании, что и выбранный сотрудник.
   const selectedEmployee = employeesById[form.employee_id];
   const selectableProjects = (projects || []).filter(
-    (p) => !selectedEmployee || p.company_id === selectedEmployee.company_id
+    (p) =>
+      !selectedEmployee ||
+      p.company_id === selectedEmployee.company_id ||
+      p.is_global ||
+      (p.visible_company_ids || []).includes(selectedEmployee.company_id)
   );
 
   function openAdd() {

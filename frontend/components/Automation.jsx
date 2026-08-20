@@ -594,10 +594,20 @@ export default function Automation() {
   const [saving, setSaving] = useState(false);
 
   const selectableCategories = (categories || []).filter(
-    (c) => !multiCompany || !formCompanyId || c.company_id === formCompanyId
+    (c) =>
+      !multiCompany ||
+      !formCompanyId ||
+      c.company_id === formCompanyId ||
+      c.is_global ||
+      (c.visible_company_ids || []).includes(formCompanyId)
   );
   const selectableProjects = (projects || []).filter(
-    (p) => !multiCompany || !formCompanyId || p.company_id === formCompanyId
+    (p) =>
+      !multiCompany ||
+      !formCompanyId ||
+      p.company_id === formCompanyId ||
+      p.is_global ||
+      (p.visible_company_ids || []).includes(formCompanyId)
   );
 
   function openAdd() {

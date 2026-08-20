@@ -349,7 +349,19 @@ export default function Transactions() {
   const selectable = (list, selectedId) =>
     (list || [])
       .filter((x) => x.is_active !== false || x.id === selectedId)
-      .filter((x) => !multiCompany || !formCompanyId || x.company_id === formCompanyId || x.id === selectedId);
+      .filter(
+        (x) =>
+          !multiCompany ||
+          !formCompanyId ||
+          x.company_id === formCompanyId ||
+          x.id === selectedId ||
+          // Статьи/проекты могут быть видны в компании не только "своей" —
+          // is_global (везде) или visible_company_ids (конкретный список),
+          // см. Reference.jsx/reference.py::apply_visibility_filter. У счетов
+          // и контрагентов этих полей нет — здесь просто не совпадёт, без эффекта.
+          x.is_global ||
+          (x.visible_company_ids || []).includes(formCompanyId)
+      );
 
   const filteredCategories = selectable(categories, form.category_id).filter((c) => c.type === form.type);
   const selectableAccounts = selectable(accounts, form.account_id);
