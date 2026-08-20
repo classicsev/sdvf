@@ -28,6 +28,40 @@ def test_create_transaction_rub_no_conversion(client, db_session):
     assert body["amount_rub"] == 1000.0
 
 
+def test_update_transaction_with_date_odds_in_payload_does_not_crash_audit_log(client, db_session):
+    """Регрессия: log_action писал payload.model_dump(exclude_unset=True) как
+    есть в JSONB-колонку — если фронт присылает date_odds (а он присылает
+    его всегда, даже когда дата не менялась, вместе с остальными полями
+    формы), это объект datetime.date, а не строка, и драйвер падал с
+    "Object of type date is not JSON serializable" — реальный сбой на
+    проде при обычном редактировании операции (смена статьи+контрагента)."""
+    admin = make_user(db_session, RoleEnum.admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.expense)
+    other_category = make_category(db_session, name="Другая статья", tx_type=TxTypeEnum.expense)
+
+    created = client.post(
+        "/transactions",
+        headers=auth_headers(admin),
+        json={
+            "date_odds": "2026-06-01",
+            "account_id": account.id,
+            "category_id": category.id,
+            "type": "expense",
+            "amount": 100,
+            "currency": "RUB",
+        },
+    ).json()
+
+    resp = client.patch(
+        f"/transactions/{created['id']}",
+        headers=auth_headers(admin),
+        json={"date_odds": "2026-06-01", "category_id": other_category.id, "amount": 225091},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["category_id"] == other_category.id
+
+
 def test_create_transaction_foreign_currency_without_rate_fails(client, db_session):
     admin = make_user(db_session, RoleEnum.admin)
     account = make_account(db_session, currency="USD")
