@@ -802,6 +802,8 @@ const DICT = {
     "wh.edit": "Редактировать",
     "wh.select": "Выберите",
     "wh.deactivatedGenericAlert": "«{name}» уже используется — деактивировано вместо удаления.",
+
+    "common.loadError": "Ошибка загрузки",
   },
   zh: {
     "common.loading": "加载中…",
@@ -1577,6 +1579,8 @@ const DICT = {
     "wh.edit": "编辑",
     "wh.select": "请选择",
     "wh.deactivatedGenericAlert": "「{name}」正在使用中 — 已停用而非删除。",
+
+    "common.loadError": "加载失败",
   },
 };
 

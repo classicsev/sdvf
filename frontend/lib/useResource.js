@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "./i18n";
 
 export function useResource(fetcher, deps = []) {
+  const { t } = useTranslation();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -10,7 +12,7 @@ export function useResource(fetcher, deps = []) {
     setError("");
     fetcher()
       .then((result) => setData(result))
-      .catch((err) => setError(err.message || "Ошибка загрузки"))
+      .catch((err) => setError(err.message || t("common.loadError")))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
