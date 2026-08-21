@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { Plus, Download, X, Pencil, Trash2, Lock, RefreshCw } from "lucide-react";
+import { Plus, Download, X, Pencil, Trash2, Lock, RefreshCw, CalendarCheck, Wallet, List as ListIcon } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
@@ -27,6 +27,7 @@ function sourceBadge(externalRef, t) {
 
 const EMPTY_FORM = {
   date_odds: new Date().toISOString().slice(0, 10),
+  date_opu: "",
   account_id: "",
   category_id: "",
   project_id: "",
@@ -53,6 +54,7 @@ export default function Transactions() {
   // "Автоматизация".
   const canSyncIntegrations = companies.some((m) => m.role === "admin");
 
+  const [view, setView] = useState("operations"); // "operations" | "balances"
   const [filters, setFilters] = useState({
     company: "",
     project: "",
@@ -67,6 +69,14 @@ export default function Transactions() {
   const [formCompanyId, setFormCompanyId] = useState("");
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [addAnother, setAddAnother] = useState(false);
+  const [saveConfirmMsg, setSaveConfirmMsg] = useState("");
+  const [closeMonthOpen, setCloseMonthOpen] = useState(false);
+  const [closeMonthCompanyId, setCloseMonthCompanyId] = useState("");
+  const [closeMonthValue, setCloseMonthValue] = useState(new Date().toISOString().slice(0, 7));
+  const [closeMonthBusy, setCloseMonthBusy] = useState(false);
+  const [closeMonthError, setCloseMonthError] = useState("");
+  const [closeMonthMsg, setCloseMonthMsg] = useState("");
   const [exporting, setExporting] = useState(false);
   const [pageSize, setPageSize] = useState(50);
   const [currentPage, setCurrentPage] = useState(0);
@@ -162,11 +172,15 @@ export default function Transactions() {
 
   function openAdd() {
     setEditing(null);
-    setForm(EMPTY_FORM);
+    // Если операции сейчас отфильтрованы по проекту — подхватываем его в
+    // форму создания, как уже делается для компании ниже.
+    setForm({ ...EMPTY_FORM, project_id: filters.project || "" });
     const editableCompanies = companies.filter((m) => canEditTransactions(m.role));
     const preselected = editableCompanies.find((m) => m.company.id === filters.company) || editableCompanies[0];
     setFormCompanyId(preselected?.company.id || "");
     setFormError("");
+    setAddAnother(false);
+    setSaveConfirmMsg("");
     setModalOpen(true);
     // Сбросить выбор при добавлении новой операции
     setSelectedTransactionIds(new Set());
@@ -174,8 +188,11 @@ export default function Transactions() {
 
   function openEdit(tx) {
     setEditing(tx);
+    setAddAnother(false);
+    setSaveConfirmMsg("");
     setForm({
       date_odds: tx.date_odds,
+      date_opu: tx.date_opu || "",
       account_id: tx.account_id,
       category_id: tx.category_id,
       project_id: tx.project_id || "",
@@ -237,6 +254,7 @@ export default function Transactions() {
     try {
       const payload = {
         date_odds: form.date_odds,
+        date_opu: form.date_opu || null,
         account_id: form.account_id,
         category_id: form.category_id,
         project_id: form.project_id || null,
@@ -250,10 +268,27 @@ export default function Transactions() {
       };
       if (editing) {
         await api.updateTransaction(token, editing.id, payload);
+        setModalOpen(false);
       } else {
         await api.createTransaction(token, payload, formCompanyId || undefined);
+        if (addAnother) {
+          // Оставляем "контекст" (дату, счёт, проект, тип, валюту) — обычно
+          // повторяется у нескольких операций подряд, очищаем то, что
+          // специфично для конкретной операции.
+          setForm((prev) => ({
+            ...EMPTY_FORM,
+            date_odds: prev.date_odds,
+            account_id: prev.account_id,
+            project_id: prev.project_id,
+            type: prev.type,
+            currency: prev.currency,
+          }));
+          setSaveConfirmMsg(t("tx.savedConfirm"));
+          setTimeout(() => setSaveConfirmMsg(""), 1500);
+        } else {
+          setModalOpen(false);
+        }
       }
-      setModalOpen(false);
       reload();
     } catch (err) {
       setFormError(err.message);
@@ -352,6 +387,32 @@ export default function Transactions() {
     }
   }
 
+  const adminCompanies = companies.filter((m) => m.role === "admin");
+
+  function openCloseMonth() {
+    const preselected = adminCompanies.find((m) => m.company.id === filters.company) || adminCompanies[0];
+    setCloseMonthCompanyId(preselected?.company.id || "");
+    setCloseMonthValue(new Date().toISOString().slice(0, 7));
+    setCloseMonthError("");
+    setCloseMonthMsg("");
+    setCloseMonthOpen(true);
+  }
+
+  async function handleCloseMonth() {
+    setCloseMonthBusy(true);
+    setCloseMonthError("");
+    setCloseMonthMsg("");
+    try {
+      const result = await api.closeMonth(token, closeMonthCompanyId, `${closeMonthValue}-01`);
+      setCloseMonthMsg(t("tx.closeMonth.result", { count: result.updated }));
+      reload();
+    } catch (err) {
+      setCloseMonthError(err.message);
+    } finally {
+      setCloseMonthBusy(false);
+    }
+  }
+
   const selectable = (list, selectedId) =>
     (list || [])
       .filter((x) => x.is_active !== false || x.id === selectedId)
@@ -378,6 +439,21 @@ export default function Transactions() {
 
   return (
     <div className="fp-dash">
+      <div className="fp-tabs">
+        <button className={view === "operations" ? "active" : ""} onClick={() => setView("operations")}>
+          <ListIcon size={14} />
+          {t("tx.view.operations")}
+        </button>
+        <button className={view === "balances" ? "active" : ""} onClick={() => setView("balances")}>
+          <Wallet size={14} />
+          {t("tx.view.balances")}
+        </button>
+      </div>
+
+      {view === "balances" ? (
+        <AccountBalancesPanel token={token} companyId={filters.company} />
+      ) : (
+      <>
       <div className="fp-tabs-row">
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {multiCompany && (
@@ -430,6 +506,11 @@ export default function Transactions() {
           {canSyncIntegrations && (
             <button className="fp-btn-ghost" onClick={() => runIntegrationSync(true)} disabled={syncing}>
               <RefreshCw size={15} /> {syncing ? t("dashboard.syncing") : t("dashboard.sync")}
+            </button>
+          )}
+          {adminCompanies.length > 0 && (
+            <button className="fp-btn-ghost" onClick={openCloseMonth}>
+              <CalendarCheck size={15} /> {t("tx.closeMonth")}
             </button>
           )}
           <button className="fp-btn-ghost" onClick={handleExport} disabled={exporting}>
@@ -570,6 +651,7 @@ export default function Transactions() {
                 )}
                 {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
                 <th>{t("tx.col.date")}</th>
+                <th>{t("tx.col.dateOpu")}</th>
                 <th>{t("tx.col.account")}</th>
                 <th>{t("tx.col.category")}</th>
                 <th>{t("tx.col.project")}</th>
@@ -608,6 +690,7 @@ export default function Transactions() {
                       <td>{companies.find((m) => m.company.id === tx.company_id)?.company.name || "—"}</td>
                     )}
                     <td>{fmtDate(tx.date_odds)}</td>
+                    <td className="fp-muted">{tx.date_opu ? fmtDate(tx.date_opu) : "—"}</td>
                     <td>
                       {acc?.name || "—"}
                       {acc && <span className={`fp-currency-badge ${acc.currency}`}>{acc.currency}</span>}
@@ -691,6 +774,8 @@ export default function Transactions() {
           </div>
         )}
       </div>
+      </>
+      )}
 
       {modalOpen && (
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
@@ -752,6 +837,10 @@ export default function Transactions() {
                   value={form.date_odds}
                   onChange={(e) => updateField("date_odds", e.target.value)}
                 />
+              </label>
+              <label>
+                {t("tx.form.dateOpu")}
+                <input type="date" value={form.date_opu} onChange={(e) => updateField("date_opu", e.target.value)} />
               </label>
               <label>
                 {t("tx.form.account")}
@@ -854,7 +943,16 @@ export default function Transactions() {
 
               {formError && <div className="fp-form-error fp-span-2">{formError}</div>}
 
-              <div className="fp-modal-foot fp-span-2">
+              <div className="fp-modal-foot fp-span-2" style={{ justifyContent: "space-between" }}>
+                {!editing && (
+                  <label className="fp-checkbox-row" style={{ marginRight: "auto" }}>
+                    <input type="checkbox" checked={addAnother} onChange={(e) => setAddAnother(e.target.checked)} />
+                    {t("tx.addAnother")}
+                  </label>
+                )}
+                {saveConfirmMsg && (
+                  <span style={{ color: "var(--accent)", fontSize: 13 }}>✓ {saveConfirmMsg}</span>
+                )}
                 <button type="button" className="fp-btn-ghost" onClick={() => setModalOpen(false)}>
                   {t("common.cancel")}
                 </button>
@@ -864,6 +962,96 @@ export default function Transactions() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {closeMonthOpen && (
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setCloseMonthOpen(false))}>
+          <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="fp-modal-head">
+              <h3>{t("tx.closeMonth.title")}</h3>
+              <button className="fp-icon-btn" onClick={() => setCloseMonthOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="fp-form-grid">
+              <label>
+                {t("tx.form.company")}
+                <select value={closeMonthCompanyId} onChange={(e) => setCloseMonthCompanyId(e.target.value)}>
+                  {adminCompanies.map((m) => (
+                    <option key={m.company.id} value={m.company.id}>
+                      {m.company.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {t("tx.closeMonth.month")}
+                <input type="month" value={closeMonthValue} onChange={(e) => setCloseMonthValue(e.target.value)} />
+              </label>
+              <p className="fp-note fp-span-2">{t("tx.closeMonth.confirm")}</p>
+              {closeMonthError && <div className="fp-form-error fp-span-2">{closeMonthError}</div>}
+              {closeMonthMsg && <div className="fp-span-2" style={{ color: "var(--accent)", fontSize: 13 }}>✓ {closeMonthMsg}</div>}
+              <div className="fp-modal-foot fp-span-2">
+                <button type="button" className="fp-btn-ghost" onClick={() => setCloseMonthOpen(false)}>
+                  {t("common.cancel")}
+                </button>
+                <button
+                  type="button"
+                  className="fp-btn-primary"
+                  onClick={handleCloseMonth}
+                  disabled={closeMonthBusy || !closeMonthCompanyId}
+                >
+                  {closeMonthBusy ? t("common.saving") : t("tx.closeMonth")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Остатки по счетам прямо на экране Операций — без перехода на Дашборд.
+// Отдельный лёгкий эндпоинт (/reports/account-balances), а не dashboardSummary
+// целиком: тот попутно считает доход/расход за период дважды (текущий и
+// предыдущий) — данные, которые здесь не нужны.
+function AccountBalancesPanel({ token, companyId }) {
+  const { t } = useTranslation();
+  const { data, loading, error } = useResource(
+    () => api.accountBalances(token, { company_id: companyId || undefined }),
+    [token, companyId]
+  );
+  const accounts = data?.accounts || [];
+
+  return (
+    <div className="fp-panel">
+      <div className="fp-panel-head">
+        <h3>{t("dashboard.accounts.title")}</h3>
+      </div>
+      {error && <div className="fp-error-banner">{error}</div>}
+      {loading ? (
+        <div className="fp-loading">{t("common.loading")}</div>
+      ) : accounts.length === 0 ? (
+        <div className="fp-empty">{t("dashboard.accounts.empty")}</div>
+      ) : (
+        <div className="fp-ledger">
+          {accounts.map((a) => (
+            <div className="ledger-row" key={a.id}>
+              <span className="label">
+                {a.name}
+                <span className={`fp-currency-badge ${a.currency}`}>{a.currency}</span>
+              </span>
+              <span className="fill" />
+              <span className="value" style={{ color: a.balance < 0 ? "#A8503F" : "#1B2430" }}>
+                {fmt(a.balance, a.currency)}
+                {a.currency !== "RUB" && a.balance_rub !== null && (
+                  <span className="fp-sub-value"> ≈ {fmt(a.balance_rub, "RUB")}</span>
+                )}
+              </span>
+            </div>
+          ))}
         </div>
       )}
     </div>

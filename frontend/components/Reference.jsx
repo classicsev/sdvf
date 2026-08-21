@@ -71,8 +71,21 @@ const TABS = {
     remove: (token, id) => api.deleteProject(token, id),
     moveCompany: (token, id, companyId) => api.moveProjectCompany(token, id, companyId),
     bulkVisibility: (token, ids, companyIds, isGlobal) => api.bulkVisibilityProjects(token, ids, companyIds, isGlobal),
-    fields: [{ key: "name", labelKey: "reference.projects.name", type: "text", required: true }],
+    fields: [
+      { key: "name", labelKey: "reference.projects.name", type: "text", required: true },
+      { key: "group_id", labelKey: "reference.projects.group", type: "select", optionsFrom: "projectGroups", allowEmpty: true },
+    ],
     columns: [{ key: "name", labelKey: "reports.project" }, STATUS_COLUMN],
+  },
+  projectGroups: {
+    labelKey: "reference.tab.projectGroups",
+    icon: LayoutDashboard,
+    list: (token, companyId) => api.listProjectGroups(token, { company_id: companyId }),
+    create: (token, payload, companyId) => api.createProjectGroup(token, payload, companyId),
+    update: (token, id, payload) => api.updateProjectGroup(token, id, payload),
+    remove: (token, id) => api.deleteProjectGroup(token, id),
+    fields: [{ key: "name", labelKey: "reference.projectGroups.name", type: "text", required: true }],
+    columns: [{ key: "name", labelKey: "reference.projectGroups.name" }, STATUS_COLUMN],
   },
   accounts: {
     labelKey: "reference.tab.accounts",
@@ -119,7 +132,7 @@ const TAB_BUTTONS = [
 function defaultFormFor(fields) {
   const form = {};
   fields.forEach((f) => {
-    form[f.key] = f.type === "number" ? "0" : f.options ? f.options[0].value : "";
+    form[f.key] = f.type === "number" ? "0" : f.options && !f.allowEmpty ? f.options[0].value : "";
   });
   return form;
 }
@@ -181,6 +194,12 @@ export default function Reference() {
         : config.list(token, companyFilter || undefined),
     [token, tab, companyFilter, companyFilterIds.join(","), ownOnly, matchMode]
   );
+
+  // Группы проектов — нужны как опции в форме проекта (см. TABS.projects.fields
+  // group_id/optionsFrom), загружаются один раз независимо от текущей вкладки,
+  // а не только когда открыта сама вкладка "Группы проектов".
+  const { data: projectGroups } = useResource(() => api.listProjectGroups(token, {}), [token]);
+  const dynamicOptions = { projectGroups: projectGroups || [] };
 
   // Автосинк банковских интеграций — только на вкладке Счетов, только для тех,
   // кто вообще может ими управлять. Бэкенд сам решает, не рано ли реально идти
@@ -456,6 +475,7 @@ export default function Reference() {
       const payload = { ...form, is_active: formIsActive };
       config.fields.forEach((f) => {
         if (f.type === "number") payload[f.key] = Number(payload[f.key] || 0);
+        if (f.allowEmpty && payload[f.key] === "") payload[f.key] = null;
       });
       if (supportsCompanyScope) {
         payload.is_global = formIsGlobal;
@@ -465,8 +485,10 @@ export default function Reference() {
         // Перенос в другую компанию — отдельным вызовом (бэкенд блокирует его,
         // если запись уже где-то используется, см. move_to_company) и раньше
         // остальных правок, чтобы не сохранить их в исходной компании, если
-        // перенос не удался.
-        if (multiCompany && formCompanyId && formCompanyId !== originalCompanyId) {
+        // перенос не удался. Часть вкладок (напр. Группы проектов) перенос
+        // между компаниями вообще не поддерживают — select компании для них
+        // задизейблен при редактировании, но проверяем и здесь на всякий случай.
+        if (multiCompany && formCompanyId && formCompanyId !== originalCompanyId && config.moveCompany) {
           await config.moveCompany(token, editingId, formCompanyId);
         }
         await config.update(token, editingId, payload);
@@ -774,7 +796,12 @@ export default function Reference() {
               {multiCompany && (
                 <label className="fp-span-2">
                   {t("tx.form.company")}
-                  <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
+                  <select
+                    value={formCompanyId}
+                    onChange={(e) => setFormCompanyId(e.target.value)}
+                    disabled={!!editingId && !config.moveCompany}
+                    required
+                  >
                     {/* Текущая компания записи может быть уже недоступна для
                         переноса (не admin) — всё равно показываем её в списке,
                         иначе выбранное значение "потеряется" при открытии формы. */}
@@ -803,7 +830,18 @@ export default function Reference() {
               {config.fields.map((f) => (
                 <label key={f.key} className={f.type === "text" && f.key === "name" ? "fp-span-2" : ""}>
                   {t(f.labelKey)}
-                  {f.type === "select" ? (
+                  {f.type === "select" && f.optionsFrom ? (
+                    <select value={form[f.key]} onChange={(e) => setForm((p) => ({ ...p, [f.key]: e.target.value }))}>
+                      {f.allowEmpty && <option value="">{t("reference.noGroup")}</option>}
+                      {(dynamicOptions[f.optionsFrom] || [])
+                        .filter((o) => !formCompanyId || o.company_id === formCompanyId)
+                        .map((o) => (
+                          <option key={o.id} value={o.id}>
+                            {o.name}
+                          </option>
+                        ))}
+                    </select>
+                  ) : f.type === "select" ? (
                     <select value={form[f.key]} onChange={(e) => setForm((p) => ({ ...p, [f.key]: e.target.value }))}>
                       {f.options.map((o) => (
                         <option key={o.value} value={o.value}>

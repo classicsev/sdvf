@@ -203,6 +203,8 @@ export const api = {
   updateTransaction: (token, id, payload) =>
     request(`/transactions/${id}`, { method: "PATCH", token, body: payload }),
   deleteTransaction: (token, id) => request(`/transactions/${id}`, { method: "DELETE", token }),
+  closeMonth: (token, companyId, month) =>
+    request("/transactions/close-month", { method: "POST", token, body: { company_id: companyId, month } }),
   batchDeleteTransactions: (token, transactionIds) =>
     request("/transactions/batch", { method: "DELETE", token, body: { transaction_ids: transactionIds } }),
   batchDeleteTransactionsByFilter: (token, query) =>
@@ -210,6 +212,7 @@ export const api = {
   exportTransactions: (token, query) => download("/transactions/export.xlsx", { token, query }),
 
   dashboardSummary: (token, query) => request("/reports/dashboard-summary", { token, query }),
+  accountBalances: (token, query) => request("/reports/account-balances", { token, query }),
   cashflowReport: (token, query) => request("/reports/cashflow", { token, query }),
   cashflowForecast: (token, query) => request("/reports/cashflow-forecast", { token, query }),
   pnlReport: (token, query) => request("/reports/pnl", { token, query }),
@@ -231,6 +234,13 @@ export const api = {
       token,
       body: { ids, company_ids: companyIds, is_global: isGlobal },
     }),
+
+  listProjectGroups: (token, query) => request("/project-groups", { token, query }),
+  createProjectGroup: (token, payload, companyId) =>
+    request("/project-groups", { method: "POST", token, body: payload, query: { company_id: companyId } }),
+  updateProjectGroup: (token, id, payload) =>
+    request(`/project-groups/${id}`, { method: "PATCH", token, body: payload }),
+  deleteProjectGroup: (token, id) => request(`/project-groups/${id}`, { method: "DELETE", token }),
 
   listProjects: (token, query) => request("/projects", { token, query }),
   createProject: (token, payload, companyId) =>

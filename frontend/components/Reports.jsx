@@ -298,7 +298,7 @@ function ProfitabilityTab({ token }) {
             </thead>
             <tbody>
               {(data || []).map((row) => (
-                <tr key={row.project_id}>
+                <tr key={row.project_id || "unallocated"}>
                   <td>{row.project}</td>
                   <td className="right fp-mono fp-amount-income">{fmt(row.revenue, "RUB")}</td>
                   <td className="right fp-mono fp-amount-expense">{fmt(row.expense, "RUB")}</td>
