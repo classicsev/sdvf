@@ -8,6 +8,7 @@ import { useResource } from "../lib/useResource";
 import { fmt, fmtDate } from "../lib/format";
 import { canEditPayroll } from "../lib/roles";
 import { backdropClickProps } from "../lib/modalBackdrop";
+import { useTranslation } from "../lib/i18n";
 
 function KpiCard({ label, value, tone, icon }) {
   return (
@@ -25,6 +26,7 @@ const EMPLOYEE_EMPTY = { full_name: "", department: "", position: "", employment
 
 function EmployeesPanel({ token, employees, reload, companyFilter }) {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const companies = user.companies || [];
   const multiCompany = companies.length > 1;
   const roleForCompany = (companyId) => companies.find((m) => m.company.id === companyId)?.role;
@@ -88,14 +90,11 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
   }
 
   async function handleDelete(emp) {
-    if (!window.confirm(`Удалить сотрудника «${emp.full_name}»?`)) return;
+    if (!window.confirm(t("payroll.employees.deleteConfirm", { name: emp.full_name }))) return;
     try {
       const result = await api.deleteEmployee(token, emp.id);
       if (result?.deactivated) {
-        window.alert(
-          `«${emp.full_name}» уже есть начисления/выплаты, поэтому не удалён, а помечен как уволенный — ` +
-            `история сохранена. Восстановить можно кнопкой в списке.`
-        );
+        window.alert(t("payroll.employees.autoDismissed", { name: emp.full_name }));
       }
       reload();
     } catch (err) {
@@ -115,19 +114,19 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
   return (
     <div className="fp-panel fp-table-panel">
       <div className="fp-panel-head fp-panel-head-row" style={{ padding: "18px 18px 0" }}>
-        <h3>Сотрудники</h3>
+        <h3>{t("payroll.employees.title")}</h3>
         <button type="button" className="fp-btn-tiny" onClick={openAdd}>
-          <Plus size={13} /> Добавить сотрудника
+          <Plus size={13} /> {t("payroll.employees.add")}
         </button>
       </div>
       <table className="fp-table">
         <thead>
           <tr>
-            {showCompanyColumn && <th>Компания</th>}
-            <th>ФИО</th>
-            <th>Отдел</th>
-            <th>Тип занятости</th>
-            <th>Статус</th>
+            {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
+            <th>{t("payroll.col.fullName")}</th>
+            <th>{t("payroll.col.department")}</th>
+            <th>{t("payroll.col.employmentType")}</th>
+            <th>{t("payroll.col.status")}</th>
             <th className="fp-table-actions-col"></th>
           </tr>
         </thead>
@@ -145,7 +144,7 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
               <td className="fp-muted">{emp.employment_type || "—"}</td>
               <td>
                 <span className={`fp-status-badge ${dismissed ? "warn" : "ok"}`}>
-                  {dismissed ? "Уволен" : "Работает"}
+                  {dismissed ? t("payroll.status.dismissed") : t("payroll.status.active")}
                 </span>
               </td>
               <td className="fp-table-actions-col">
@@ -157,7 +156,7 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
                     <button
                       className="fp-icon-btn"
                       onClick={() => handleToggleStatus(emp)}
-                      title={dismissed ? "Восстановить" : "Пометить уволенным"}
+                      title={dismissed ? t("payroll.restore") : t("payroll.markDismissed")}
                     >
                       <RotateCcw size={14} />
                     </button>
@@ -173,7 +172,7 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
           {(employees || []).length === 0 && (
             <tr>
               <td colSpan={showCompanyColumn ? 6 : 5} className="fp-empty">
-                Сотрудников пока нет
+                {t("payroll.noEmployees")}
               </td>
             </tr>
           )}
@@ -184,7 +183,7 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>{editingId ? "Редактировать сотрудника" : "Новый сотрудник"}</h3>
+              <h3>{editingId ? t("payroll.editEmployee") : t("payroll.newEmployee")}</h3>
               <button className="fp-icon-btn" onClick={() => setModalOpen(false)}>
                 <X size={18} />
               </button>
@@ -192,7 +191,7 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
             <form className="fp-form-grid" onSubmit={handleSubmit}>
               {multiCompany && (
                 <label className="fp-span-2">
-                  Компания
+                  {t("tx.form.company")}
                   {editingId ? (
                     <>
                       <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
@@ -213,7 +212,7 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
                       </select>
                       {formCompanyId !== originalCompanyId && (
                         <span className="fp-muted" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
-                          Перенос сработает, только если у сотрудника ещё нет начислений/выплат.
+                          {t("payroll.moveNote")}
                         </span>
                       )}
                     </>
@@ -229,7 +228,7 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
                 </label>
               )}
               <label className="fp-span-2">
-                ФИО
+                {t("payroll.col.fullName")}
                 <input
                   required
                   value={form.full_name}
@@ -237,35 +236,35 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
                 />
               </label>
               <label>
-                Отдел
+                {t("payroll.col.department")}
                 <input
                   value={form.department}
                   onChange={(e) => setForm((p) => ({ ...p, department: e.target.value }))}
                 />
               </label>
               <label>
-                Тип занятости
+                {t("payroll.col.employmentType")}
                 <input
                   value={form.employment_type}
                   onChange={(e) => setForm((p) => ({ ...p, employment_type: e.target.value }))}
-                  placeholder="ИП / Самозанятый"
+                  placeholder={t("payroll.employmentTypePlaceholder")}
                 />
               </label>
               <label className="fp-span-2">
-                Банковские реквизиты
+                {t("payroll.bankDetails")}
                 <input
                   value={form.bank_details}
                   onChange={(e) => setForm((p) => ({ ...p, bank_details: e.target.value }))}
-                  placeholder="Банк, номер карты/счёта"
+                  placeholder={t("payroll.bankDetailsPlaceholder")}
                 />
               </label>
               {error && <div className="fp-form-error fp-span-2">{error}</div>}
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setModalOpen(false)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={saving}>
-                  {saving ? "Сохраняем…" : "Сохранить"}
+                  {saving ? t("common.saving") : t("common.save")}
                 </button>
               </div>
             </form>
@@ -280,6 +279,7 @@ const ACCRUAL_EMPTY = { employee_id: "", project_id: "", period: new Date().toIS
 
 function AccrualsPanel({ token, employees, projects, accruals, reload, companyFilter }) {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const companies = user.companies || [];
   const multiCompany = companies.length > 1;
   const showCompanyColumn = multiCompany && !companyFilter;
@@ -331,21 +331,21 @@ function AccrualsPanel({ token, employees, projects, accruals, reload, companyFi
   return (
     <div className="fp-panel fp-table-panel">
       <div className="fp-panel-head fp-panel-head-row" style={{ padding: "18px 18px 0" }}>
-        <h3>Начисления</h3>
+        <h3>{t("payroll.accruals.title")}</h3>
         <button type="button" className="fp-btn-tiny" onClick={openAdd}>
-          <Plus size={13} /> Начислить
+          <Plus size={13} /> {t("payroll.accruals.add")}
         </button>
       </div>
       <table className="fp-table">
         <thead>
           <tr>
-            {showCompanyColumn && <th>Компания</th>}
-            <th>Сотрудник</th>
-            <th>Период</th>
-            <th className="right">Оклад</th>
-            <th className="right">Бонус</th>
-            <th className="right">Удержания</th>
-            <th className="right">Итого</th>
+            {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
+            <th>{t("payroll.col.employee")}</th>
+            <th>{t("payroll.col.period")}</th>
+            <th className="right">{t("payroll.col.salary")}</th>
+            <th className="right">{t("payroll.col.bonus")}</th>
+            <th className="right">{t("payroll.col.deductions")}</th>
+            <th className="right">{t("payroll.col.total")}</th>
           </tr>
         </thead>
         <tbody>
@@ -365,7 +365,7 @@ function AccrualsPanel({ token, employees, projects, accruals, reload, companyFi
           {(accruals || []).length === 0 && (
             <tr>
               <td colSpan={showCompanyColumn ? 7 : 6} className="fp-empty">
-                Начислений пока нет
+                {t("payroll.noAccruals")}
               </td>
             </tr>
           )}
@@ -376,21 +376,21 @@ function AccrualsPanel({ token, employees, projects, accruals, reload, companyFi
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>Новое начисление</h3>
+              <h3>{t("payroll.newAccrual")}</h3>
               <button className="fp-icon-btn" onClick={() => setModalOpen(false)}>
                 <X size={18} />
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmit}>
               <label className="fp-span-2">
-                Сотрудник
+                {t("payroll.col.employee")}
                 <select
                   required
                   value={form.employee_id}
                   onChange={(e) => setForm((p) => ({ ...p, employee_id: e.target.value, project_id: "" }))}
                 >
                   <option value="" disabled>
-                    Выберите сотрудника
+                    {t("payroll.selectEmployee")}
                   </option>
                   {(employees || []).map((emp) => (
                     <option key={emp.id} value={emp.id}>
@@ -400,9 +400,9 @@ function AccrualsPanel({ token, employees, projects, accruals, reload, companyFi
                 </select>
               </label>
               <label>
-                Проект
+                {t("tx.form.project")}
                 <select value={form.project_id} onChange={(e) => setForm((p) => ({ ...p, project_id: e.target.value }))}>
-                  <option value="">— не указан —</option>
+                  <option value="">{t("tx.form.notSpecified")}</option>
                   {selectableProjects.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
@@ -411,7 +411,7 @@ function AccrualsPanel({ token, employees, projects, accruals, reload, companyFi
                 </select>
               </label>
               <label>
-                Период
+                {t("payroll.col.period")}
                 <input
                   type="date"
                   required
@@ -420,7 +420,7 @@ function AccrualsPanel({ token, employees, projects, accruals, reload, companyFi
                 />
               </label>
               <label>
-                Оклад
+                {t("payroll.col.salary")}
                 <input
                   type="number"
                   step="0.01"
@@ -429,7 +429,7 @@ function AccrualsPanel({ token, employees, projects, accruals, reload, companyFi
                 />
               </label>
               <label>
-                Бонус
+                {t("payroll.col.bonus")}
                 <input
                   type="number"
                   step="0.01"
@@ -438,7 +438,7 @@ function AccrualsPanel({ token, employees, projects, accruals, reload, companyFi
                 />
               </label>
               <label>
-                Удержания
+                {t("payroll.col.deductions")}
                 <input
                   type="number"
                   step="0.01"
@@ -449,10 +449,10 @@ function AccrualsPanel({ token, employees, projects, accruals, reload, companyFi
               {error && <div className="fp-form-error fp-span-2">{error}</div>}
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setModalOpen(false)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={saving}>
-                  {saving ? "Сохраняем…" : "Начислить"}
+                  {saving ? t("common.saving") : t("payroll.accruals.add")}
                 </button>
               </div>
             </form>
@@ -465,8 +465,18 @@ function AccrualsPanel({ token, employees, projects, accruals, reload, companyFi
 
 const PAYMENT_EMPTY = { employee_id: "", accrual_id: "", account_id: "", date: new Date().toISOString().slice(0, 10), amount: "0", payment_type: "ЗП" };
 
+// Значения хранятся в БД как русские строки (payment_type — свободный текст,
+// не enum) — при переводе меняем только отображаемую подпись, не value.
+const PAYMENT_TYPE_LABEL_KEYS = {
+  "ЗП": "payroll.paymentType.salary",
+  "Аванс": "payroll.paymentType.advance",
+  "Долг": "payroll.paymentType.debt",
+  "Бонус": "payroll.paymentType.bonus",
+};
+
 function PaymentsPanel({ token, employees, accounts, accruals, payments, reload, companyFilter }) {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const companies = user.companies || [];
   const multiCompany = companies.length > 1;
   const showCompanyColumn = multiCompany && !companyFilter;
@@ -516,20 +526,20 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload,
   return (
     <div className="fp-panel fp-table-panel">
       <div className="fp-panel-head fp-panel-head-row" style={{ padding: "18px 18px 0" }}>
-        <h3>Выплаты</h3>
+        <h3>{t("payroll.payments.title")}</h3>
         <button type="button" className="fp-btn-tiny" onClick={openAdd}>
-          <Plus size={13} /> Выплатить
+          <Plus size={13} /> {t("payroll.payments.add")}
         </button>
       </div>
       <table className="fp-table">
         <thead>
           <tr>
-            {showCompanyColumn && <th>Компания</th>}
-            <th>Сотрудник</th>
-            <th>Дата</th>
-            <th>Счёт</th>
-            <th>Тип</th>
-            <th className="right">Сумма</th>
+            {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
+            <th>{t("payroll.col.employee")}</th>
+            <th>{t("payroll.col.date")}</th>
+            <th>{t("payroll.col.account")}</th>
+            <th>{t("payroll.col.type")}</th>
+            <th className="right">{t("payroll.col.amount")}</th>
           </tr>
         </thead>
         <tbody>
@@ -541,14 +551,16 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload,
               <td>{employeesById[p.employee_id]?.full_name || "—"}</td>
               <td>{fmtDate(p.date)}</td>
               <td>{accountsById[p.account_id]?.name || "—"}</td>
-              <td className="fp-muted">{p.payment_type}</td>
+              <td className="fp-muted">
+                {PAYMENT_TYPE_LABEL_KEYS[p.payment_type] ? t(PAYMENT_TYPE_LABEL_KEYS[p.payment_type]) : p.payment_type}
+              </td>
               <td className="right fp-mono">{fmt(p.amount, "RUB")}</td>
             </tr>
           ))}
           {(payments || []).length === 0 && (
             <tr>
               <td colSpan={showCompanyColumn ? 6 : 5} className="fp-empty">
-                Выплат пока нет
+                {t("payroll.noPayments")}
               </td>
             </tr>
           )}
@@ -559,14 +571,14 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload,
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>Новая выплата</h3>
+              <h3>{t("payroll.newPayment")}</h3>
               <button className="fp-icon-btn" onClick={() => setModalOpen(false)}>
                 <X size={18} />
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmit}>
               <label className="fp-span-2">
-                Сотрудник
+                {t("payroll.col.employee")}
                 <select
                   required
                   value={form.employee_id}
@@ -575,7 +587,7 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload,
                   }
                 >
                   <option value="" disabled>
-                    Выберите сотрудника
+                    {t("payroll.selectEmployee")}
                   </option>
                   {(employees || []).map((emp) => (
                     <option key={emp.id} value={emp.id}>
@@ -585,9 +597,9 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload,
                 </select>
               </label>
               <label>
-                Начисление (опц.)
+                {t("payroll.accrualOptional")}
                 <select value={form.accrual_id} onChange={(e) => setForm((p) => ({ ...p, accrual_id: e.target.value }))}>
-                  <option value="">— не привязано —</option>
+                  <option value="">{t("payroll.notLinked")}</option>
                   {employeeAccruals.map((a) => (
                     <option key={a.id} value={a.id}>
                       {fmtDate(a.period)} · {fmt(a.total, "RUB")}
@@ -596,14 +608,14 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload,
                 </select>
               </label>
               <label>
-                Счёт списания
+                {t("payroll.writeOffAccount")}
                 <select
                   required
                   value={form.account_id}
                   onChange={(e) => setForm((p) => ({ ...p, account_id: e.target.value }))}
                 >
                   <option value="" disabled>
-                    Выберите счёт
+                    {t("payroll.selectAccount")}
                   </option>
                   {selectableAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -613,7 +625,7 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload,
                 </select>
               </label>
               <label>
-                Дата
+                {t("payroll.col.date")}
                 <input
                   type="date"
                   required
@@ -622,19 +634,20 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload,
                 />
               </label>
               <label>
-                Тип выплаты
+                {t("payroll.paymentType")}
                 <select
                   value={form.payment_type}
                   onChange={(e) => setForm((p) => ({ ...p, payment_type: e.target.value }))}
                 >
-                  <option value="ЗП">ЗП</option>
-                  <option value="Аванс">Аванс</option>
-                  <option value="Долг">Долг</option>
-                  <option value="Бонус">Бонус</option>
+                  {Object.entries(PAYMENT_TYPE_LABEL_KEYS).map(([value, labelKey]) => (
+                    <option key={value} value={value}>
+                      {t(labelKey)}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label>
-                Сумма
+                {t("payroll.col.amount")}
                 <input
                   type="number"
                   step="0.01"
@@ -646,10 +659,10 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload,
               {error && <div className="fp-form-error fp-span-2">{error}</div>}
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setModalOpen(false)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={saving}>
-                  {saving ? "Сохраняем…" : "Выплатить"}
+                  {saving ? t("common.saving") : t("payroll.payments.add")}
                 </button>
               </div>
             </form>
@@ -662,6 +675,7 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload,
 
 function PayrollDetailed({ token }) {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const companies = user.companies || [];
   const multiCompany = companies.length > 1;
   const [companyId, setCompanyId] = useState("");
@@ -691,7 +705,7 @@ function PayrollDetailed({ token }) {
       {multiCompany && (
         <div style={{ marginBottom: 14 }}>
           <select value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
-            <option value="">Все компании</option>
+            <option value="">{t("dashboard.allCompanies")}</option>
             {companies.map((m) => (
               <option key={m.company.id} value={m.company.id}>
                 {m.company.name}
@@ -701,10 +715,10 @@ function PayrollDetailed({ token }) {
         </div>
       )}
       <section className="fp-kpi-row" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-        <KpiCard label="Начислено" value={fmt(totalAccrued, "RUB")} tone="neutral" icon={<Wallet size={16} />} />
-        <KpiCard label="Выплачено" value={fmt(totalPaid, "RUB")} tone="income" icon={<ArrowUpRight size={16} />} />
+        <KpiCard label={t("payroll.kpi.accrued")} value={fmt(totalAccrued, "RUB")} tone="neutral" icon={<Wallet size={16} />} />
+        <KpiCard label={t("payroll.kpi.paid")} value={fmt(totalPaid, "RUB")} tone="income" icon={<ArrowUpRight size={16} />} />
         <KpiCard
-          label="Остаток к выплате"
+          label={t("payroll.kpi.outstanding")}
           value={fmt(remaining, "RUB")}
           tone={remaining > 0 ? "expense" : "income"}
           icon={<AlertTriangle size={16} />}
@@ -737,6 +751,7 @@ function PayrollDetailed({ token }) {
 
 function PayrollSummary({ token }) {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const companies = user.companies || [];
   const multiCompany = companies.length > 1;
   const [companyId, setCompanyId] = useState("");
@@ -750,7 +765,7 @@ function PayrollSummary({ token }) {
       {multiCompany && (
         <div style={{ marginBottom: 14 }}>
           <select value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
-            <option value="">Все компании</option>
+            <option value="">{t("dashboard.allCompanies")}</option>
             {companies.map((m) => (
               <option key={m.company.id} value={m.company.id}>
                 {m.company.name}
@@ -760,25 +775,23 @@ function PayrollSummary({ token }) {
         </div>
       )}
       {loading ? (
-        <div className="fp-loading">Загрузка…</div>
+        <div className="fp-loading">{t("common.loading")}</div>
       ) : error ? (
         <div className="fp-error-banner">{error}</div>
       ) : (
         data && (
           <>
             <section className="fp-kpi-row" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-              <KpiCard label="Начислено" value={fmt(data.total_accrued, "RUB")} tone="neutral" icon={<Wallet size={16} />} />
-              <KpiCard label="Выплачено" value={fmt(data.total_paid, "RUB")} tone="income" icon={<ArrowUpRight size={16} />} />
+              <KpiCard label={t("payroll.kpi.accrued")} value={fmt(data.total_accrued, "RUB")} tone="neutral" icon={<Wallet size={16} />} />
+              <KpiCard label={t("payroll.kpi.paid")} value={fmt(data.total_paid, "RUB")} tone="income" icon={<ArrowUpRight size={16} />} />
               <KpiCard
-                label="Остаток к выплате"
+                label={t("payroll.kpi.outstanding")}
                 value={fmt(data.outstanding, "RUB")}
                 tone={data.outstanding > 0 ? "expense" : "income"}
                 icon={<AlertTriangle size={16} />}
               />
             </section>
-            <p className="fp-note">
-              Сводка без ФИО и реквизитов сотрудников · {data.employees_count} сотрудников с начислениями
-            </p>
+            <p className="fp-note">{t("payroll.summaryNote", { count: data.employees_count })}</p>
           </>
         )
       )}
