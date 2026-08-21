@@ -307,7 +307,13 @@ def sync_tab(db: Session, connection: WarehouseSheetConnection, tab: WarehouseSh
     sh = gc.open_by_key(tab.spreadsheet_id)
     ws = sh.worksheet(tab.tab_name)
     rows = ws.get_all_values()
-    start_row = max(tab.last_synced_row + 1, HEADER_ROWS + 1)
+    # Большинство реальных листов — 2 строки заголовка (раздел + названия
+    # колонок), но не все (напр. "Цех" — только 1) — переопределяется через
+    # column_mapping_json.header_rows при необходимости.
+    header_rows = HEADER_ROWS
+    if tab.format != WarehouseSheetTabFormat.movements and tab.column_mapping_json:
+        header_rows = json.loads(tab.column_mapping_json).get("header_rows", HEADER_ROWS)
+    start_row = max(tab.last_synced_row + 1, header_rows + 1)
 
     if tab.format == WarehouseSheetTabFormat.movements:
         outcome, last_row = _process_movements_format(db, connection.company_id, rows, start_row, dry_run)
