@@ -178,6 +178,35 @@ def _income_expense_for_range(
     return Decimal(str(income)), Decimal(str(expense)), income_by_company, expense_by_company
 
 
+@router.get("/account-balances", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
+def account_balances(
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Лёгкий эндпоинт только для остатков по счетам — используется вкладкой
+    "Балансы" на экране Операций, где не нужны доход/расход за период,
+    которые dashboard-summary всё равно считает попутно (дважды: текущий и
+    предыдущий период)."""
+    today = date.today()
+    company_ids = resolve_company_ids(db, user, company_id)
+    accounts = db.query(Account).filter(Account.company_id.in_(company_ids), Account.is_active.is_(True)).all()
+    rows = []
+    for account in accounts:
+        balance = _account_balance(db, account, today)
+        balance_rub = convert_to_rub(db, account.currency, balance, today)
+        rows.append(
+            {
+                "id": account.id,
+                "name": account.name,
+                "currency": account.currency,
+                "balance": float(balance),
+                "balance_rub": float(balance_rub) if balance_rub is not None else None,
+            }
+        )
+    return {"accounts": rows}
+
+
 @router.get("/dashboard-summary", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
 def dashboard_summary(
     range_: str = Query(default="month", alias="range"),
@@ -624,6 +653,37 @@ def profitability_report(
         row["profit"] = row["revenue"] - row["expense"]
         row["margin"] = row["profit"] / row["revenue"] if row["revenue"] else None
         result.append(row)
+
+    # Операции без проекта иначе исчезают из отчёта бесследно — добавляем
+    # псевдо-строку "Нераспределено". Только когда not forced_project:
+    # project_manager RLS-скопирован на один проект (scope_project_filter),
+    # агрегат по ВСЕМ нераспределённым операциям компании ему показывать
+    # нельзя — это утечка данных за пределы разрешённого проекта.
+    if not forced_project:
+        unalloc_rows = (
+            db.query(Transaction)
+            .filter(Transaction.company_id.in_(company_ids), Transaction.project_id.is_(None))
+            .with_entities(Transaction.type, func.sum(Transaction.amount_rub))
+            .group_by(Transaction.type)
+            .all()
+        )
+        revenue = expense = 0.0
+        for tx_type, total in unalloc_rows:
+            if tx_type == TxTypeEnum.income:
+                revenue = float(total)
+            else:
+                expense = float(total)
+        if revenue or expense:
+            result.append(
+                {
+                    "project_id": None,
+                    "project": "Нераспределено",
+                    "revenue": revenue,
+                    "expense": expense,
+                    "profit": revenue - expense,
+                    "margin": (revenue - expense) / revenue if revenue else None,
+                }
+            )
     return result
 
 

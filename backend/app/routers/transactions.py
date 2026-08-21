@@ -23,7 +23,7 @@ from app.database import get_db
 from app.fx import convert_to_rub
 from app.models import Account, Category, Counterparty, Project, RoleEnum, Transaction, User
 from app.reference_scope import get_visible_or_404
-from app.schemas import TransactionCreate, TransactionOut, TransactionUpdate, TransactionBatchDelete
+from app.schemas import CloseMonthIn, TransactionCreate, TransactionOut, TransactionUpdate, TransactionBatchDelete
 from app.utils import get_or_404_accessible
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -74,7 +74,11 @@ def _filtered_query(
     if date_to:
         query = query.filter(Transaction.date_odds <= date_to)
 
-    return query.order_by(Transaction.date_odds.desc())
+    # Тай-брейкер обязателен: при пагинации (.limit().offset()) Postgres не
+    # гарантирует стабильный порядок строк с одинаковой date_odds между
+    # отдельными запросами — без второго ключа сортировки операции одной
+    # датой могут задваиваться/пропадать между страницами списка.
+    return query.order_by(Transaction.date_odds.desc(), Transaction.created_at.desc())
 
 
 def _get_transaction_or_404(db: Session, user: User, transaction_id: str) -> Transaction:
@@ -242,6 +246,40 @@ def update_transaction(
     db.refresh(tx)
     log_action(db, user, action="update", entity_type="transaction", entity_id=tx.id, details=changes, company_id=tx.company_id)
     return tx
+
+
+@router.post("/close-month", dependencies=[Depends(require_module("finance"))])
+def close_month(
+    payload: CloseMonthIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Массово проставляет дату начисления (date_opu) = 1-е число месяца —
+    только там, где она ещё не задана вручную (не перезаписывает). Доступно
+    только admin — полу-необратимое действие уровня "закрытие периода"."""
+    check_company_role(db, user, payload.company_id, [RoleEnum.admin])
+    month_start = payload.month.replace(day=1)
+    next_month = date(month_start.year + (month_start.month == 12), (month_start.month % 12) + 1, 1)
+    updated = (
+        db.query(Transaction)
+        .filter(
+            Transaction.company_id == payload.company_id,
+            Transaction.date_odds >= month_start,
+            Transaction.date_odds < next_month,
+            Transaction.date_opu.is_(None),
+        )
+        .update({"date_opu": month_start}, synchronize_session=False)
+    )
+    db.commit()
+    log_action(
+        db,
+        user,
+        action="close_month",
+        entity_type="transaction",
+        details={"month": month_start.isoformat(), "updated": updated},
+        company_id=payload.company_id,
+    )
+    return {"updated": updated, "month": month_start.isoformat()}
 
 
 @router.delete(

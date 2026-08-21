@@ -60,6 +60,11 @@ class TransactionBatchDelete(BaseModel):
     transaction_ids: list[str] = Field(..., min_items=1, max_items=1000)
 
 
+class CloseMonthIn(BaseModel):
+    company_id: str
+    month: date  # любая дата внутри целевого месяца — используется только год/месяц
+
+
 class CategoryIn(BaseModel):
     name: str
     type: TxTypeEnum
@@ -88,6 +93,7 @@ class ProjectIn(BaseModel):
     is_active: bool = True
     is_global: bool = False
     visible_company_ids: list[str] = []
+    group_id: Optional[str] = None
 
 
 class ProjectOut(ProjectIn):
@@ -96,6 +102,18 @@ class ProjectOut(ProjectIn):
     id: str
     company_id: str
     is_active: bool
+
+
+class ProjectGroupIn(BaseModel):
+    name: str
+    is_active: bool = True
+
+
+class ProjectGroupOut(ProjectGroupIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    company_id: str
 
 
 class AccountIn(BaseModel):

@@ -35,6 +35,7 @@ from app.models import (
     Planning,
     Project,
     ProjectCompany,
+    ProjectGroup,
     RoleEnum,
     Transaction,
     TxTypeEnum,
@@ -55,6 +56,8 @@ from app.schemas import (
     CounterpartySdvfLinkIn,
     CounterpartySyncResult,
     MoveCompanyIn,
+    ProjectGroupIn,
+    ProjectGroupOut,
     ProjectIn,
     ProjectOut,
     SdvfCounterpartyOut,
@@ -68,6 +71,14 @@ ADMIN_ONLY = [RoleEnum.admin]
 
 def _get_or_404(db: Session, user: User, model, entity_id: str):
     return get_or_404_accessible(db, model, entity_id, get_accessible_company_ids(db, user))
+
+
+def _check_group_company(db: Session, user: User, group_id: Optional[str], company_id: str) -> None:
+    if not group_id:
+        return
+    group = _get_or_404(db, user, ProjectGroup, group_id)
+    if group.company_id != company_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Группа проекта должна принадлежать той же компании")
 
 
 def _sync_visible_companies(db: Session, user: User, obj, is_global: bool, visible_company_ids: list[str]) -> None:
@@ -273,6 +284,58 @@ def bulk_visibility_categories(
 # ---------------------------------------------------------------------------
 
 
+@router.get(
+    "/project-groups", response_model=list[ProjectGroupOut], dependencies=[Depends(require_module("finance"))]
+)
+def list_project_groups(
+    company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    company_ids = resolve_company_ids_multi(db, user, company_id, [])
+    return db.query(ProjectGroup).filter(ProjectGroup.company_id.in_(company_ids)).all()
+
+
+@router.post(
+    "/project-groups", response_model=ProjectGroupOut, dependencies=[Depends(require_module("finance"))]
+)
+def create_project_group(
+    payload: ProjectGroupIn,
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    target = resolve_write_company_id(db, user, company_id, ADMIN_ONLY)
+    obj = ProjectGroup(**payload.model_dump(), company_id=target)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.patch(
+    "/project-groups/{group_id}",
+    response_model=ProjectGroupOut,
+    dependencies=[Depends(require_module("finance"))],
+)
+def update_project_group(
+    group_id: str, payload: ProjectGroupIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    obj = _get_or_404(db, user, ProjectGroup, group_id)
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
+    for k, v in payload.model_dump().items():
+        setattr(obj, k, v)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.delete("/project-groups/{group_id}", dependencies=[Depends(require_module("finance"))])
+def delete_project_group(group_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    obj = _get_or_404(db, user, ProjectGroup, group_id)
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
+    deleted = delete_or_deactivate(db, obj, [(Project, "group_id")])
+    return {"deleted": deleted, "deactivated": not deleted}
+
+
 @router.get("/projects", response_model=list[ProjectOut], dependencies=[Depends(require_module("finance"))])
 def list_projects(
     company_id: Optional[str] = None,
@@ -297,6 +360,7 @@ def create_project(
     user: User = Depends(get_current_user),
 ):
     target = resolve_write_company_id(db, user, company_id, ADMIN_ONLY)
+    _check_group_company(db, user, payload.group_id, target)
     fields = payload.model_dump(exclude={"visible_company_ids"})
     obj = Project(**fields, company_id=target)
     db.add(obj)
@@ -315,6 +379,7 @@ def update_project(
 ):
     obj = _get_or_404(db, user, Project, project_id)
     check_company_role(db, user, obj.company_id, ADMIN_ONLY)
+    _check_group_company(db, user, payload.group_id, obj.company_id)
     for k, v in payload.model_dump(exclude={"visible_company_ids"}).items():
         setattr(obj, k, v)
     _sync_visible_companies(db, user, obj, payload.is_global, payload.visible_company_ids)
@@ -350,6 +415,11 @@ def move_project_company(
     user: User = Depends(get_current_user),
 ):
     obj = _get_or_404(db, user, Project, project_id)
+    # Группа проекта принадлежит конкретной компании — при переносе в другую
+    # компанию привязка теряет смысл (см. models.py::ProjectGroup, без
+    # cross-company видимости). Обнуляем, а не блокируем перенос — в отличие
+    # от операций/планирования/зарплаты ниже, привязка к группе не критична.
+    obj.group_id = None
     return _move_to_company(
         db,
         user,
