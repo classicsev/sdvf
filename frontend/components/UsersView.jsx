@@ -5,7 +5,7 @@ import { Plus, X, Pencil, Ban, RotateCcw } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
-import { ROLE_LABELS } from "../lib/roles";
+import { ROLE_LABELS, roleLabel } from "../lib/roles";
 import { backdropClickProps } from "../lib/modalBackdrop";
 import { useTranslation } from "../lib/i18n";
 
@@ -175,7 +175,7 @@ export default function UsersView() {
                   )}
                   <td>{u.full_name}</td>
                   <td className="fp-muted">{u.email}</td>
-                  <td>{ROLE_LABELS[role] || role}</td>
+                  <td>{roleLabel(t, role)}</td>
                   <td className="center">
                     <span className={`fp-status-badge ${u.is_active === false ? "danger" : "ok"}`}>
                       {u.is_active === false ? t("users.no") : t("users.yes")}
@@ -269,9 +269,9 @@ export default function UsersView() {
                   value={form.role}
                   onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}
                 >
-                  {Object.entries(ROLE_LABELS).map(([key, label]) => (
+                  {Object.keys(ROLE_LABELS).map((key) => (
                     <option key={key} value={key}>
-                      {label}
+                      {roleLabel(t, key)}
                     </option>
                   ))}
                 </select>

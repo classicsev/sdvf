@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
-import { ROLE_LABELS, ROLE_DESCRIPTIONS } from "../lib/roles";
+import { ROLE_LABELS, roleLabel, roleDescription } from "../lib/roles";
 import { useTranslation } from "../lib/i18n";
 
 const MODULES = [
@@ -319,7 +319,7 @@ export default function CompanyModules() {
                       ? t("modules.companyLabel.cn")
                       : t("modules.companyLabel.legal")}{" "}
                     ·{" "}
-                    {ROLE_LABELS[m.role] || m.role}
+                    {roleLabel(t, m.role)}
                     {m.company.sdvf_org_inn ? ` · ${t("modules.linkedToSdvf")}` : ""}
                   </div>
                 </div>
@@ -360,9 +360,9 @@ export default function CompanyModules() {
                       value={inviteForm.role}
                       onChange={(e) => setInviteForm((f) => ({ ...f, role: e.target.value }))}
                     >
-                      {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                      {Object.keys(ROLE_LABELS).map((value) => (
                         <option key={value} value={value}>
-                          {label}
+                          {roleLabel(t, value)}
                         </option>
                       ))}
                     </select>
@@ -372,7 +372,7 @@ export default function CompanyModules() {
                       список всех ролей: без него выбор роли вслепую (см. живые тесты). */}
                   <div className="fp-span-2" style={{ marginTop: -4 }}>
                     <div className="fp-muted" style={{ fontSize: 12.5 }}>
-                      {ROLE_DESCRIPTIONS[inviteForm.role]}
+                      {roleDescription(t, inviteForm.role)}
                     </div>
                     <button
                       type="button"
@@ -402,11 +402,11 @@ export default function CompanyModules() {
                           gap: 8,
                         }}
                       >
-                        {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                        {Object.keys(ROLE_LABELS).map((value) => (
                           <div key={value}>
-                            <div style={{ fontWeight: 600, fontSize: 12.5 }}>{label}</div>
+                            <div style={{ fontWeight: 600, fontSize: 12.5 }}>{roleLabel(t, value)}</div>
                             <div className="fp-muted" style={{ fontSize: 12.5 }}>
-                              {ROLE_DESCRIPTIONS[value]}
+                              {roleDescription(t, value)}
                             </div>
                           </div>
                         ))}

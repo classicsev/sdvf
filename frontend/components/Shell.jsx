@@ -19,7 +19,7 @@ import {
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 import { useTranslation } from "../lib/i18n";
-import { ROLE_LABELS, ROLE_NAV, NAV_MODULE, isModuleEnabled } from "../lib/roles";
+import { ROLE_NAV, NAV_MODULE, isModuleEnabled, roleLabel } from "../lib/roles";
 import ProfileModal from "./ProfileModal";
 import Dashboard from "./Dashboard";
 import Transactions from "./Transactions";
@@ -140,7 +140,7 @@ export default function Shell() {
           >
             <Languages size={14} /> {t("shell.languageToggle")}
           </button>
-          <div className="fp-role-box">{ROLE_LABELS[user.role] || user.role}</div>
+          <div className="fp-role-box">{user.role ? roleLabel(t, user.role) : ""}</div>
           <div className="fp-role-hint">
             {user.full_name}
             {user.email ? ` · ${user.email}` : ""}

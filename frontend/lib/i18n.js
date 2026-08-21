@@ -563,6 +563,25 @@ const DICT = {
     "apiKeys.namePlaceholder": "Например: 1С:УНФ",
     "apiKeys.onBehalfOfUser": "От имени пользователя",
     "apiKeys.myself": "— я сам —",
+
+    "role.admin": "Администратор",
+    "role.operator": "Оператор ввода",
+    "role.payroll_operator": "Оператор ЗП",
+    "role.project_manager": "Руководитель проекта",
+    "role.viewer": "Наблюдатель",
+    "role.warehouse_operator": "Оператор склада",
+    "roleDesc.admin":
+      "Полный доступ: все разделы, справочники, пользователи, API-ключи, интеграции и настройки компании.",
+    "roleDesc.operator":
+      "Вводит и правит операции. Видит дашборд, операции, отчёты и справочники. Зарплата и склад недоступны.",
+    "roleDesc.payroll_operator":
+      "Только зарплата: начисления и выплаты сотрудникам, плюс журнал аудита по ФОТ. Остальные разделы скрыты.",
+    "roleDesc.project_manager":
+      "Дашборд, операции и отчёты в рамках закреплённого проекта. Данные других проектов не видит.",
+    "roleDesc.viewer":
+      "Только просмотр — операции, зарплата, отчёты, справочники и склад. Ничего изменить не может.",
+    "roleDesc.warehouse_operator":
+      "Только склад: остатки, движения, заказы и производство. Финансовые разделы недоступны.",
   },
   zh: {
     "common.loading": "加载中…",
@@ -1108,6 +1127,19 @@ const DICT = {
     "apiKeys.namePlaceholder": "例如：1С:УНФ",
     "apiKeys.onBehalfOfUser": "代表以下用户",
     "apiKeys.myself": "— 我自己 —",
+
+    "role.admin": "管理员",
+    "role.operator": "录入员",
+    "role.payroll_operator": "工资专员",
+    "role.project_manager": "项目负责人",
+    "role.viewer": "仅查看",
+    "role.warehouse_operator": "仓库专员",
+    "roleDesc.admin": "完全访问权限：所有模块、基础数据、用户、API密钥、集成及公司设置。",
+    "roleDesc.operator": "录入和修改业务。可查看仪表盘、业务、报表和基础数据。无法访问工资和仓库。",
+    "roleDesc.payroll_operator": "仅工资模块：员工计提和发放，以及工资相关审计日志。其余模块隐藏。",
+    "roleDesc.project_manager": "仅限所负责项目范围内的仪表盘、业务和报表。无法查看其他项目数据。",
+    "roleDesc.viewer": "仅查看 — 业务、工资、报表、基础数据和仓库。无法进行任何修改。",
+    "roleDesc.warehouse_operator": "仅仓库模块：库存、出入库、订单和生产。无法访问财务模块。",
   },
 };
 

@@ -1,3 +1,6 @@
+// Русские значения по умолчанию — для мест, куда t() ещё не докинули (редко,
+// в основном отладочные выводы); экраны используют roleLabel(t, role) /
+// roleDescription(t, role) ниже, которые берут перевод из lib/i18n.js.
 export const ROLE_LABELS = {
   admin: "Администратор",
   operator: "Оператор ввода",
@@ -23,6 +26,16 @@ export const ROLE_DESCRIPTIONS = {
   warehouse_operator:
     "Только склад: остатки, движения, заказы и производство. Финансовые разделы недоступны.",
 };
+
+// t — из useTranslation() (lib/i18n.js). Роли — фиксированный набор (см.
+// RoleEnum на бэкенде), поэтому t(`role.${role}`) всегда попадает в словарь.
+export function roleLabel(t, role) {
+  return t(`role.${role}`);
+}
+
+export function roleDescription(t, role) {
+  return t(`roleDesc.${role}`);
+}
 
 // Видимость разделов навигации по ролям (см. таблицу прав в README).
 export const ROLE_NAV = {
