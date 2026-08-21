@@ -103,11 +103,23 @@ export function Combobox({
 
   return (
     <div className="fp-combobox-container" ref={containerRef}>
-      <button
-        type="button"
+      {/* div, не button: внутри есть своя кнопка "очистить" — button
+          внутри button невалиден в HTML и ломает гидрацию React. role/tabIndex/
+          onKeyDown ниже сохраняют клавиатурную доступность, которую иначе давал
+          бы нативный <button>. */}
+      <div
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        aria-disabled={disabled}
         className={`fp-combobox-trigger ${open ? "open" : ""} ${disabled ? "disabled" : ""} ${invalid ? "invalid" : ""}`}
         onClick={() => !disabled && setOpen(!open)}
-        disabled={disabled}
+        onKeyDown={(e) => {
+          if (disabled) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen(!open);
+          }
+        }}
       >
         <span className="fp-combobox-value">
           {selected ? selected.name : <span className="fp-combobox-placeholder">{effectivePlaceholder}</span>}
@@ -120,7 +132,7 @@ export function Combobox({
           )}
           <ChevronDown size={16} className={`fp-combobox-chevron ${open ? "rotated" : ""}`} />
         </span>
-      </button>
+      </div>
 
       {open && (
         <div className="fp-combobox-popup">
