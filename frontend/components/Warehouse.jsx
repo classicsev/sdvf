@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
   X,
@@ -21,6 +21,10 @@ import {
   Receipt,
   Building2,
   ChevronDown,
+  RefreshCw,
+  Upload,
+  Check,
+  Eye,
 } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
@@ -46,6 +50,7 @@ const SECTIONS = [
   { key: "orders", labelKey: "wh.section.orders", icon: ClipboardList },
   { key: "production", labelKey: "wh.section.production", icon: Factory },
   { key: "catalog", labelKey: "wh.section.catalog", icon: Settings },
+  { key: "sync", labelKey: "wh.section.sync", icon: RefreshCw },
 ];
 
 const ORDER_STATUS_BADGE = {
@@ -2232,6 +2237,419 @@ export default function Warehouse() {
           rawVariants={rawVariants}
           reloadVariants={reloadVariants}
         />
+      )}
+      {section === "sync" && <SheetSyncPanel {...shared} canEdit={canEdit} products={products} />}
+    </div>
+  );
+}
+
+const SHEET_TAB_FORMATS = [
+  { value: "movements", labelKey: "wh.sync.format.movements" },
+  { value: "wide_calibers_in", labelKey: "wh.sync.format.wideIn" },
+  { value: "wide_calibers_out", labelKey: "wh.sync.format.wideOut" },
+  { value: "processing_wide", labelKey: "wh.sync.format.processing" },
+];
+
+const TAB_FORM_EMPTY = {
+  spreadsheet_id: "",
+  spreadsheet_label: "",
+  tab_name: "",
+  format: "movements",
+  product_id: "",
+  default_warehouse_id: "",
+  column_mapping_text: "",
+};
+
+function SheetSyncPanel({ token, companies, multiCompany, companyId, warehouses, products, canEdit }) {
+  const { t } = useTranslation();
+  const singleCompanyId = companyId || (companies.length === 1 ? companies[0].company.id : "");
+
+  const { data: connection, reload: reloadConnection } = useResource(
+    () => (singleCompanyId ? api.getWhSheetConnection(token, singleCompanyId) : Promise.resolve(null)),
+    [token, singleCompanyId]
+  );
+  const { data: tabs, reload: reloadTabs } = useResource(
+    () => (singleCompanyId ? api.listWhSheetTabs(token, singleCompanyId) : Promise.resolve([])),
+    [token, singleCompanyId]
+  );
+
+  const [keyFileName, setKeyFileName] = useState("");
+  const [credentialsJson, setCredentialsJson] = useState("");
+  const [autosyncMinutes, setAutosyncMinutes] = useState(180);
+  const [connectSaving, setConnectSaving] = useState(false);
+  const [connectError, setConnectError] = useState("");
+
+  const [tabModalOpen, setTabModalOpen] = useState(false);
+  const [editingTabId, setEditingTabId] = useState(null);
+  const [tabForm, setTabForm] = useState(TAB_FORM_EMPTY);
+  const [tabError, setTabError] = useState("");
+  const [tabSaving, setTabSaving] = useState(false);
+
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+  const [previewBusy, setPreviewBusy] = useState(null);
+  const [previewResult, setPreviewResult] = useState(null);
+
+  function handleKeyFilePicked(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setCredentialsJson(String(reader.result || ""));
+    reader.readAsText(file);
+    setKeyFileName(file.name);
+  }
+
+  async function handleConnect(e) {
+    e.preventDefault();
+    setConnectSaving(true);
+    setConnectError("");
+    try {
+      await api.upsertWhSheetConnection(
+        token,
+        { credentials_json: credentialsJson, autosync_interval_minutes: Number(autosyncMinutes) },
+        singleCompanyId
+      );
+      setCredentialsJson("");
+      setKeyFileName("");
+      reloadConnection();
+    } catch (err) {
+      setConnectError(err.message);
+    } finally {
+      setConnectSaving(false);
+    }
+  }
+
+  function openAddTab() {
+    setEditingTabId(null);
+    setTabForm(TAB_FORM_EMPTY);
+    setTabError("");
+    setTabModalOpen(true);
+  }
+
+  function openEditTab(tab) {
+    setEditingTabId(tab.id);
+    setTabForm({
+      spreadsheet_id: tab.spreadsheet_id,
+      spreadsheet_label: tab.spreadsheet_label || "",
+      tab_name: tab.tab_name,
+      format: tab.format,
+      product_id: tab.product_id || "",
+      default_warehouse_id: tab.default_warehouse_id || "",
+      column_mapping_text: tab.column_mapping && Object.keys(tab.column_mapping).length
+        ? JSON.stringify(tab.column_mapping, null, 2)
+        : "",
+    });
+    setTabError("");
+    setTabModalOpen(true);
+  }
+
+  async function handleTabSubmit(e) {
+    e.preventDefault();
+    setTabSaving(true);
+    setTabError("");
+    try {
+      let column_mapping = {};
+      if (tabForm.column_mapping_text.trim()) {
+        try {
+          column_mapping = JSON.parse(tabForm.column_mapping_text);
+        } catch {
+          throw new Error(t("wh.sync.invalidJson"));
+        }
+      }
+      const payload = {
+        spreadsheet_id: tabForm.spreadsheet_id,
+        spreadsheet_label: tabForm.spreadsheet_label || null,
+        tab_name: tabForm.tab_name,
+        format: tabForm.format,
+        product_id: tabForm.product_id || null,
+        default_warehouse_id: tabForm.default_warehouse_id || null,
+        column_mapping,
+        is_active: true,
+      };
+      if (editingTabId) {
+        await api.updateWhSheetTab(token, editingTabId, payload);
+      } else {
+        await api.createWhSheetTab(token, payload, singleCompanyId);
+      }
+      setTabModalOpen(false);
+      reloadTabs();
+    } catch (err) {
+      setTabError(err.message);
+    } finally {
+      setTabSaving(false);
+    }
+  }
+
+  async function handleDeleteTab(tab) {
+    if (!window.confirm(t("wh.sync.deleteTabConfirm", { name: tab.tab_name }))) return;
+    await api.deleteWhSheetTab(token, tab.id);
+    reloadTabs();
+  }
+
+  async function handlePreview(tab) {
+    setPreviewBusy(tab.id);
+    setPreviewResult(null);
+    try {
+      const result = await api.previewWhSheetTab(token, tab.id);
+      setPreviewResult({ tabId: tab.id, ...result });
+    } catch (err) {
+      setPreviewResult({ tabId: tab.id, error: err.message });
+    } finally {
+      setPreviewBusy(null);
+    }
+  }
+
+  async function handleSyncNow() {
+    setSyncBusy(true);
+    setSyncResult(null);
+    try {
+      const result = await api.syncWhSheetsAll(token, singleCompanyId, true);
+      setSyncResult(result);
+      reloadTabs();
+    } catch (err) {
+      setSyncResult({ message: err.message });
+    } finally {
+      setSyncBusy(false);
+    }
+  }
+
+  if (!singleCompanyId) {
+    return <div className="fp-empty">{t("wh.sync.pickCompany")}</div>;
+  }
+
+  return (
+    <div>
+      <div className="fp-panel" style={{ padding: 16, marginBottom: 16 }}>
+        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>{t("wh.sync.connectionTitle")}</div>
+        {connection ? (
+          <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 10 }}>
+            {t("wh.sync.connected")}
+            {connection.last_sync_at && ` · ${t("wh.sync.lastSync")}: ${fmtDate(connection.last_sync_at)}`}
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 10 }}>{t("wh.sync.notConnected")}</div>
+        )}
+        {canEdit && (
+          <form onSubmit={handleConnect} style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <label>
+              {t("wh.sync.credentialsFile")}
+              <div>
+                <label className="fp-btn-ghost" style={{ display: "inline-flex", cursor: "pointer" }}>
+                  {credentialsJson ? <Check size={14} /> : <Upload size={14} />}
+                  {keyFileName || t("wh.sync.chooseFile")}
+                  <input type="file" accept=".json" style={{ display: "none" }} onChange={handleKeyFilePicked} />
+                </label>
+              </div>
+            </label>
+            <label>
+              {t("wh.sync.autosyncMinutes")}
+              <input
+                type="number"
+                min="10"
+                value={autosyncMinutes}
+                onChange={(e) => setAutosyncMinutes(e.target.value)}
+                style={{ width: 90 }}
+              />
+            </label>
+            <button type="submit" className="fp-btn-primary" disabled={connectSaving || !credentialsJson}>
+              {connectSaving ? t("common.saving") : t("wh.sync.saveConnection")}
+            </button>
+          </form>
+        )}
+        {connectError && <div className="fp-form-error">{connectError}</div>}
+      </div>
+
+      {connection && (
+        <>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>{t("wh.sync.tabsTitle")}</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="fp-btn-ghost" onClick={handleSyncNow} disabled={syncBusy}>
+                <RefreshCw size={14} /> {syncBusy ? t("wh.sync.syncing") : t("wh.sync.syncNow")}
+              </button>
+              {canEdit && (
+                <button className="fp-btn-tiny" onClick={openAddTab}>
+                  <Plus size={13} /> {t("wh.sync.addTab")}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {syncResult && (
+            <div className="fp-panel" style={{ padding: 12, marginBottom: 12, fontSize: 13 }}>
+              <div>{syncResult.message}</div>
+              {(syncResult.results || []).map((r) => (
+                <div key={r.tab_id} style={{ marginTop: 4, color: r.error ? "var(--expense)" : "var(--ink-soft)" }}>
+                  {r.tab_name}: {r.error || t("wh.sync.importedCount", { count: r.imported })}
+                  {r.unresolved_employees?.length > 0 && (
+                    <span style={{ color: "var(--expense)" }}>
+                      {" "}
+                      — {t("wh.sync.unresolvedEmployees", { names: r.unresolved_employees.join(", ") })}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="fp-panel fp-table-panel">
+            <table className="fp-table">
+              <thead>
+                <tr>
+                  <th>{t("wh.sync.col.spreadsheet")}</th>
+                  <th>{t("wh.sync.col.tab")}</th>
+                  <th>{t("wh.sync.col.format")}</th>
+                  <th>{t("wh.sync.col.cursor")}</th>
+                  {canEdit && <th></th>}
+                </tr>
+              </thead>
+              <tbody>
+                {(tabs || []).map((tab) => (
+                  <Fragment key={tab.id}>
+                    <tr>
+                      <td>{tab.spreadsheet_label || tab.spreadsheet_id}</td>
+                      <td>{tab.tab_name}</td>
+                      <td>{t(SHEET_TAB_FORMATS.find((f) => f.value === tab.format)?.labelKey || tab.format)}</td>
+                      <td>{tab.last_synced_row}</td>
+                      {canEdit && (
+                        <td style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                          <button className="fp-icon-btn" title={t("wh.sync.preview")} onClick={() => handlePreview(tab)} disabled={previewBusy === tab.id}>
+                            <Eye size={14} />
+                          </button>
+                          <button className="fp-icon-btn" onClick={() => openEditTab(tab)}>
+                            <Pencil size={14} />
+                          </button>
+                          <button className="fp-icon-btn" onClick={() => handleDeleteTab(tab)}>
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                    {previewResult?.tabId === tab.id && (
+                      <tr>
+                        <td colSpan={5} style={{ fontSize: 12.5, background: "var(--bg)" }}>
+                          {previewResult.error
+                            ? previewResult.error
+                            : t("wh.sync.previewSummary", { count: previewResult.imported })}
+                          {previewResult.unresolved_employees?.length > 0 &&
+                            ` — ${t("wh.sync.unresolvedEmployees", { names: previewResult.unresolved_employees.join(", ") })}`}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+                {(tabs || []).length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="fp-empty">
+                      {t("wh.sync.noTabs")}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {tabModalOpen && (
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setTabModalOpen(false))}>
+          <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="fp-modal-head">
+              <h3>{editingTabId ? t("wh.sync.editTab") : t("wh.sync.newTab")}</h3>
+              <button className="fp-icon-btn" onClick={() => setTabModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <form className="fp-form-grid" onSubmit={handleTabSubmit}>
+              <label>
+                {t("wh.sync.spreadsheetId")}
+                <input
+                  required
+                  value={tabForm.spreadsheet_id}
+                  onChange={(e) => setTabForm((p) => ({ ...p, spreadsheet_id: e.target.value }))}
+                  placeholder="1MrLrl7e..."
+                />
+              </label>
+              <label>
+                {t("wh.sync.spreadsheetLabel")}
+                <input
+                  value={tabForm.spreadsheet_label}
+                  onChange={(e) => setTabForm((p) => ({ ...p, spreadsheet_label: e.target.value }))}
+                />
+              </label>
+              <label>
+                {t("wh.sync.tabName")}
+                <input
+                  required
+                  value={tabForm.tab_name}
+                  onChange={(e) => setTabForm((p) => ({ ...p, tab_name: e.target.value }))}
+                />
+              </label>
+              <label>
+                {t("wh.sync.format")}
+                <select value={tabForm.format} onChange={(e) => setTabForm((p) => ({ ...p, format: e.target.value }))}>
+                  {SHEET_TAB_FORMATS.map((f) => (
+                    <option key={f.value} value={f.value}>
+                      {t(f.labelKey)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {tabForm.format !== "movements" && (
+                <>
+                  <label>
+                    {t("wh.sync.product")}
+                    <select
+                      value={tabForm.product_id}
+                      onChange={(e) => setTabForm((p) => ({ ...p, product_id: e.target.value }))}
+                    >
+                      <option value="">—</option>
+                      {(products || []).map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    {t("wh.sync.defaultWarehouse")}
+                    <select
+                      value={tabForm.default_warehouse_id}
+                      onChange={(e) => setTabForm((p) => ({ ...p, default_warehouse_id: e.target.value }))}
+                    >
+                      <option value="">—</option>
+                      {(warehouses || []).map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="fp-span-2">
+                    {t("wh.sync.columnMapping")}
+                    <textarea
+                      rows={8}
+                      style={{ fontFamily: "monospace", fontSize: 12.5 }}
+                      value={tabForm.column_mapping_text}
+                      onChange={(e) => setTabForm((p) => ({ ...p, column_mapping_text: e.target.value }))}
+                      placeholder={'{\n  "date_col": "A",\n  "calibers": {"C": "<variant_id>"},\n  "executor_col": "I",\n  "payroll_col": "N",\n  "warehouse_col": "L",\n  "note_col": "M",\n  "marker_col": "P"\n}'}
+                    />
+                  </label>
+                </>
+              )}
+              {tabError && <div className="fp-form-error fp-span-2">{tabError}</div>}
+              <div className="fp-modal-foot fp-span-2">
+                <button type="button" className="fp-btn-ghost" onClick={() => setTabModalOpen(false)}>
+                  {t("common.cancel")}
+                </button>
+                <button type="submit" className="fp-btn-primary" disabled={tabSaving}>
+                  {tabSaving ? t("common.saving") : t("common.save")}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

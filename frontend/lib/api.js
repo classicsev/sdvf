@@ -402,6 +402,19 @@ export const api = {
   transferWhStock: (token, payload) =>
     request("/warehouse/movements/transfer", { method: "POST", token, body: payload }),
 
+  getWhSheetConnection: (token, companyId) => request("/warehouse/sheets/connection", { token, query: { company_id: companyId } }),
+  upsertWhSheetConnection: (token, payload, companyId) =>
+    request("/warehouse/sheets/connection", { method: "POST", token, body: payload, query: { company_id: companyId } }),
+  listWhSheetTabs: (token, companyId) => request("/warehouse/sheets/tabs", { token, query: { company_id: companyId } }),
+  createWhSheetTab: (token, payload, companyId) =>
+    request("/warehouse/sheets/tabs", { method: "POST", token, body: payload, query: { company_id: companyId } }),
+  updateWhSheetTab: (token, id, payload) =>
+    request(`/warehouse/sheets/tabs/${id}`, { method: "PATCH", token, body: payload }),
+  deleteWhSheetTab: (token, id) => request(`/warehouse/sheets/tabs/${id}`, { method: "DELETE", token }),
+  previewWhSheetTab: (token, id) => request(`/warehouse/sheets/tabs/${id}/preview`, { token }),
+  syncWhSheetsAll: (token, companyId, force) =>
+    request("/warehouse/sheets/sync-all", { method: "POST", token, query: { company_id: companyId, force } }),
+
   listOrders: (token, query) => request("/orders", { token, query }),
   createOrder: (token, payload) => request("/orders", { method: "POST", token, body: payload }),
   updateOrder: (token, id, payload) => request(`/orders/${id}`, { method: "PATCH", token, body: payload }),
