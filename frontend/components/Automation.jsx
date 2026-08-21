@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { fmtDate } from "../lib/format";
 import { backdropClickProps } from "../lib/modalBackdrop";
+import { useTranslation } from "../lib/i18n";
 
 const PROVIDER_LABELS = {
   tinkoff: "Т-Банк",
@@ -22,44 +23,51 @@ const PROVIDER_LABELS = {
 const SYNC_SUPPORTED = ["tinkoff", "alfa", "amocrm", "jump"];
 
 const FIELD_OPTIONS = [
-  { value: "counterparty", label: "Контрагент" },
-  { value: "comment", label: "Комментарий" },
-  { value: "amount", label: "Сумма" },
+  { value: "counterparty", labelKey: "automation.field.counterparty" },
+  { value: "comment", labelKey: "automation.field.comment" },
+  { value: "amount", labelKey: "automation.field.amount" },
 ];
 
 const OPS_BY_FIELD = {
   counterparty: [
-    { value: "contains", label: "содержит" },
-    { value: "equals", label: "равен" },
+    { value: "contains", labelKey: "automation.op.contains" },
+    { value: "equals", labelKey: "automation.op.equalsText" },
   ],
   comment: [
-    { value: "contains", label: "содержит" },
-    { value: "equals", label: "равен" },
+    { value: "contains", labelKey: "automation.op.contains" },
+    { value: "equals", labelKey: "automation.op.equalsText" },
   ],
   amount: [
-    { value: "gt", label: ">" },
-    { value: "lt", label: "<" },
-    { value: "gte", label: ">=" },
-    { value: "lte", label: "<=" },
-    { value: "equals", label: "=" },
+    { value: "gt", labelKey: "automation.op.gt" },
+    { value: "lt", labelKey: "automation.op.lt" },
+    { value: "gte", labelKey: "automation.op.gte" },
+    { value: "lte", labelKey: "automation.op.lte" },
+    { value: "equals", labelKey: "automation.op.equalsAmount" },
   ],
 };
 
-const FIELD_LABELS = Object.fromEntries(FIELD_OPTIONS.map((f) => [f.value, f.label]));
-const OP_LABELS = Object.fromEntries(
-  Object.values(OPS_BY_FIELD)
-    .flat()
-    .map((o) => [o.value, o.label])
-);
 const CONDITION_EMPTY = { field: "counterparty", op: "contains", value: "" };
 const FORM_EMPTY = { conditions: [CONDITION_EMPTY], set_category: "", set_project: "" };
 
-function describeCondition(condition) {
+// t передаётся явно (не через хук) — функция вызывается из обычного JS, не
+// из тела компонента, а порядок последнего совпадения по value сохраняет
+// прежнее (до перевода) поведение: "equals" у amount ("=") перекрывает
+// "equals" у counterparty/comment ("равен") — так было и раньше.
+function describeCondition(condition, t) {
   const list = Array.isArray(condition) ? condition : [condition];
+  const allOps = Object.values(OPS_BY_FIELD).flat();
+  const fieldLabel = (field) => {
+    const match = FIELD_OPTIONS.find((f) => f.value === field);
+    return match ? t(match.labelKey) : field;
+  };
+  const opLabel = (op) => {
+    const match = allOps.filter((o) => o.value === op).pop();
+    return match ? t(match.labelKey) : op;
+  };
   return list
     .filter(Boolean)
-    .map((c) => `${FIELD_LABELS[c.field] || c.field} ${OP_LABELS[c.op] || c.op} «${c.value}»`)
-    .join(" И ");
+    .map((c) => `${fieldLabel(c.field)} ${opLabel(c.op)} «${c.value}»`)
+    .join(t("automation.and"));
 }
 
 const AMO_CONNECT_EMPTY = { subdomain: "", client_id: "", client_secret: "", access_token: "", refresh_token: "" };
@@ -76,6 +84,7 @@ const ALFA_FILE_NAMES_EMPTY = { cert: "", key: "" };
 
 function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const companies = user.companies || [];
   const multiCompany = companies.length > 1;
   const showCompanyColumn = multiCompany && !companyFilter;
@@ -149,7 +158,12 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
   }
 
   async function handleDisconnect(integration) {
-    if (!window.confirm(`Отключить «${PROVIDER_LABELS[integration.provider] || integration.provider}»?`)) return;
+    if (
+      !window.confirm(
+        t("automation.disconnectConfirm", { provider: PROVIDER_LABELS[integration.provider] || integration.provider })
+      )
+    )
+      return;
     try {
       await api.disconnectIntegration(token, integration.id);
       reload();
@@ -203,16 +217,16 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
   return (
     <>
       <div style={{ height: 20 }} />
-      <h3 style={{ fontFamily: "'Fraunces', serif" }}>Интеграции</h3>
+      <h3 style={{ fontFamily: "'Fraunces', serif" }}>{t("automation.integrationsTitle")}</h3>
       <div className="fp-panel fp-table-panel">
         <table className="fp-table">
           <thead>
             <tr>
-              {showCompanyColumn && <th>Компания</th>}
-              <th>Название</th>
-              <th>Тип</th>
-              <th className="center">Статус</th>
-              <th>Последний синк</th>
+              {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
+              <th>{t("automation.col.name")}</th>
+              <th>{t("automation.col.type")}</th>
+              <th className="center">{t("automation.col.status")}</th>
+              <th>{t("automation.col.lastSync")}</th>
               <th className="fp-table-actions-col"></th>
             </tr>
           </thead>
@@ -229,7 +243,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                 <td className="fp-muted">{i.type}</td>
                 <td className="center">
                   <span className={`fp-status-badge ${i.is_connected ? "ok" : "warn"}`}>
-                    {i.is_connected ? "Подключено" : "Не подключено"}
+                    {i.is_connected ? t("automation.connected") : t("automation.notConnected")}
                   </span>
                 </td>
                 <td className="fp-muted">{i.last_sync_at ? fmtDate(i.last_sync_at) : "—"}</td>
@@ -239,16 +253,16 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                       <>
                         {SYNC_SUPPORTED.includes(i.provider) && (
                           <button className="fp-btn-tiny" onClick={() => openSync(i)}>
-                            <RefreshCw size={12} /> Синк
+                            <RefreshCw size={12} /> {t("automation.sync")}
                           </button>
                         )}
                         <button className="fp-btn-tiny" onClick={() => handleDisconnect(i)}>
-                          Отключить
+                          {t("automation.disconnect")}
                         </button>
                       </>
                     ) : (
                       <button className="fp-btn-tiny" onClick={() => openConnect(i)}>
-                        Подключить
+                        {t("automation.connect")}
                       </button>
                     )}
                   </span>
@@ -258,17 +272,14 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
             {(integrations || []).length === 0 && (
               <tr>
                 <td colSpan={showCompanyColumn ? 6 : 5} className="fp-empty">
-                  Интеграций пока нет
+                  {t("automation.noIntegrations")}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
         <p className="fp-note" style={{ padding: "0 16px 16px" }}>
-          Реальная синхронизация реализована для Т-Банка и Альфа-Банка (выписки по счёту), amoCRM (контакты →
-          контрагенты, сделки в статусе «Успешно реализовано» → доходные транзакции) и Jump.Finance (сопоставляет
-          выплаты исполнителям с уже загруженными операциями Т-Банка — сама операций не создаёт). Остальные —
-          заглушки каталога на будущее.
+          {t("automation.integrationsNote")}
         </p>
       </div>
 
@@ -276,7 +287,11 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setConnectTarget(null))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>Подключить «{PROVIDER_LABELS[connectTarget.provider] || connectTarget.provider}»</h3>
+              <h3>
+                {t("automation.connectTitle", {
+                  provider: PROVIDER_LABELS[connectTarget.provider] || connectTarget.provider,
+                })}
+              </h3>
               <button className="fp-icon-btn" onClick={() => setConnectTarget(null)}>
                 <X size={18} />
               </button>
@@ -285,7 +300,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
               {connectTarget.provider === "amocrm" ? (
                 <>
                   <label className="fp-span-2">
-                    Поддомен (например, mvkusno из mvkusno.amocrm.ru)
+                    {t("automation.subdomainLabel")}
                     <input
                       required
                       value={amoConnectForm.subdomain}
@@ -293,7 +308,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                     />
                   </label>
                   <label>
-                    Client ID
+                    {t("automation.clientId")}
                     <input
                       required
                       value={amoConnectForm.client_id}
@@ -301,7 +316,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                     />
                   </label>
                   <label>
-                    Client Secret
+                    {t("automation.clientSecret")}
                     <input
                       required
                       value={amoConnectForm.client_secret}
@@ -309,7 +324,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                     />
                   </label>
                   <label>
-                    Access token
+                    {t("automation.accessToken")}
                     <input
                       required
                       value={amoConnectForm.access_token}
@@ -317,22 +332,19 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                     />
                   </label>
                   <label>
-                    Refresh token
+                    {t("automation.refreshToken")}
                     <input
                       required
                       value={amoConnectForm.refresh_token}
                       onChange={(e) => setAmoConnectForm((p) => ({ ...p, refresh_token: e.target.value }))}
                     />
                   </label>
-                  <div className="fp-note fp-span-2">
-                    amoCRM не выдаёт статичный токен для внешних интеграций — access/refresh получаются через
-                    обмен кода авторизации на вкладке «Ключи и доступы» вашей интеграции в amoMarket.
-                  </div>
+                  <div className="fp-note fp-span-2">{t("automation.amoNote")}</div>
                 </>
               ) : connectTarget.provider === "alfa" ? (
                 <>
                   <label className="fp-span-2">
-                    API-ключ (Alfa API, Портал разработчика)
+                    {t("automation.alfaApiKey")}
                     <input
                       required
                       value={alfaConnectForm.api_key}
@@ -340,14 +352,14 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                     />
                   </label>
                   <div className="fp-span-2">
-                    Сертификат клиента (файл .cer, который прислал банк)
+                    {t("automation.alfaCert")}
                     <div style={{ marginTop: 5 }}>
                       <label
                         className="fp-btn-ghost"
                         style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
                       >
                         {alfaConnectForm.cert_pem ? <Check size={14} /> : <Upload size={14} />}
-                        {alfaFileNames.cert || "Выбрать файл .cer"}
+                        {alfaFileNames.cert || t("automation.chooseCertFile")}
                         <input
                           type="file"
                           accept=".cer,.pem,.crt"
@@ -359,14 +371,14 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                     </div>
                   </div>
                   <div className="fp-span-2">
-                    Приватный ключ (файл .key, который прислал банк)
+                    {t("automation.alfaKey")}
                     <div style={{ marginTop: 5 }}>
                       <label
                         className="fp-btn-ghost"
                         style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
                       >
                         {alfaConnectForm.key_pem ? <Check size={14} /> : <Upload size={14} />}
-                        {alfaFileNames.key || "Выбрать файл .key"}
+                        {alfaFileNames.key || t("automation.chooseKeyFile")}
                         <input
                           type="file"
                           accept=".key,.pem"
@@ -378,7 +390,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                     </div>
                   </div>
                   <label className="fp-span-2">
-                    Пароль от приватного ключа
+                    {t("automation.keyPassword")}
                     <input
                       required
                       type="password"
@@ -386,31 +398,26 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                       onChange={(e) => setAlfaConnectForm((p) => ({ ...p, key_password: e.target.value }))}
                     />
                   </label>
-                  <div className="fp-note fp-span-2">
-                    Сертификат, ключ и пароль к нему выдаёт Альфа-Банк вместе с API-ключом (личный кабинет
-                    разработчика / письмо от банка).
-                  </div>
+                  <div className="fp-note fp-span-2">{t("automation.alfaNote")}</div>
                 </>
               ) : (
                 <label className="fp-span-2">
-                  {connectTarget.provider === "jump" ? "Client-Key (Jump.Finance)" : "API-токен"}
+                  {connectTarget.provider === "jump" ? t("automation.jumpClientKey") : t("automation.apiToken")}
                   <input
                     required
                     value={connectTokenValue}
                     onChange={(e) => setConnectTokenValue(e.target.value)}
-                    placeholder={
-                      connectTarget.provider === "jump" ? "" : "Для теста Т-Банка: TBankSandboxToken"
-                    }
+                    placeholder={connectTarget.provider === "jump" ? "" : t("automation.tbankSandboxPlaceholder")}
                   />
                 </label>
               )}
               {connectError && <div className="fp-form-error fp-span-2">{connectError}</div>}
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setConnectTarget(null)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={connectSaving}>
-                  {connectSaving ? "Сохраняем…" : "Подключить"}
+                  {connectSaving ? t("common.saving") : t("automation.connect")}
                 </button>
               </div>
             </form>
@@ -422,7 +429,9 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setSyncTarget(null))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>Синхронизация «{PROVIDER_LABELS[syncTarget.provider] || syncTarget.provider}»</h3>
+              <h3>
+                {t("automation.syncTitle", { provider: PROVIDER_LABELS[syncTarget.provider] || syncTarget.provider })}
+              </h3>
               <button className="fp-icon-btn" onClick={() => setSyncTarget(null)}>
                 <X size={18} />
               </button>
@@ -435,12 +444,14 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                 const needsAccountNumber = syncTarget.provider !== "amocrm";
                 return (
                   <label className="fp-span-2">
-                    {syncTarget.provider === "amocrm" ? "Счёт (куда записать доход по сделкам)" : "Счёт (с заполненным номером счёта)"}
+                    {syncTarget.provider === "amocrm"
+                      ? t("automation.accountForDeals")
+                      : t("automation.accountWithNumber")}
                     {relevantAccounts.length === 0 ? (
                       <div className="fp-form-error" style={{ marginTop: 6 }}>
                         {needsAccountNumber
-                          ? "В этой компании нет счетов с заполненным номером. Добавьте номер счёта в справочнике «Счета»."
-                          : "В этой компании нет счетов. Добавьте счёт в справочнике «Счета»."}
+                          ? t("automation.noAccountsWithNumber")
+                          : t("automation.noAccounts")}
                       </div>
                     ) : (
                       <select
@@ -449,7 +460,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                         onChange={(e) => setSyncForm((p) => ({ ...p, account_id: e.target.value }))}
                       >
                         <option value="" disabled>
-                          Выберите счёт
+                          {t("payroll.selectAccount")}
                         </option>
                         {relevantAccounts.map((a) => (
                           <option key={a.id} value={a.id}>
@@ -464,7 +475,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                 );
               })()}
               <label className={syncTarget.provider === "amocrm" ? "fp-span-2" : ""}>
-                {syncTarget.provider === "amocrm" ? "Сделки, закрытые с даты (опц.)" : "С даты"}
+                {syncTarget.provider === "amocrm" ? t("automation.dealsClosedFrom") : t("automation.dateFrom")}
                 <input
                   type="date"
                   required={syncTarget.provider !== "amocrm"}
@@ -474,7 +485,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
               </label>
               {syncTarget.provider !== "amocrm" && (
                 <label>
-                  По дату (опц.)
+                  {t("automation.dateTo")}
                   <input
                     type="date"
                     value={syncForm.date_to}
@@ -483,20 +494,16 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                 </label>
               )}
               {syncTarget.provider === "jump" && (
-                <div className="fp-note fp-span-2">
-                  Jump.Finance не загружает новые операции — только находит среди уже загруженных (обычно из
-                  Т-Банка) те, что были выплатами через Jump, и подставляет туда исполнителя как контрагента (плюс
-                  статью/проект, если получится определить). После синка Т-Банка это происходит само.
-                </div>
+                <div className="fp-note fp-span-2">{t("automation.jumpNote")}</div>
               )}
               {syncTarget.provider === "alfa" && (
                 <label className="fp-span-2">
-                  Тестовый номер счёта для песочницы (опц.)
+                  {t("automation.sandboxAccountNumber")}
                   <select
                     value={syncForm.account_number_override}
                     onChange={(e) => setSyncForm((p) => ({ ...p, account_number_override: e.target.value }))}
                   >
-                    <option value="">Не подставлять — использовать номер счёта из справочника</option>
+                    <option value="">{t("automation.sandboxNone")}</option>
                     {ALFA_SANDBOX_TEST_ACCOUNTS.map((n) => (
                       <option key={n} value={n}>
                         {n}
@@ -504,56 +511,66 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
                     ))}
                   </select>
                   <span className="fp-note" style={{ display: "block", marginTop: 4 }}>
-                    Песочница Alfa API принимает только свои тестовые номера счетов, не настоящий. Выберите один из
-                    списка, если синкаете песочницу — реальный номер счёта в справочнике «Счета» останется как есть.
+                    {t("automation.sandboxNote")}
                   </span>
                 </label>
               )}
               {syncError && <div className="fp-form-error fp-span-2">{syncError}</div>}
               {syncResult && syncTarget.provider === "amocrm" && (
                 <div className="fp-note fp-span-2">
-                  Контрагенты: создано {syncResult.contacts_created}, уже были {syncResult.contacts_matched}.
+                  {t("automation.amoResult.contacts", {
+                    created: syncResult.contacts_created,
+                    matched: syncResult.contacts_matched,
+                  })}
                   <br />
-                  Сделки («Успешно реализовано»): загружено {syncResult.deals_created}, пропущено{" "}
-                  {syncResult.deals_skipped}.
+                  {t("automation.amoResult.deals", {
+                    created: syncResult.deals_created,
+                    skipped: syncResult.deals_skipped,
+                  })}
                 </div>
               )}
               {syncResult && syncTarget.provider === "jump" && (
                 <div className="fp-note fp-span-2">
-                  Сопоставлено: {syncResult.matched} (статья по контрагенту: {syncResult.category_set_from_default},
-                  по правилу автоматизации: {syncResult.category_set_from_rule}). Не найдено пары:{" "}
-                  {syncResult.unmatched}
-                  {syncResult.ambiguous > 0 ? `, неоднозначных совпадений: ${syncResult.ambiguous}` : ""}.
+                  {t("automation.jumpResult", {
+                    matched: syncResult.matched,
+                    byDefault: syncResult.category_set_from_default,
+                    byRule: syncResult.category_set_from_rule,
+                    unmatched: syncResult.unmatched,
+                  })}
+                  {syncResult.ambiguous > 0
+                    ? t("automation.jumpResult.ambiguous", { count: syncResult.ambiguous })
+                    : ""}
+                  .
                 </div>
               )}
               {syncResult && syncTarget.provider !== "amocrm" && syncTarget.provider !== "jump" && (
                 <div className="fp-note fp-span-2">
                   <div>
-                    Загружено новых операций: {syncResult.created}. Пропущено: {syncResult.skipped}.{" "}
+                    {t("automation.genericResult", { created: syncResult.created, skipped: syncResult.skipped })}{" "}
                     <button
                       type="button"
                       className="fp-btn-tiny"
                       style={{ marginLeft: 4 }}
                       onClick={() => setSyncDetailsOpen((v) => !v)}
                     >
-                      {syncDetailsOpen ? "Скрыть" : "Подробнее"}
+                      {syncDetailsOpen ? t("automation.hide") : t("automation.more")}
                     </button>
                   </div>
                   {syncDetailsOpen && (
                     <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
-                      <li>Уже были загружены раньше: {syncResult.skipped_duplicate}</li>
-                      <li>Нет курса валюты на дату операции: {syncResult.skipped_no_fx_rate}</li>
-                      <li>Не удалось распознать операцию: {syncResult.skipped_unparseable}</li>
+                      <li>{t("automation.alreadyLoaded", { count: syncResult.skipped_duplicate })}</li>
+                      <li>{t("automation.noFxRate", { count: syncResult.skipped_no_fx_rate })}</li>
+                      <li>{t("automation.unparseable", { count: syncResult.skipped_unparseable })}</li>
                     </ul>
                   )}
                 </div>
               )}
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setSyncTarget(null)}>
-                  Закрыть
+                  {t("automation.close")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={syncSaving}>
-                  {syncSaving ? "Синхронизируем…" : "Синхронизировать"}
+                  {syncSaving ? t("dashboard.syncing") : t("dashboard.sync")}
                 </button>
               </div>
             </form>
@@ -566,6 +583,7 @@ function IntegrationsPanel({ token, integrations, reload, companyFilter }) {
 
 export default function Automation() {
   const { token, user } = useAuth();
+  const { t } = useTranslation();
   const companies = user.companies || [];
   const multiCompany = companies.length > 1;
   const roleForCompany = (companyId) => companies.find((m) => m.company.id === companyId)?.role;
@@ -681,7 +699,7 @@ export default function Automation() {
   }
 
   async function handleDelete(rule) {
-    if (!window.confirm("Удалить правило?")) return;
+    if (!window.confirm(t("automation.deleteRuleConfirm"))) return;
     try {
       await api.deleteAutomationRule(token, rule.id);
       reload();
@@ -693,11 +711,11 @@ export default function Automation() {
   return (
     <div className="fp-dash">
       <div className="fp-tabs-row">
-        <h3 style={{ margin: 0, fontFamily: "'Fraunces', serif" }}>Правила автоматизации</h3>
+        <h3 style={{ margin: 0, fontFamily: "'Fraunces', serif" }}>{t("automation.rulesTitle")}</h3>
         <div style={{ display: "flex", gap: 10 }}>
           {multiCompany && (
             <select value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
-              <option value="">Все компании</option>
+              <option value="">{t("dashboard.allCompanies")}</option>
               {companies.map((m) => (
                 <option key={m.company.id} value={m.company.id}>
                   {m.company.name}
@@ -706,7 +724,7 @@ export default function Automation() {
             </select>
           )}
           <button type="button" className="fp-btn-tiny" onClick={openAdd}>
-            <Plus size={13} /> Новое правило
+            <Plus size={13} /> {t("automation.newRule")}
           </button>
         </div>
       </div>
@@ -715,15 +733,15 @@ export default function Automation() {
 
       <div className="fp-panel fp-table-panel">
         {loading ? (
-          <div className="fp-loading">Загрузка…</div>
+          <div className="fp-loading">{t("common.loading")}</div>
         ) : (
           <table className="fp-table">
             <thead>
               <tr>
-                {showCompanyColumn && <th>Компания</th>}
-                <th>Условие</th>
-                <th>Действие</th>
-                <th className="center">Активно</th>
+                {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
+                <th>{t("automation.col.condition")}</th>
+                <th>{t("automation.col.action")}</th>
+                <th className="center">{t("automation.col.active")}</th>
                 <th className="fp-table-actions-col"></th>
               </tr>
             </thead>
@@ -735,11 +753,13 @@ export default function Automation() {
                   {showCompanyColumn && (
                     <td>{companies.find((m) => m.company.id === rule.company_id)?.company.name || "—"}</td>
                   )}
-                  <td>{describeCondition(rule.condition_json)}</td>
+                  <td>{describeCondition(rule.condition_json, t)}</td>
                   <td className="fp-muted">
-                    {rule.action_json?.set_category && `Статья → ${categoriesById[rule.action_json.set_category]?.name || "?"}`}
+                    {rule.action_json?.set_category &&
+                      t("automation.categoryArrow", { name: categoriesById[rule.action_json.set_category]?.name || "?" })}
                     {rule.action_json?.set_category && rule.action_json?.set_project && ", "}
-                    {rule.action_json?.set_project && `Проект → ${projectsById[rule.action_json.set_project]?.name || "?"}`}
+                    {rule.action_json?.set_project &&
+                      t("automation.projectArrow", { name: projectsById[rule.action_json.set_project]?.name || "?" })}
                   </td>
                   <td className="center">
                     <label className="fp-mini-switch">
@@ -765,7 +785,7 @@ export default function Automation() {
               {(rules || []).length === 0 && (
                 <tr>
                   <td colSpan={showCompanyColumn ? 5 : 4} className="fp-empty">
-                    Правил пока нет
+                    {t("automation.noRules")}
                   </td>
                 </tr>
               )}
@@ -773,8 +793,7 @@ export default function Automation() {
           </table>
         )}
         <p className="fp-note" style={{ padding: "0 16px 16px" }}>
-          Правило применяется при создании новой операции: если условие совпадает, статья и/или проект
-          переопределяются автоматически.
+          {t("automation.rulesNote")}
         </p>
       </div>
 
@@ -789,7 +808,7 @@ export default function Automation() {
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>Новое правило</h3>
+              <h3>{t("automation.newRule")}</h3>
               <button className="fp-icon-btn" onClick={() => setModalOpen(false)}>
                 <X size={18} />
               </button>
@@ -797,7 +816,7 @@ export default function Automation() {
             <form className="fp-form-grid" onSubmit={handleSubmit}>
               {multiCompany && (
                 <label className="fp-span-2">
-                  Компания
+                  {t("tx.form.company")}
                   <select
                     value={formCompanyId}
                     onChange={(e) => {
@@ -816,12 +835,12 @@ export default function Automation() {
               )}
               <div className="fp-span-2">
                 <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>
-                  Условия (все должны совпасть)
+                  {t("automation.conditionsLabel")}
                 </div>
                 {form.conditions.map((cond, idx) => (
                   <div key={idx} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "flex-end" }}>
                     <label style={{ flex: 1 }}>
-                      {idx === 0 && "Поле"}
+                      {idx === 0 && t("automation.field")}
                       <select
                         value={cond.field}
                         onChange={(e) =>
@@ -830,23 +849,23 @@ export default function Automation() {
                       >
                         {FIELD_OPTIONS.map((f) => (
                           <option key={f.value} value={f.value}>
-                            {f.label}
+                            {t(f.labelKey)}
                           </option>
                         ))}
                       </select>
                     </label>
                     <label style={{ flex: 1 }}>
-                      {idx === 0 && "Условие"}
+                      {idx === 0 && t("automation.col.condition")}
                       <select value={cond.op} onChange={(e) => updateCondition(idx, { op: e.target.value })}>
                         {OPS_BY_FIELD[cond.field].map((o) => (
                           <option key={o.value} value={o.value}>
-                            {o.label}
+                            {t(o.labelKey)}
                           </option>
                         ))}
                       </select>
                     </label>
                     <label style={{ flex: 1 }}>
-                      {idx === 0 && "Значение"}
+                      {idx === 0 && t("automation.value")}
                       <input
                         required
                         type={cond.field === "amount" ? "number" : "text"}
@@ -867,14 +886,14 @@ export default function Automation() {
                   </div>
                 ))}
                 <button type="button" className="fp-btn-tiny" onClick={addCondition}>
-                  <Plus size={13} /> Добавить условие (И)
+                  <Plus size={13} /> {t("automation.addCondition")}
                 </button>
               </div>
 
               <label>
-                Установить статью
+                {t("automation.setCategory")}
                 <select value={form.set_category} onChange={(e) => setForm((p) => ({ ...p, set_category: e.target.value }))}>
-                  <option value="">— не менять —</option>
+                  <option value="">{t("automation.dontChange")}</option>
                   {selectableCategories.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -883,9 +902,9 @@ export default function Automation() {
                 </select>
               </label>
               <label>
-                Установить проект
+                {t("automation.setProject")}
                 <select value={form.set_project} onChange={(e) => setForm((p) => ({ ...p, set_project: e.target.value }))}>
-                  <option value="">— не менять —</option>
+                  <option value="">{t("automation.dontChange")}</option>
                   {selectableProjects.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
@@ -898,10 +917,10 @@ export default function Automation() {
 
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setModalOpen(false)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={saving}>
-                  {saving ? "Сохраняем…" : "Создать"}
+                  {saving ? t("common.saving") : t("automation.create")}
                 </button>
               </div>
             </form>
