@@ -171,6 +171,11 @@ class CounterpartyIn(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
+    # Реквизиты контрагента из КНР — см. models.py::Counterparty.cn_*.
+    cn_name_zh: Optional[str] = None
+    cn_credit_code: Optional[str] = None
+    cn_legal_rep: Optional[str] = None
+    cn_address_zh: Optional[str] = None
 
 
 class CounterpartyOut(CounterpartyIn):
@@ -741,6 +746,12 @@ class StockBalanceOut(BaseModel):
 class OrderLineIn(BaseModel):
     product_variant_id: str
     quantity: float
+    # Для будущего 装箱单 (Packing List) — см. models.py::OrderLine, опциональны.
+    package_count: Optional[int] = None
+    package_type: Optional[str] = None
+    gross_weight: Optional[float] = None
+    net_weight: Optional[float] = None
+    marks: Optional[str] = None
 
 
 class OrderLineOut(BaseModel):
@@ -749,6 +760,11 @@ class OrderLineOut(BaseModel):
     id: str
     product_variant_id: str
     quantity: float
+    package_count: Optional[int] = None
+    package_type: Optional[str] = None
+    gross_weight: Optional[float] = None
+    net_weight: Optional[float] = None
+    marks: Optional[str] = None
 
 
 class OrderCreateIn(BaseModel):
@@ -756,6 +772,10 @@ class OrderCreateIn(BaseModel):
     warehouse_id: str
     requested_date: Optional[date] = None
     note: Optional[str] = None
+    # Условия сделки для будущих 合同/发票 — см. models.py::Order.
+    incoterms: Optional[str] = None
+    incoterms_place: Optional[str] = None
+    payment_terms: Optional[str] = None
     lines: list[OrderLineIn]
 
 
@@ -763,6 +783,9 @@ class OrderUpdateIn(BaseModel):
     counterparty_id: Optional[str] = None
     requested_date: Optional[date] = None
     note: Optional[str] = None
+    incoterms: Optional[str] = None
+    incoterms_place: Optional[str] = None
+    payment_terms: Optional[str] = None
 
 
 class OrderOut(BaseModel):
@@ -775,6 +798,9 @@ class OrderOut(BaseModel):
     status: OrderStatusEnum
     requested_date: Optional[date] = None
     note: Optional[str] = None
+    incoterms: Optional[str] = None
+    incoterms_place: Optional[str] = None
+    payment_terms: Optional[str] = None
     created_by: Optional[str] = None
     created_at: datetime
     lines: list[OrderLineOut] = []

@@ -214,6 +214,16 @@ class Counterparty(Base):
     phone: Mapped[str] = mapped_column(String(50), nullable=True)
     email: Mapped[str] = mapped_column(String(255), nullable=True)
 
+    # Реквизиты контрагента из КНР — заполняются, если контрагент сам
+    # зарегистрирован в Китае (см. Company.cn_org_* — тот же набор полей,
+    # только на стороне покупателя/поставщика, не своей организации).
+    # Нужны как Seller/Buyer на будущих двуязычных документах (合同/发票/装箱单,
+    # см. HANDOVER.md — модуль "Китай", основа под документы).
+    cn_name_zh: Mapped[str] = mapped_column(String(300), nullable=True)
+    cn_credit_code: Mapped[str] = mapped_column(String(32), nullable=True)
+    cn_legal_rep: Mapped[str] = mapped_column(String(200), nullable=True)
+    cn_address_zh: Mapped[str] = mapped_column(Text, nullable=True)
+
     # Связи с внешними системами. sdvf_buyer_id пустой = карточка ещё не заведена
     # в СДВФ (на фронте помечается как несинхронизированная, с кнопками
     # "привязать к существующей" / "создать в СДВФ").
@@ -577,6 +587,13 @@ class Order(Base):
     )
     requested_date: Mapped[date] = mapped_column(Date, nullable=True)
     note: Mapped[str] = mapped_column(Text, nullable=True)
+    # Условия сделки для будущих 合同 (Sales Contract) / 商业发票 (Commercial
+    # Invoice) — см. HANDOVER.md, модуль "Китай", основа под документы.
+    # incoterms — код термина (FOB/CIF/CFR/EXW и т.п.), incoterms_place —
+    # поименованный порт/место по Инкотермс (например, "FOB Владивосток").
+    incoterms: Mapped[str] = mapped_column(String(10), nullable=True)
+    incoterms_place: Mapped[str] = mapped_column(String(200), nullable=True)
+    payment_terms: Mapped[str] = mapped_column(Text, nullable=True)
     created_by: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     # {"id": <sdvf document id>, "pdf_url": "..."} — результат генерации в СДВФ
@@ -595,6 +612,16 @@ class OrderLine(Base):
     order_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("orders.id"))
     product_variant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("product_variants.id"))
     quantity: Mapped[float] = mapped_column(Numeric(12, 3))
+    # Для будущего 装箱单 (Packing List) — Склад сейчас не различает физическую
+    # упаковку (только абстрактное количество в единице товара), эти поля
+    # заполняются отдельно, обычно уже на этапе подготовки к отгрузке, а не
+    # при создании заказа. См. HANDOVER.md, модуль "Китай", основа под
+    # документы — UI для их заполнения пока не строился намеренно.
+    package_count: Mapped[int] = mapped_column(Integer, nullable=True)
+    package_type: Mapped[str] = mapped_column(String(50), nullable=True)  # CTN / PLT / BOX и т.п.
+    gross_weight: Mapped[float] = mapped_column(Numeric(12, 3), nullable=True)
+    net_weight: Mapped[float] = mapped_column(Numeric(12, 3), nullable=True)
+    marks: Mapped[str] = mapped_column(Text, nullable=True)  # 唛头 — маркировка мест
 
 
 class ProductionRecipe(Base):

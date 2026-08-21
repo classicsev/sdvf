@@ -95,10 +95,22 @@ def create_order(payload: OrderCreateIn, db: Session = Depends(get_db), user: Us
         status=OrderStatusEnum.draft,
         requested_date=payload.requested_date,
         note=payload.note,
+        incoterms=payload.incoterms,
+        incoterms_place=payload.incoterms_place,
+        payment_terms=payload.payment_terms,
         created_by=user.id,
     )
     order.lines = [
-        OrderLine(company_id=warehouse.company_id, product_variant_id=l.product_variant_id, quantity=l.quantity)
+        OrderLine(
+            company_id=warehouse.company_id,
+            product_variant_id=l.product_variant_id,
+            quantity=l.quantity,
+            package_count=l.package_count,
+            package_type=l.package_type,
+            gross_weight=l.gross_weight,
+            net_weight=l.net_weight,
+            marks=l.marks,
+        )
         for l in payload.lines
     ]
     db.add(order)
