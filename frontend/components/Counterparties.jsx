@@ -18,6 +18,10 @@ const FORM_EMPTY = {
   address: "",
   phone: "",
   email: "",
+  cn_name_zh: "",
+  cn_credit_code: "",
+  cn_legal_rep: "",
+  cn_address_zh: "",
 };
 
 const CONTACT_EMPTY = { full_name: "", position: "", phone: "", email: "", is_primary: false };
@@ -104,6 +108,10 @@ export default function Counterparties() {
       address: item.address || "",
       phone: item.phone || "",
       email: item.email || "",
+      cn_name_zh: item.cn_name_zh || "",
+      cn_credit_code: item.cn_credit_code || "",
+      cn_legal_rep: item.cn_legal_rep || "",
+      cn_address_zh: item.cn_address_zh || "",
     });
     setFormCompanyId(item.company_id || "");
     setOriginalCompanyId(item.company_id || "");
@@ -502,6 +510,46 @@ export default function Counterparties() {
                     : t("cp.notLinkedHint")}
                 </div>
               )}
+
+              <div
+                className="fp-span-2"
+                style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, marginTop: 4 }}
+              >
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>{t("cp.cnHeading")}</div>
+                <p className="fp-note" style={{ margin: "0 0 10px" }}>
+                  {t("cp.cnNote")}
+                </p>
+                <div className="fp-form-grid" style={{ padding: 0 }}>
+                  <label>
+                    {t("cp.cnNameZh")}
+                    <input
+                      value={form.cn_name_zh}
+                      onChange={(e) => setForm((p) => ({ ...p, cn_name_zh: e.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    {t("cp.cnCreditCode")}
+                    <input
+                      value={form.cn_credit_code}
+                      onChange={(e) => setForm((p) => ({ ...p, cn_credit_code: e.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    {t("cp.cnLegalRep")}
+                    <input
+                      value={form.cn_legal_rep}
+                      onChange={(e) => setForm((p) => ({ ...p, cn_legal_rep: e.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    {t("cp.cnAddressZh")}
+                    <input
+                      value={form.cn_address_zh}
+                      onChange={(e) => setForm((p) => ({ ...p, cn_address_zh: e.target.value }))}
+                    />
+                  </label>
+                </div>
+              </div>
 
               {formError && <div className="fp-form-error fp-span-2">{formError}</div>}
 

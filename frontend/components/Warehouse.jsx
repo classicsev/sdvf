@@ -773,6 +773,9 @@ const ORDER_FORM_EMPTY = {
   warehouse_id: "",
   requested_date: "",
   note: "",
+  incoterms: "",
+  incoterms_place: "",
+  payment_terms: "",
   lines: [{ product_variant_id: "", quantity: "" }],
 };
 
@@ -882,6 +885,9 @@ function OrdersPanel({
         warehouse_id: form.warehouse_id,
         requested_date: form.requested_date || null,
         note: form.note || null,
+        incoterms: form.incoterms || null,
+        incoterms_place: form.incoterms_place || null,
+        payment_terms: form.payment_terms || null,
         lines: form.lines.map((l) => ({ product_variant_id: l.product_variant_id, quantity: Number(l.quantity) })),
       });
       setModalOpen(false);
@@ -1117,6 +1123,32 @@ function OrdersPanel({
                 {t("wh.col.note")}
                 <input value={form.note} onChange={(e) => setForm((p) => ({ ...p, note: e.target.value }))} />
               </label>
+
+              <div className="fp-span-2" style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, marginTop: 4 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10 }}>{t("wh.tradeTermsHeading")}</div>
+                <div className="fp-form-grid" style={{ padding: 0 }}>
+                  <label>
+                    {t("wh.incoterms")}
+                    <input value={form.incoterms} onChange={(e) => setForm((p) => ({ ...p, incoterms: e.target.value }))} />
+                  </label>
+                  <label>
+                    {t("wh.incotermsPlace")}
+                    <input
+                      value={form.incoterms_place}
+                      placeholder={t("wh.incotermsPlacePlaceholder")}
+                      onChange={(e) => setForm((p) => ({ ...p, incoterms_place: e.target.value }))}
+                    />
+                  </label>
+                  <label className="fp-span-2">
+                    {t("wh.paymentTerms")}
+                    <input
+                      value={form.payment_terms}
+                      placeholder={t("wh.paymentTermsPlaceholder")}
+                      onChange={(e) => setForm((p) => ({ ...p, payment_terms: e.target.value }))}
+                    />
+                  </label>
+                </div>
+              </div>
 
               <div className="fp-span-2">
                 <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>{t("wh.orderComposition")}</div>

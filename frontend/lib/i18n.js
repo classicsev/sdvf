@@ -804,6 +804,20 @@ const DICT = {
     "wh.deactivatedGenericAlert": "«{name}» уже используется — деактивировано вместо удаления.",
 
     "common.loadError": "Ошибка загрузки",
+
+    "cp.cnHeading": "Реквизиты КНР (для будущих двуязычных документов)",
+    "cp.cnNote": "Заполняются, если контрагент сам зарегистрирован в Китае — понадобятся как Seller/Buyer на будущих 合同/发票/装箱单.",
+    "cp.cnNameZh": "Название (中文名称)",
+    "cp.cnCreditCode": "Единый соц.-кредитный код (统一社会信用代码)",
+    "cp.cnLegalRep": "Директор/учредитель (法定代表人)",
+    "cp.cnAddressZh": "Юридический адрес (住所)",
+
+    "wh.tradeTermsHeading": "Условия сделки (опц., для будущих документов)",
+    "wh.incoterms": "Инкотермс",
+    "wh.incotermsPlace": "Порт/место по Инкотермс",
+    "wh.incotermsPlacePlaceholder": "Например: Владивосток",
+    "wh.paymentTerms": "Условия оплаты",
+    "wh.paymentTermsPlaceholder": "Например: T/T, 30% предоплата, 70% до отгрузки",
   },
   zh: {
     "common.loading": "加载中…",
@@ -1581,6 +1595,20 @@ const DICT = {
     "wh.deactivatedGenericAlert": "「{name}」正在使用中 — 已停用而非删除。",
 
     "common.loadError": "加载失败",
+
+    "cp.cnHeading": "中国注册信息（用于未来双语文件）",
+    "cp.cnNote": "如该往来单位本身在中国注册，请填写此信息 — 未来用于合同/发票/装箱单中的Seller/Buyer信息。",
+    "cp.cnNameZh": "名称（中文名称）",
+    "cp.cnCreditCode": "统一社会信用代码",
+    "cp.cnLegalRep": "法定代表人",
+    "cp.cnAddressZh": "住所",
+
+    "wh.tradeTermsHeading": "交易条款（选填，用于未来文件）",
+    "wh.incoterms": "贸易术语",
+    "wh.incotermsPlace": "贸易术语指定港口/地点",
+    "wh.incotermsPlacePlaceholder": "例如：符拉迪沃斯托克",
+    "wh.paymentTerms": "付款条款",
+    "wh.paymentTermsPlaceholder": "例如：T/T，预付30%，发货前付清70%",
   },
 };
 
