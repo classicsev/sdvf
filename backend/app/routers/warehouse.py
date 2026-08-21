@@ -526,6 +526,19 @@ def create_movement(
     db.commit()
     db.refresh(movement)
     log_action(db, user, action="create", entity_type="stock_movement", entity_id=movement.id, company_id=warehouse.company_id)
+
+    # Обратная синхронизация: движение создано ЗДЕСЬ (не через импорт из
+    # таблицы) — если у компании настроен лист-черновик формата "movements",
+    # дописываем его туда же. Отложенный импорт — иначе циклическая
+    # зависимость warehouse.py<->warehouse_sheets.py (тот модуль уже
+    # импортирует build_movement/compute_balances отсюда).
+    try:
+        from app.warehouse_sheets import push_movement_to_configured_tabs
+
+        push_movement_to_configured_tabs(db, movement)
+    except Exception:
+        pass
+
     return movement
 
 

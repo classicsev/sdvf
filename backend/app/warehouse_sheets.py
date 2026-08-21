@@ -385,6 +385,41 @@ def export_movement_to_sheet(db: Session, connection: WarehouseSheetConnection, 
     )
 
 
+def push_movement_to_configured_tabs(db: Session, movement) -> None:
+    """Вызывается из warehouse.py::create_movement сразу после того, как
+    движение создано ЧЕРЕЗ САМО ПРИЛОЖЕНИЕ (не через синк из таблицы!) —
+    иначе получился бы цикл: импортировали из листа → тут же отправили
+    обратно тем же движком. sync_tab() эту функцию никогда не вызывает,
+    поэтому цикла нет структурно, а не по случайности.
+
+    Ошибка Google API здесь не должна ронять создание самой операции —
+    операция уже сохранена в БД, отправка в таблицу вторичный эффект."""
+    connection = (
+        db.query(WarehouseSheetConnection)
+        .filter(
+            WarehouseSheetConnection.company_id == movement.company_id,
+            WarehouseSheetConnection.is_connected.is_(True),
+        )
+        .first()
+    )
+    if connection is None:
+        return
+    tabs = (
+        db.query(WarehouseSheetTab)
+        .filter(
+            WarehouseSheetTab.connection_id == connection.id,
+            WarehouseSheetTab.format == WarehouseSheetTabFormat.movements,
+            WarehouseSheetTab.is_active.is_(True),
+        )
+        .all()
+    )
+    for tab in tabs:
+        try:
+            export_movement_to_sheet(db, connection, tab, movement)
+        except Exception:
+            pass
+
+
 def export_balances(db: Session, connection: WarehouseSheetConnection, spreadsheet_id: str, company_id: str) -> None:
     gc = get_client(connection)
     sh = gc.open_by_key(spreadsheet_id)
