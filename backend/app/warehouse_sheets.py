@@ -136,6 +136,7 @@ class SyncOutcome:
     def __init__(self):
         self.imported = 0
         self.unresolved_employees: set[str] = set()
+        self.unresolved_warehouses: set[str] = set()
         self.marks: dict[int, str] = {}
         self.preview_rows: list[dict] = []
 
@@ -145,6 +146,7 @@ class SyncOutcome:
             "tab_name": tab.tab_name,
             "imported": self.imported,
             "unresolved_employees": sorted(self.unresolved_employees),
+            "unresolved_warehouses": sorted(self.unresolved_warehouses),
         }
 
 
@@ -233,10 +235,16 @@ def _process_wide_format(
         if not d:
             continue
 
-        warehouse_name = _cell(row, cfg.get("warehouse_col"))
-        warehouse = warehouses_by_name.get(warehouse_name.strip().lower()) if warehouse_name else default_warehouse
-        if not warehouse:
-            continue
+        warehouse_name = _cell(row, cfg.get("warehouse_col")).strip()
+        if warehouse_name:
+            warehouse = warehouses_by_name.get(warehouse_name.lower())
+            if not warehouse:
+                outcome.unresolved_warehouses.add(warehouse_name)
+                continue
+        else:
+            warehouse = default_warehouse
+            if not warehouse:
+                continue
         note = _cell(row, cfg.get("note_col")).strip() or None
         executor_name = _cell(row, cfg.get("executor_col")).strip()
         payroll_total = _parse_number(_cell(row, cfg.get("payroll_col")))

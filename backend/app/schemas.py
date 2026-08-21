@@ -784,6 +784,7 @@ class WarehouseSheetSyncResult(BaseModel):
     tab_name: str
     imported: int
     unresolved_employees: list[str] = []
+    unresolved_warehouses: list[str] = []
     error: Optional[str] = None
 
 

@@ -2488,6 +2488,12 @@ function SheetSyncPanel({ token, companies, multiCompany, companyId, warehouses,
                       — {t("wh.sync.unresolvedEmployees", { names: r.unresolved_employees.join(", ") })}
                     </span>
                   )}
+                  {r.unresolved_warehouses?.length > 0 && (
+                    <span style={{ color: "var(--expense)" }}>
+                      {" "}
+                      — {t("wh.sync.unresolvedWarehouses", { names: r.unresolved_warehouses.join(", ") })}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
@@ -2534,6 +2540,8 @@ function SheetSyncPanel({ token, companies, multiCompany, companyId, warehouses,
                             : t("wh.sync.previewSummary", { count: previewResult.imported })}
                           {previewResult.unresolved_employees?.length > 0 &&
                             ` — ${t("wh.sync.unresolvedEmployees", { names: previewResult.unresolved_employees.join(", ") })}`}
+                          {previewResult.unresolved_warehouses?.length > 0 &&
+                            ` — ${t("wh.sync.unresolvedWarehouses", { names: previewResult.unresolved_warehouses.join(", ") })}`}
                         </td>
                       </tr>
                     )}
