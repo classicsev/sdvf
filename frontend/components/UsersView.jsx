@@ -7,11 +7,13 @@ import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { ROLE_LABELS } from "../lib/roles";
 import { backdropClickProps } from "../lib/modalBackdrop";
+import { useTranslation } from "../lib/i18n";
 
 const FORM_EMPTY = { email: "", full_name: "", password: "", role: "viewer", project_id: "" };
 
 export default function UsersView() {
   const { token, user: currentUser } = useAuth();
+  const { t } = useTranslation();
   const myCompanies = currentUser.companies || [];
   const multiCompany = myCompanies.length > 1;
   const editableCompanies = myCompanies.filter((m) => m.role === "admin");
@@ -107,8 +109,8 @@ export default function UsersView() {
   }
 
   async function toggleActive(u) {
-    const action = u.is_active === false ? "восстановить" : "деактивировать";
-    if (!window.confirm(`Точно ${action} пользователя «${u.full_name}»?`)) return;
+    const action = u.is_active === false ? t("users.action.restore") : t("users.action.deactivate");
+    if (!window.confirm(t("users.toggleConfirm", { action, name: u.full_name }))) return;
     const companyId = targetCompanyFor(u) || undefined;
     try {
       if (u.is_active === false) {
@@ -127,7 +129,7 @@ export default function UsersView() {
       <div className="fp-tabs-row">
         {multiCompany ? (
           <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>
-            <option value="">Все компании</option>
+            <option value="">{t("dashboard.allCompanies")}</option>
             {myCompanies.map((m) => (
               <option key={m.company.id} value={m.company.id}>
                 {m.company.name}
@@ -138,7 +140,7 @@ export default function UsersView() {
           <div />
         )}
         <button type="button" className="fp-btn-tiny" onClick={openAdd}>
-          <Plus size={13} /> Новый пользователь
+          <Plus size={13} /> {t("users.newUser")}
         </button>
       </div>
 
@@ -146,16 +148,16 @@ export default function UsersView() {
 
       <div className="fp-panel fp-table-panel">
         {loading ? (
-          <div className="fp-loading">Загрузка…</div>
+          <div className="fp-loading">{t("common.loading")}</div>
         ) : (
           <table className="fp-table">
             <thead>
               <tr>
-                {multiCompany && <th>Компания</th>}
-                <th>ФИО</th>
-                <th>Email</th>
-                <th>Роль</th>
-                <th className="center">Активен</th>
+                {multiCompany && <th>{t("dashboard.table.company")}</th>}
+                <th>{t("users.col.fullName")}</th>
+                <th>{t("users.col.email")}</th>
+                <th>{t("users.col.role")}</th>
+                <th className="center">{t("users.col.active")}</th>
                 <th className="fp-table-actions-col"></th>
               </tr>
             </thead>
@@ -176,7 +178,7 @@ export default function UsersView() {
                   <td>{ROLE_LABELS[role] || role}</td>
                   <td className="center">
                     <span className={`fp-status-badge ${u.is_active === false ? "danger" : "ok"}`}>
-                      {u.is_active === false ? "Нет" : "Да"}
+                      {u.is_active === false ? t("users.no") : t("users.yes")}
                     </span>
                   </td>
                   <td className="fp-table-actions-col">
@@ -185,7 +187,7 @@ export default function UsersView() {
                         <Pencil size={14} />
                       </button>
                       {u.id !== currentUser.id && (
-                        <button className="fp-icon-btn" onClick={() => toggleActive(u)} title={u.is_active === false ? "Восстановить" : "Деактивировать"}>
+                        <button className="fp-icon-btn" onClick={() => toggleActive(u)} title={u.is_active === false ? t("payroll.restore") : t("reference.deactivate")}>
                           {u.is_active === false ? <RotateCcw size={14} /> : <Ban size={14} />}
                         </button>
                       )}
@@ -197,7 +199,7 @@ export default function UsersView() {
               {(users || []).length === 0 && (
                 <tr>
                   <td colSpan={multiCompany ? 6 : 5} className="fp-empty">
-                    Пользователей пока нет
+                    {t("users.noUsers")}
                   </td>
                 </tr>
               )}
@@ -205,8 +207,7 @@ export default function UsersView() {
           </table>
         )}
         <p className="fp-note" style={{ padding: "0 16px 16px" }}>
-          «Удаление» деактивирует пользователя (блокирует вход), а не удаляет физически — на него уже могут
-          ссылаться операции и записи аудита.
+          {t("users.deactivateNote")}
         </p>
       </div>
 
@@ -214,7 +215,7 @@ export default function UsersView() {
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>{editingId ? "Редактировать пользователя" : "Новый пользователь"}</h3>
+              <h3>{editingId ? t("users.editUser") : t("users.newUser")}</h3>
               <button className="fp-icon-btn" onClick={() => setModalOpen(false)}>
                 <X size={18} />
               </button>
@@ -222,7 +223,7 @@ export default function UsersView() {
             <form className="fp-form-grid" onSubmit={handleSubmit}>
               {multiCompany && (
                 <label className="fp-span-2">
-                  Компания
+                  {t("tx.form.company")}
                   {editingId ? (
                     <input
                       type="text"
@@ -241,7 +242,7 @@ export default function UsersView() {
                 </label>
               )}
               <label className="fp-span-2">
-                ФИО
+                {t("users.col.fullName")}
                 <input
                   required
                   value={form.full_name}
@@ -249,11 +250,11 @@ export default function UsersView() {
                 />
               </label>
               <label className="fp-span-2">
-                Email
+                {t("users.col.email")}
                 <input type="email" required disabled={!!editingId} value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} />
               </label>
               <label className="fp-span-2">
-                {editingId ? "Новый пароль (оставьте пустым, чтобы не менять)" : "Пароль"}
+                {editingId ? t("users.newPassword") : t("users.password")}
                 <input
                   type="password"
                   required={!editingId}
@@ -262,7 +263,7 @@ export default function UsersView() {
                 />
               </label>
               <label>
-                Роль
+                {t("users.col.role")}
                 <select
                   disabled={editingId === currentUser.id}
                   value={form.role}
@@ -277,12 +278,12 @@ export default function UsersView() {
               </label>
               {form.role === "project_manager" && (
                 <label>
-                  Проект
+                  {t("reports.project")}
                   <select
                     value={form.project_id}
                     onChange={(e) => setForm((p) => ({ ...p, project_id: e.target.value }))}
                   >
-                    <option value="">— не указан —</option>
+                    <option value="">{t("tx.form.notSpecified")}</option>
                     {(projects || []).map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.name}
@@ -296,10 +297,10 @@ export default function UsersView() {
 
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setModalOpen(false)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={saving}>
-                  {saving ? "Сохраняем…" : editingId ? "Сохранить" : "Создать"}
+                  {saving ? t("common.saving") : editingId ? t("common.save") : t("modules.create")}
                 </button>
               </div>
             </form>
