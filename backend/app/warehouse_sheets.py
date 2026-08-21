@@ -94,9 +94,18 @@ def resolve_employee(db: Session, company_id: str, name: str) -> Optional[Employ
     if not name or not name.strip():
         return None
     needle = name.strip().lower()
-    for emp in db.query(Employee).filter(Employee.company_id == company_id, Employee.status == "active").all():
+    employees = db.query(Employee).filter(Employee.company_id == company_id, Employee.status == "active").all()
+    for emp in employees:
         if emp.full_name.strip().lower() == needle:
             return emp
+    # Реальные листы часто пишут только имя/прозвище водолаза ("Антон"), а не
+    # полное ФИО ("Антон Жаркой") — ищем needle как отдельное слово где-нибудь
+    # в ФИО. Если совпало у НЕСКОЛЬКИХ сотрудников сразу — не угадываем (иначе
+    # риск начислить зарплату не тому), считаем нераспознанным как и при
+    # полном отсутствии совпадения.
+    matches = [emp for emp in employees if needle in {w.lower() for w in emp.full_name.split()}]
+    if len(matches) == 1:
+        return matches[0]
     return None
 
 
