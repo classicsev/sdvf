@@ -7,9 +7,11 @@ import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { fmtDate } from "../lib/format";
+import { useTranslation } from "../lib/i18n";
 
 export default function ApiKeys() {
   const { token } = useAuth();
+  const { t } = useTranslation();
   const { data: keys, loading, error, reload } = useResource(() => api.listApiKeys(token), [token]);
   const { data: users } = useResource(() => api.listUsers(token), [token]);
   const usersById = Object.fromEntries((users || []).map((u) => [u.id, u]));
@@ -53,7 +55,7 @@ export default function ApiKeys() {
   }
 
   async function handleRevoke(key) {
-    if (!window.confirm(`Отозвать ключ «${key.name}»? Все интеграции, использующие его, перестанут работать.`)) return;
+    if (!window.confirm(t("apiKeys.revokeConfirm", { name: key.name }))) return;
     try {
       await api.revokeApiKey(token, key.id);
       reload();
@@ -65,9 +67,9 @@ export default function ApiKeys() {
   return (
     <div className="fp-dash">
       <div className="fp-tabs-row">
-        <h3 style={{ margin: 0, fontFamily: "'Fraunces', serif" }}>API-ключи</h3>
+        <h3 style={{ margin: 0, fontFamily: "'Fraunces', serif" }}>{t("apiKeys.title")}</h3>
         <button type="button" className="fp-btn-tiny" onClick={openAdd}>
-          <Plus size={13} /> Новый ключ
+          <Plus size={13} /> {t("apiKeys.newKey")}
         </button>
       </div>
 
@@ -75,17 +77,17 @@ export default function ApiKeys() {
 
       <div className="fp-panel fp-table-panel">
         {loading ? (
-          <div className="fp-loading">Загрузка…</div>
+          <div className="fp-loading">{t("common.loading")}</div>
         ) : (
           <table className="fp-table">
             <thead>
               <tr>
-                <th>Название</th>
-                <th>Ключ</th>
-                <th>От имени</th>
-                <th className="center">Статус</th>
-                <th>Создан</th>
-                <th>Использован</th>
+                <th>{t("apiKeys.col.name")}</th>
+                <th>{t("apiKeys.col.key")}</th>
+                <th>{t("apiKeys.col.onBehalfOf")}</th>
+                <th className="center">{t("apiKeys.col.status")}</th>
+                <th>{t("apiKeys.col.created")}</th>
+                <th>{t("apiKeys.col.lastUsed")}</th>
                 <th className="fp-table-actions-col"></th>
               </tr>
             </thead>
@@ -99,11 +101,11 @@ export default function ApiKeys() {
                   <td className="fp-muted">{usersById[k.user_id]?.email || k.user_id}</td>
                   <td className="center">
                     <span className={`fp-status-badge ${k.is_active ? "ok" : "warn"}`}>
-                      {k.is_active ? "Активен" : "Отозван"}
+                      {k.is_active ? t("apiKeys.active") : t("apiKeys.revoked")}
                     </span>
                   </td>
                   <td className="fp-muted">{fmtDate(k.created_at)}</td>
-                  <td className="fp-muted">{k.last_used_at ? fmtDate(k.last_used_at) : "ещё не использован"}</td>
+                  <td className="fp-muted">{k.last_used_at ? fmtDate(k.last_used_at) : t("apiKeys.neverUsed")}</td>
                   <td className="fp-table-actions-col">
                     {k.is_active && (
                       <button className="fp-icon-btn" onClick={() => handleRevoke(k)}>
@@ -116,7 +118,7 @@ export default function ApiKeys() {
               {(keys || []).length === 0 && (
                 <tr>
                   <td colSpan={7} className="fp-empty">
-                    Ключей пока нет
+                    {t("apiKeys.noKeys")}
                   </td>
                 </tr>
               )}
@@ -124,8 +126,7 @@ export default function ApiKeys() {
           </table>
         )}
         <p className="fp-note" style={{ padding: "0 16px 16px" }}>
-          Ключ авторизует запросы заголовком <code>X-API-Key</code> с теми же правами, что и у выбранного
-          пользователя. Полное значение ключа показывается только один раз — сразу после создания.
+          {t("apiKeys.note")}
         </p>
       </div>
 
@@ -133,7 +134,7 @@ export default function ApiKeys() {
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>Новый API-ключ</h3>
+              <h3>{t("apiKeys.newKeyTitle")}</h3>
               <button className="fp-icon-btn" onClick={() => setModalOpen(false)}>
                 <X size={18} />
               </button>
@@ -141,43 +142,41 @@ export default function ApiKeys() {
 
             {createdKey ? (
               <div className="fp-form-grid">
-                <div className="fp-note fp-span-2">
-                  Сохраните ключ сейчас — второй раз он показан не будет.
-                </div>
+                <div className="fp-note fp-span-2">{t("apiKeys.saveNowNote")}</div>
                 <label className="fp-span-2">
-                  Ключ
+                  {t("apiKeys.col.key")}
                   <div style={{ display: "flex", gap: 8 }}>
                     <input readOnly value={createdKey} style={{ fontFamily: "monospace" }} />
                     <button type="button" className="fp-btn-tiny" onClick={handleCopy}>
                       {copied ? <Check size={13} /> : <Copy size={13} />}
-                      {copied ? "Скопировано" : "Копировать"}
+                      {copied ? t("apiKeys.copied") : t("apiKeys.copy")}
                     </button>
                   </div>
                 </label>
                 <div className="fp-modal-foot fp-span-2">
                   <button type="button" className="fp-btn-primary" onClick={() => setModalOpen(false)}>
-                    Готово
+                    {t("apiKeys.done")}
                   </button>
                 </div>
               </div>
             ) : (
               <form className="fp-form-grid" onSubmit={handleSubmit}>
                 <label className="fp-span-2">
-                  Название
+                  {t("apiKeys.col.name")}
                   <input
                     required
-                    placeholder="Например: 1С:УНФ"
+                    placeholder={t("apiKeys.namePlaceholder")}
                     value={form.name}
                     onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
                   />
                 </label>
                 <label className="fp-span-2">
-                  От имени пользователя
+                  {t("apiKeys.onBehalfOfUser")}
                   <select
                     value={form.user_id}
                     onChange={(e) => setForm((p) => ({ ...p, user_id: e.target.value }))}
                   >
-                    <option value="">— я сам —</option>
+                    <option value="">{t("apiKeys.myself")}</option>
                     {(users || []).map((u) => (
                       <option key={u.id} value={u.id}>
                         {u.full_name} ({u.email})
@@ -188,10 +187,10 @@ export default function ApiKeys() {
                 {formError && <div className="fp-form-error fp-span-2">{formError}</div>}
                 <div className="fp-modal-foot fp-span-2">
                   <button type="button" className="fp-btn-ghost" onClick={() => setModalOpen(false)}>
-                    Отмена
+                    {t("common.cancel")}
                   </button>
                   <button type="submit" className="fp-btn-primary" disabled={saving}>
-                    {saving ? "Создаём…" : "Создать"}
+                    {saving ? t("modules.creating") : t("modules.create")}
                   </button>
                 </div>
               </form>
