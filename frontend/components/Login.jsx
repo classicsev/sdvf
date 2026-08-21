@@ -1,11 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { Languages } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
+import { useTranslation } from "../lib/i18n";
 import OAuthButtons from "./OAuthButtons";
 
 export default function Login({ onSwitchToRegister }) {
   const { login } = useAuth();
+  const { t, locale, setLocale } = useTranslation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -18,7 +21,7 @@ export default function Login({ onSwitchToRegister }) {
     try {
       await login(email, password);
     } catch (err) {
-      setError(err.message || "Не удалось войти");
+      setError(err.message || t("auth.loginFailed"));
     } finally {
       setBusy(false);
     }
@@ -27,18 +30,39 @@ export default function Login({ onSwitchToRegister }) {
   return (
     <div className="fp-login-page">
       <div className="fp-login-card">
-        <div className="fp-login-brand">
-          <div className="fp-brand-mark">₽</div>
-          <div>
-            <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 600, fontSize: 15 }}>
-              Учёт Движения
+        <div className="fp-login-brand" style={{ justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div className="fp-brand-mark">₽</div>
+            <div>
+              <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 600, fontSize: 15 }}>
+                {t("shell.brandName")}
+              </div>
+              <div style={{ fontSize: 11, color: "#5B6472" }}>{t("auth.brandSubLogin")}</div>
             </div>
-            <div style={{ fontSize: 11, color: "#5B6472" }}>финансовый контур</div>
           </div>
+          <button
+            type="button"
+            onClick={() => setLocale(locale === "ru" ? "zh" : "ru")}
+            title="RU / 中文"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              background: "none",
+              border: "1px solid #E7E1D3",
+              borderRadius: 6,
+              padding: "4px 8px",
+              cursor: "pointer",
+              fontSize: 12,
+              color: "#5B6472",
+            }}
+          >
+            <Languages size={13} /> {t("shell.languageToggle")}
+          </button>
         </div>
         <form className="fp-login-form" onSubmit={handleSubmit}>
           <label>
-            Email
+            {t("modules.email")}
             <input
               type="email"
               value={email}
@@ -48,7 +72,7 @@ export default function Login({ onSwitchToRegister }) {
             />
           </label>
           <label>
-            Пароль
+            {t("auth.password")}
             <input
               type="password"
               value={password}
@@ -63,7 +87,7 @@ export default function Login({ onSwitchToRegister }) {
             disabled={busy}
             style={{ justifyContent: "center", marginTop: 6 }}
           >
-            {busy ? "Входим…" : "Войти"}
+            {busy ? t("auth.loggingIn") : t("auth.login")}
           </button>
         </form>
         <OAuthButtons />
@@ -81,7 +105,7 @@ export default function Login({ onSwitchToRegister }) {
                 textDecoration: "underline",
               }}
             >
-              Новая компания? Зарегистрироваться
+              {t("auth.newCompanyRegister")}
             </button>
           </div>
         )}

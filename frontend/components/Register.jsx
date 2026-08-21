@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
+import { useTranslation } from "../lib/i18n";
 import OAuthButtons from "./OAuthButtons";
 
 export default function Register({ onSwitchToLogin }) {
   const { applyToken } = useAuth();
+  const { t } = useTranslation();
   const [companyName, setCompanyName] = useState("");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -33,7 +35,7 @@ export default function Register({ onSwitchToLogin }) {
       });
       setPendingToken(access_token);
     } catch (err) {
-      setError(err.message || "Не удалось зарегистрировать компанию");
+      setError(err.message || t("auth.registerFailed"));
     } finally {
       setBusy(false);
     }
@@ -44,23 +46,17 @@ export default function Register({ onSwitchToLogin }) {
       <div className="fp-login-page">
         <div className="fp-login-card fp-register-notice">
           <div className="fp-brand-mark">₽</div>
-          <h2>Компания зарегистрирована</h2>
-          <p>
-            Мы отправили письмо для подтверждения на <b>{email}</b>.
-          </p>
-          <div className="fp-spam-hint">
-            Письмо, скорее всего, попадёт в папку «Спам» — это обычное дело для нового
-            почтового отправителя. Проверьте её и пометьте письмо как «Не спам», чтобы
-            следующие письма приходили нормально.
-          </div>
-          <p>Подтверждать email не обязательно прямо сейчас — доступ уже открыт.</p>
+          <h2>{t("auth.companyRegistered")}</h2>
+          <p>{t("auth.confirmationEmailSent", { email })}</p>
+          <div className="fp-spam-hint">{t("auth.spamHint")}</div>
+          <p>{t("auth.confirmNotRequired")}</p>
           <button
             type="button"
             className="fp-btn-primary"
             style={{ justifyContent: "center", width: "100%" }}
             onClick={() => applyToken(pendingToken)}
           >
-            Перейти в аккаунт
+            {t("auth.goToAccount")}
           </button>
         </div>
       </div>
@@ -74,14 +70,14 @@ export default function Register({ onSwitchToLogin }) {
           <div className="fp-brand-mark">₽</div>
           <div>
             <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 600, fontSize: 15 }}>
-              Учёт Движения
+              {t("shell.brandName")}
             </div>
-            <div style={{ fontSize: 11, color: "#5B6472" }}>регистрация компании</div>
+            <div style={{ fontSize: 11, color: "#5B6472" }}>{t("auth.brandSubRegister")}</div>
           </div>
         </div>
         <form className="fp-login-form" onSubmit={handleSubmit}>
           <label>
-            Название компании
+            {t("auth.companyName")}
             <input
               type="text"
               value={companyName}
@@ -91,15 +87,15 @@ export default function Register({ onSwitchToLogin }) {
             />
           </label>
           <label>
-            Ваше имя
+            {t("auth.yourName")}
             <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
           </label>
           <label>
-            Email
+            {t("modules.email")}
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
           </label>
           <label>
-            Пароль
+            {t("auth.password")}
             <input
               type="password"
               value={password}
@@ -115,9 +111,9 @@ export default function Register({ onSwitchToLogin }) {
               onChange={(e) => setPdnConsent(e.target.checked)}
             />
             <span>
-              Даю согласие на обработку персональных данных в соответствии с{" "}
+              {t("auth.pdnConsent")}{" "}
               <a href="/privacy" target="_blank" rel="noopener noreferrer">
-                Политикой обработки персональных данных
+                {t("auth.pdnPolicyLink")}
               </a>
             </span>
           </label>
@@ -128,7 +124,7 @@ export default function Register({ onSwitchToLogin }) {
             disabled={busy || !pdnConsent}
             style={{ justifyContent: "center", marginTop: 6 }}
           >
-            {busy ? "Регистрируем…" : "Зарегистрировать компанию"}
+            {busy ? t("auth.registering") : t("auth.registerCompany")}
           </button>
         </form>
         <OAuthButtons />
@@ -145,7 +141,7 @@ export default function Register({ onSwitchToLogin }) {
               textDecoration: "underline",
             }}
           >
-            Уже есть аккаунт? Войти
+            {t("auth.alreadyHaveAccount")}
           </button>
         </div>
       </div>
