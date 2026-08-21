@@ -102,6 +102,31 @@ def _apply_payroll_bridge(db: Session, movement: StockMovement, company_id: str)
     movement.payroll_accrual_id = accrual.id
 
 
+def build_movement(
+    db: Session, company_id: str, payload: StockMovementIn, created_by: Optional[str] = None
+) -> StockMovement:
+    """Общая часть создания движения (конструктор + зарплатный мост), без
+    HTTP-валидации/коммита — переиспользуется и `create_movement` (эндпоинт),
+    и `app/warehouse_sheets.py` (синк с Google Таблицами), чтобы не дублировать
+    логику зарплатного моста в двух местах."""
+    movement = StockMovement(
+        company_id=company_id,
+        date=payload.date,
+        warehouse_id=payload.warehouse_id,
+        product_variant_id=payload.product_variant_id,
+        direction=payload.direction,
+        quantity=payload.quantity,
+        note=payload.note,
+        executor_id=payload.executor_id,
+        payroll_rate=payload.payroll_rate,
+        created_by=created_by,
+    )
+    db.add(movement)
+    db.flush()
+    _apply_payroll_bridge(db, movement, company_id)
+    return movement
+
+
 # ---------------------------------------------------------------------------
 # Склады
 # ---------------------------------------------------------------------------
@@ -322,6 +347,15 @@ def get_balances(
     user: User = Depends(get_current_user),
 ):
     company_ids = resolve_company_ids(db, user, company_id)
+    return compute_balances(db, company_ids, warehouse_id, include_empty)
+
+
+def compute_balances(
+    db: Session, company_ids: list[str], warehouse_id: str | None = None, include_empty: bool = False
+) -> list[StockBalanceOut]:
+    """Вынесено из `get_balances`, чтобы переиспользовать в
+    `app/warehouse_sheets.py::export_balances` (пишет остатки в Google Таблицу)
+    без HTTP self-call."""
     # Зарезервированное количество = сумма позиций заказов в статусе "reserved" по тому
     # же складу и варианту — доступно-к-обещанию (available) не хранится, а считается
     # так же на лету, как и сам остаток.
@@ -488,23 +522,7 @@ def create_movement(
         if employee.company_id != warehouse.company_id:
             raise HTTPException(status_code=400, detail="Сотрудник принадлежит другой компании")
 
-    movement = StockMovement(
-        company_id=warehouse.company_id,
-        date=payload.date,
-        warehouse_id=payload.warehouse_id,
-        product_variant_id=payload.product_variant_id,
-        direction=payload.direction,
-        quantity=payload.quantity,
-        note=payload.note,
-        executor_id=payload.executor_id,
-        payroll_rate=payload.payroll_rate,
-        created_by=user.id,
-    )
-    db.add(movement)
-    db.flush()
-
-    _apply_payroll_bridge(db, movement, warehouse.company_id)
-
+    movement = build_movement(db, warehouse.company_id, payload, created_by=user.id)
     db.commit()
     db.refresh(movement)
     log_action(db, user, action="create", entity_type="stock_movement", entity_id=movement.id, company_id=warehouse.company_id)

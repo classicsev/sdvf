@@ -585,6 +585,65 @@ class StockMovement(Base):
     product_variant = relationship("ProductVariant")
 
 
+class WarehouseSheetConnection(Base):
+    """Доступ компании к Google Sheets (склад) — один service-account ключ на
+    компанию, им читаются/пишутся все привязанные листы (см. WarehouseSheetTab),
+    независимо от того, в какой конкретно таблице лежит каждый лист."""
+
+    __tablename__ = "warehouse_sheet_connections"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
+    # JSON-ключ служебного аккаунта Google — тот же паттерн, что и PEM-сертификат
+    # Альфа-Банка в Integration.credentials_encrypted (см. app/crypto.py).
+    credentials_encrypted: Mapped[str] = mapped_column(Text, nullable=True)
+    is_connected: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_sync_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    autosync_interval_minutes: Mapped[int] = mapped_column(Integer, default=180)
+    created_by: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=True)
+
+
+class WarehouseSheetTabFormat(str, enum.Enum):
+    movements = "movements"  # универсальный шаблон: 1 строка = 1 движение склада
+    wide_calibers_in = "wide_calibers_in"  # легаси-лист прихода (калибры по столбцам)
+    wide_calibers_out = "wide_calibers_out"  # легаси-лист расхода
+    processing_wide = "processing_wide"  # легаси "Цех" (SKU по столбцам, знак = приход/расход)
+
+
+class WarehouseSheetTab(Base):
+    """Один синхронизируемый лист одной Google-таблицы. Несколько строк могут
+    указывать на РАЗНЫЕ spreadsheet_id под одним WarehouseSheetConnection —
+    например, легаси-листы реальной рабочей таблицы и листы новой
+    таблицы-шаблона синкаются одним и тем же service-account ключом."""
+
+    __tablename__ = "warehouse_sheet_tabs"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    connection_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("warehouse_sheet_connections.id"))
+    spreadsheet_id: Mapped[str] = mapped_column(String(100))
+    spreadsheet_label: Mapped[str] = mapped_column(String(200), nullable=True)
+    tab_name: Mapped[str] = mapped_column(String(200))
+    format: Mapped[WarehouseSheetTabFormat] = mapped_column(
+        Enum(WarehouseSheetTabFormat, values_callable=lambda enum_cls: [e.value for e in enum_cls])
+    )
+    # Только для wide_calibers_*/processing_wide — лист привязан к одному виду товара.
+    product_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("products.id"), nullable=True)
+    default_warehouse_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("warehouses.id"), nullable=True)
+    # Для wide_calibers_*/processing_wide — JSON-конфиг колонок листа по БУКВЕ
+    # столбца (не по названию заголовка — реальные легаси-листы неоднородны,
+    # с повторяющимися заголовками и несколькими под-таблицами в одном листе).
+    # Формат см. в app/warehouse_sheets.py (модуль-докстринг). Для format ==
+    # movements не используется (колонки шаблона фиксированы).
+    column_mapping_json: Mapped[str] = mapped_column(Text, nullable=True)
+    # Курсор — последняя прочитанная строка листа, не "уже виденные" по
+    # содержимому: у строк нет естественного уникального ключа, а строки
+    # только дописываются в конец (подтверждено на реальных данных).
+    last_synced_row: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    connection = relationship("WarehouseSheetConnection")
+
+
 class OrderStatusEnum(str, enum.Enum):
     draft = "draft"
     reserved = "reserved"

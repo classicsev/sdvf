@@ -4,7 +4,7 @@ from typing import Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models import OrderStatusEnum, RoleEnum, StockDirectionEnum, TxTypeEnum
+from app.models import OrderStatusEnum, RoleEnum, StockDirectionEnum, TxTypeEnum, WarehouseSheetTabFormat
 
 
 class TransactionBase(BaseModel):
@@ -733,6 +733,65 @@ class StockTransferIn(BaseModel):
     to_warehouse_id: str
     quantity: float
     note: Optional[str] = None
+
+
+class WarehouseSheetConnectionIn(BaseModel):
+    # Полный текст JSON-ключа service account, как скачан из Google Cloud —
+    # шифруется целиком на бэкенде, никогда не хранится в открытом виде.
+    credentials_json: str
+    autosync_interval_minutes: int = 180
+
+
+class WarehouseSheetConnectionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    company_id: str
+    is_connected: bool
+    last_sync_at: Optional[datetime] = None
+    autosync_interval_minutes: int
+
+
+class WarehouseSheetTabIn(BaseModel):
+    spreadsheet_id: str
+    spreadsheet_label: Optional[str] = None
+    tab_name: str
+    format: WarehouseSheetTabFormat
+    product_id: Optional[str] = None
+    default_warehouse_id: Optional[str] = None
+    column_mapping: dict[str, str] = {}
+    is_active: bool = True
+
+
+class WarehouseSheetTabOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    connection_id: str
+    spreadsheet_id: str
+    spreadsheet_label: Optional[str] = None
+    tab_name: str
+    format: WarehouseSheetTabFormat
+    product_id: Optional[str] = None
+    default_warehouse_id: Optional[str] = None
+    column_mapping: dict[str, str] = {}
+    last_synced_row: int
+    is_active: bool
+
+
+class WarehouseSheetSyncResult(BaseModel):
+    tab_id: str
+    tab_name: str
+    imported: int
+    unresolved_employees: list[str] = []
+    error: Optional[str] = None
+
+
+class WarehouseSheetSyncAllResult(BaseModel):
+    processed: int
+    skipped_rate_limited: int
+    results: list[WarehouseSheetSyncResult] = []
+    message: str
 
 
 class EmployeeMiniOut(BaseModel):

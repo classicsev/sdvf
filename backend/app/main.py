@@ -24,6 +24,7 @@ from app.routers import (
     transactions,
     users,
     warehouse,
+    warehouse_sync,
 )
 
 app = FastAPI(title="Финансовый учёт API", version="0.1.0")
@@ -66,6 +67,7 @@ app.include_router(audit.router)
 app.include_router(api_keys.router)
 app.include_router(dadata.router)
 app.include_router(warehouse.router)
+app.include_router(warehouse_sync.router)
 app.include_router(orders.router)
 app.include_router(production.router)
 app.include_router(statements.router)
