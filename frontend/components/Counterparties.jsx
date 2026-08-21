@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { canEditReference } from "../lib/roles";
 import { backdropClickProps } from "../lib/modalBackdrop";
+import { useTranslation } from "../lib/i18n";
 
 const FORM_EMPTY = {
   name: "",
@@ -23,6 +24,7 @@ const CONTACT_EMPTY = { full_name: "", position: "", phone: "", email: "", is_pr
 
 export default function Counterparties() {
   const { token, user } = useAuth();
+  const { t } = useTranslation();
   const companies = user.companies || [];
   const multiCompany = companies.length > 1;
   const roleForCompany = (companyId) => companies.find((m) => m.company.id === companyId)?.role;
@@ -45,7 +47,7 @@ export default function Counterparties() {
 
   async function runSync(createMissing) {
     if (!sdvfCompanyId) {
-      setActionError("Выберите конкретную компанию — у каждой свой аккаунт в СДВФ");
+      setActionError(t("cp.selectCompanyForSdvf"));
       return;
     }
     setSyncing(true);
@@ -54,13 +56,13 @@ export default function Counterparties() {
     try {
       const r = await api.syncCounterpartiesWithSdvf(token, sdvfCompanyId, createMissing);
       const parts = [
-        r.linked_by_inn ? `добавлено из СДВФ: ${r.linked_by_inn}` : null,
-        r.updated_from_sdvf ? `обновлено по данным СДВФ: ${r.updated_from_sdvf}` : null,
-        r.created_in_sdvf ? `заведено в СДВФ: ${r.created_in_sdvf}` : null,
-        r.skipped_no_inn ? `пропущено без ИНН: ${r.skipped_no_inn}` : null,
-        r.failed ? `с ошибкой: ${r.failed}` : null,
+        r.linked_by_inn ? t("cp.syncResult.linked", { count: r.linked_by_inn }) : null,
+        r.updated_from_sdvf ? t("cp.syncResult.updated", { count: r.updated_from_sdvf }) : null,
+        r.created_in_sdvf ? t("cp.syncResult.created", { count: r.created_in_sdvf }) : null,
+        r.skipped_no_inn ? t("cp.syncResult.skippedNoInn", { count: r.skipped_no_inn }) : null,
+        r.failed ? t("cp.syncResult.failed", { count: r.failed }) : null,
       ].filter(Boolean);
-      setBanner(parts.length ? `Синхронизация завершена — ${parts.join(", ")}.` : "Синхронизация завершена, изменений нет.");
+      setBanner(parts.length ? t("cp.syncDone", { parts: parts.join(", ") }) : t("cp.syncDoneNoChanges"));
       if (r.errors?.length) setActionError(r.errors.join("; "));
       reload();
     } catch (err) {
@@ -123,7 +125,7 @@ export default function Counterparties() {
         ogrn: found.ogrn || p.ogrn,
         address: found.address || p.address,
       }));
-      setInnLookup({ loading: false, message: `Найдено: ${found.name}`, error: "" });
+      setInnLookup({ loading: false, message: t("modules.foundByInn", { name: found.name }), error: "" });
     } catch (err) {
       setInnLookup({ loading: false, message: "", error: err.message });
     }
@@ -156,13 +158,11 @@ export default function Counterparties() {
   }
 
   async function handleDelete(item) {
-    if (!window.confirm(`Удалить «${item.name}»?`)) return;
+    if (!window.confirm(t("cp.deleteConfirm", { name: item.name }))) return;
     try {
       const result = await api.deleteCounterparty(token, item.id);
       if (result?.deactivated) {
-        window.alert(
-          `«${item.name}» уже используется в операциях, поэтому не удалён, а деактивирован — история сохранена.`
-        );
+        window.alert(t("cp.deactivatedAlert", { name: item.name }));
       }
       reload();
     } catch (err) {
@@ -174,7 +174,7 @@ export default function Counterparties() {
     setActionError("");
     try {
       await api.createCounterpartyInSdvf(token, item.id);
-      setBanner(`«${item.name}» заведён в СДВФ.`);
+      setBanner(t("cp.createdInSdvf", { name: item.name }));
       reload();
     } catch (err) {
       setActionError(err.message);
@@ -206,7 +206,7 @@ export default function Counterparties() {
   async function confirmLink(buyer) {
     try {
       await api.linkCounterpartyToSdvf(token, linkFor.id, buyer.id);
-      setBanner(`«${linkFor.name}» привязан к карточке СДВФ «${buyer.naming}» — реквизиты подтянуты оттуда.`);
+      setBanner(t("cp.linkedAlert", { name: linkFor.name, buyerName: buyer.naming }));
       setLinkFor(null);
       reload();
     } catch (err) {
@@ -240,7 +240,7 @@ export default function Counterparties() {
   }
 
   async function removeContact(contact) {
-    if (!window.confirm(`Удалить контакт «${contact.full_name}»?`)) return;
+    if (!window.confirm(t("cp.deleteContactConfirm", { name: contact.full_name }))) return;
     try {
       await api.deleteContact(token, contact.id);
       reload();
@@ -256,7 +256,7 @@ export default function Counterparties() {
       <div className="fp-tabs-row">
         {multiCompany ? (
           <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>
-            <option value="">Все компании</option>
+            <option value="">{t("dashboard.allCompanies")}</option>
             {companies.map((m) => (
               <option key={m.company.id} value={m.company.id}>
                 {m.company.name}
@@ -269,19 +269,19 @@ export default function Counterparties() {
         {canEditAny && (
           <>
             <button type="button" className="fp-btn-tiny" onClick={() => runSync(false)} disabled={syncing}>
-              <RefreshCw size={13} /> {syncing ? "Синхронизируем…" : "Синхронизировать с СДВФ"}
+              <RefreshCw size={13} /> {syncing ? t("dashboard.syncing") : t("cp.syncWithSdvf")}
             </button>
             <button
               type="button"
               className="fp-btn-tiny"
               onClick={() => runSync(true)}
               disabled={syncing}
-              title="Дополнительно заведёт в СДВФ те карточки, которых там ещё нет"
+              title={t("cp.syncCreateMissingTitle")}
             >
-              <RefreshCw size={13} /> …и создать недостающие в СДВФ
+              <RefreshCw size={13} /> {t("cp.syncCreateMissing")}
             </button>
             <button type="button" className="fp-btn-tiny" onClick={openAdd}>
-              <Plus size={13} /> Добавить
+              <Plus size={13} /> {t("common.add")}
             </button>
           </>
         )}
@@ -297,19 +297,19 @@ export default function Counterparties() {
 
       <div className="fp-panel fp-table-panel">
         {loading ? (
-          <div className="fp-loading">Загрузка…</div>
+          <div className="fp-loading">{t("common.loading")}</div>
         ) : (items || []).length === 0 ? (
-          <div className="fp-empty">Список пуст</div>
+          <div className="fp-empty">{t("reference.listEmpty")}</div>
         ) : (
           <table className="fp-table">
             <thead>
               <tr>
-                {showCompanyColumn && <th>Компания</th>}
-                <th>Контрагент</th>
-                <th>ИНН</th>
-                <th>Тип</th>
-                <th>СДВФ</th>
-                <th>Контакты</th>
+                {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
+                <th>{t("cp.col.counterparty")}</th>
+                <th>{t("cp.col.inn")}</th>
+                <th>{t("cp.col.type")}</th>
+                <th>{t("cp.col.sdvf")}</th>
+                <th>{t("cp.col.contacts")}</th>
                 <th className="fp-table-actions-col"></th>
               </tr>
             </thead>
@@ -326,15 +326,15 @@ export default function Counterparties() {
                     )}
                     <td>{item.name}</td>
                     <td className="fp-muted">{item.inn || "—"}</td>
-                    <td>{item.type === "creditor" ? "Кредитор" : "Дебитор"}</td>
+                    <td>{item.type === "creditor" ? t("cp.type.creditor") : t("cp.type.debtor")}</td>
                     <td>
                       {inSdvf ? (
-                        <span className="fp-status-badge ok" title={`Карточка СДВФ №${item.sdvf_buyer_id}`}>
-                          <Check size={11} /> В СДВФ
+                        <span className="fp-status-badge ok" title={t("cp.sdvfCardTitle", { id: item.sdvf_buyer_id })}>
+                          <Check size={11} /> {t("cp.inSdvf")}
                         </span>
                       ) : (
-                        <span className="fp-status-badge danger" title="Карточки нет в СДВФ — документы по ней не выставить">
-                          <AlertTriangle size={11} /> Нет в СДВФ
+                        <span className="fp-status-badge danger" title={t("cp.notInSdvfTitle")}>
+                          <AlertTriangle size={11} /> {t("cp.notInSdvf")}
                         </span>
                       )}
                     </td>
@@ -342,7 +342,7 @@ export default function Counterparties() {
                       <button
                         type="button"
                         className="fp-icon-btn"
-                        title="Контактные лица"
+                        title={t("cp.contactsTitle")}
                         onClick={() => {
                           setContactsFor(item);
                           setContactForm(CONTACT_EMPTY);
@@ -361,12 +361,12 @@ export default function Counterparties() {
                         <span className="fp-row-actions">
                           {!inSdvf && (
                             <>
-                              <button className="fp-icon-btn" title="Привязать к карточке СДВФ" onClick={() => openLink(item)}>
+                              <button className="fp-icon-btn" title={t("cp.linkTooltip")} onClick={() => openLink(item)}>
                                 <Link2 size={14} />
                               </button>
                               <button
                                 className="fp-icon-btn"
-                                title="Создать карточку в СДВФ"
+                                title={t("cp.createInSdvfTooltip")}
                                 onClick={() => createInSdvf(item)}
                               >
                                 <Plus size={14} />
@@ -389,8 +389,7 @@ export default function Counterparties() {
           </table>
         )}
         <p className="fp-note" style={{ padding: "0 16px 16px" }}>
-          Реквизиты берутся из СДВФ — он первичен. Данные из amoCRM подставляются только там, где карточка ещё
-          не связана с СДВФ.
+          {t("cp.dataSourceNote")}
         </p>
       </div>
 
@@ -398,7 +397,7 @@ export default function Counterparties() {
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>{editing ? "Карточка контрагента" : "Новый контрагент"}</h3>
+              <h3>{editing ? t("cp.cardTitle") : t("cp.newCounterparty")}</h3>
               <button className="fp-icon-btn" onClick={() => setModalOpen(false)}>
                 <X size={18} />
               </button>
@@ -406,7 +405,7 @@ export default function Counterparties() {
             <form className="fp-form-grid" onSubmit={handleSubmit}>
               {multiCompany && (
                 <label className="fp-span-2">
-                  Компания
+                  {t("tx.form.company")}
                   <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
                     {editing &&
                       !editableCompanies.some((m) => m.company.id === originalCompanyId) &&
@@ -425,13 +424,13 @@ export default function Counterparties() {
                   </select>
                   {editing && formCompanyId !== originalCompanyId && (
                     <span className="fp-muted" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
-                      Перенос сработает, только если у карточки нет операций и контактных лиц.
+                      {t("cp.moveNote")}
                     </span>
                   )}
                 </label>
               )}
               <label>
-                ИНН
+                {t("cp.inn")}
                 <div style={{ display: "flex", gap: 6 }}>
                   <input
                     value={form.inn}
@@ -447,18 +446,22 @@ export default function Counterparties() {
                     className="fp-btn-ghost"
                     onClick={fillFromInn}
                     disabled={!innIsValid || innLookup.loading}
-                    title={innIsValid ? "Подставить реквизиты из ЕГРЮЛ/ЕГРИП" : "Введите ИНН: 10 цифр или 12 для ИП"}
+                    title={
+                      innIsValid
+                        ? t("modules.fillFromInnTooltipValid")
+                        : t("modules.fillFromInnTooltipInvalid")
+                    }
                     style={{ whiteSpace: "nowrap" }}
                   >
-                    {innLookup.loading ? "Ищем…" : "По ИНН"}
+                    {innLookup.loading ? t("cp.searchingInn") : t("cp.fillByInnBtn")}
                   </button>
                 </div>
               </label>
               <label>
-                Тип
+                {t("cp.col.type")}
                 <select value={form.type} onChange={(e) => setForm((p) => ({ ...p, type: e.target.value }))}>
-                  <option value="debtor">Дебитор</option>
-                  <option value="creditor">Кредитор</option>
+                  <option value="debtor">{t("cp.type.debtor")}</option>
+                  <option value="creditor">{t("cp.type.creditor")}</option>
                 </select>
               </label>
               {innLookup.message && (
@@ -468,35 +471,35 @@ export default function Counterparties() {
               )}
               {innLookup.error && <div className="fp-form-error fp-span-2">{innLookup.error}</div>}
               <label className="fp-span-2">
-                Наименование
+                {t("cp.name")}
                 <input required value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} />
               </label>
               <label>
-                КПП
+                {t("cp.kpp")}
                 <input value={form.kpp} onChange={(e) => setForm((p) => ({ ...p, kpp: e.target.value }))} />
               </label>
               <label>
-                ОГРН/ОГРНИП
+                {t("cp.ogrn")}
                 <input value={form.ogrn} onChange={(e) => setForm((p) => ({ ...p, ogrn: e.target.value }))} />
               </label>
               <label className="fp-span-2">
-                Адрес
+                {t("cp.address")}
                 <input value={form.address} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} />
               </label>
               <label>
-                Телефон
+                {t("cp.phone")}
                 <input value={form.phone} onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))} />
               </label>
               <label>
-                Email
+                {t("cp.email")}
                 <input value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} />
               </label>
 
               {editing && (
                 <div className="fp-span-2 fp-note" style={{ margin: 0 }}>
                   {editing.sdvf_buyer_id
-                    ? `Связан с карточкой СДВФ №${editing.sdvf_buyer_id} — при синхронизации реквизиты придут оттуда.`
-                    : "Карточки нет в СДВФ. Привяжите к существующей или создайте новую — иначе по ней не выставить Счёт/УПД."}
+                    ? t("cp.linkedToSdvf", { id: editing.sdvf_buyer_id })
+                    : t("cp.notLinkedHint")}
                 </div>
               )}
 
@@ -504,10 +507,10 @@ export default function Counterparties() {
 
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setModalOpen(false)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={saving}>
-                  {saving ? "Сохраняем…" : editing ? "Сохранить" : "Создать"}
+                  {saving ? t("common.saving") : editing ? t("common.save") : t("modules.create")}
                 </button>
               </div>
             </form>
@@ -519,20 +522,20 @@ export default function Counterparties() {
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setLinkFor(null))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>Привязать «{linkFor.name}» к карточке СДВФ</h3>
+              <h3>{t("cp.linkTitle", { name: linkFor.name })}</h3>
               <button className="fp-icon-btn" onClick={() => setLinkFor(null)}>
                 <X size={18} />
               </button>
             </div>
             <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
               <input
-                placeholder="Поиск по названию или ИНН"
+                placeholder={t("cp.searchByNameOrInn")}
                 value={sdvfSearch}
                 onChange={(e) => setSdvfSearch(e.target.value)}
               />
               {sdvfError && <div className="fp-form-error">{sdvfError}</div>}
               {sdvfLoading ? (
-                <div className="fp-loading">Загружаем карточки из СДВФ…</div>
+                <div className="fp-loading">{t("cp.loadingSdvfCards")}</div>
               ) : (
                 <div style={{ maxHeight: 340, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
                   {sdvfList
@@ -557,8 +560,8 @@ export default function Counterparties() {
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 600, fontSize: 13 }}>{b.naming}</div>
                           <div className="fp-muted" style={{ fontSize: 12 }}>
-                            ИНН {b.inn}
-                            {b.linked_counterparty_id ? " · уже привязана" : ""}
+                            {t("cp.col.inn")} {b.inn}
+                            {b.linked_counterparty_id ? t("cp.alreadyLinked") : ""}
                           </div>
                         </div>
                         <button
@@ -567,11 +570,13 @@ export default function Counterparties() {
                           disabled={Boolean(b.linked_counterparty_id)}
                           onClick={() => confirmLink(b)}
                         >
-                          Привязать
+                          {t("cp.linkBtn")}
                         </button>
                       </div>
                     ))}
-                  {sdvfList.length === 0 && !sdvfError && <div className="fp-empty">В СДВФ карточек не найдено</div>}
+                  {sdvfList.length === 0 && !sdvfError && (
+                    <div className="fp-empty">{t("cp.noSdvfCardsFound")}</div>
+                  )}
                 </div>
               )}
             </div>
@@ -583,14 +588,14 @@ export default function Counterparties() {
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setContactsFor(null))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>Контактные лица — {contactsTarget.name}</h3>
+              <h3>{t("cp.contactsModalTitle", { name: contactsTarget.name })}</h3>
               <button className="fp-icon-btn" onClick={() => setContactsFor(null)}>
                 <X size={18} />
               </button>
             </div>
             <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
               {(contactsTarget.contacts || []).length === 0 ? (
-                <div className="fp-empty">Контактов пока нет</div>
+                <div className="fp-empty">{t("cp.noContacts")}</div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {contactsTarget.contacts.map((c) => (
@@ -608,7 +613,7 @@ export default function Counterparties() {
                       <div>
                         <div style={{ fontWeight: 600, fontSize: 13 }}>
                           {c.full_name}
-                          {c.is_primary ? " · основной" : ""}
+                          {c.is_primary ? t("cp.primary") : ""}
                         </div>
                         <div className="fp-muted" style={{ fontSize: 12 }}>
                           {[c.position, c.phone, c.email].filter(Boolean).join(" · ") || "—"}
@@ -641,7 +646,7 @@ export default function Counterparties() {
 
               <form className="fp-form-grid" onSubmit={saveContact}>
                 <label className="fp-span-2">
-                  ФИО
+                  {t("cp.fullName")}
                   <input
                     required
                     value={contactForm.full_name}
@@ -649,21 +654,21 @@ export default function Counterparties() {
                   />
                 </label>
                 <label>
-                  Должность
+                  {t("cp.position")}
                   <input
                     value={contactForm.position}
                     onChange={(e) => setContactForm((p) => ({ ...p, position: e.target.value }))}
                   />
                 </label>
                 <label>
-                  Телефон
+                  {t("cp.phone")}
                   <input
                     value={contactForm.phone}
                     onChange={(e) => setContactForm((p) => ({ ...p, phone: e.target.value }))}
                   />
                 </label>
                 <label>
-                  Email
+                  {t("cp.email")}
                   <input
                     value={contactForm.email}
                     onChange={(e) => setContactForm((p) => ({ ...p, email: e.target.value }))}
@@ -675,12 +680,12 @@ export default function Counterparties() {
                     checked={contactForm.is_primary}
                     onChange={(e) => setContactForm((p) => ({ ...p, is_primary: e.target.checked }))}
                   />
-                  Основной контакт
+                  {t("cp.primaryContact")}
                 </label>
                 {contactError && <div className="fp-form-error fp-span-2">{contactError}</div>}
                 <div className="fp-modal-foot fp-span-2" style={{ justifyContent: "flex-start" }}>
                   <button type="submit" className="fp-btn-primary">
-                    {editingContactId ? "Сохранить контакт" : "Добавить контакт"}
+                    {editingContactId ? t("cp.saveContact") : t("cp.addContact")}
                   </button>
                   {editingContactId && (
                     <button
@@ -691,7 +696,7 @@ export default function Counterparties() {
                         setContactForm(CONTACT_EMPTY);
                       }}
                     >
-                      Отмена
+                      {t("common.cancel")}
                     </button>
                   )}
                 </div>
