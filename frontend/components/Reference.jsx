@@ -9,12 +9,15 @@ import { fmt, fmtDate } from "../lib/format";
 import { canEditReference } from "../lib/roles";
 import { backdropClickProps } from "../lib/modalBackdrop";
 import Counterparties from "./Counterparties";
+import { useTranslation } from "../lib/i18n";
 
 const STATUS_COLUMN = {
   key: "is_active",
-  label: "Статус",
-  render: (v) => (
-    <span className={`fp-status-badge ${v === false ? "warn" : "ok"}`}>{v === false ? "Неактивен" : "Активен"}</span>
+  labelKey: "reference.status",
+  render: (v, row, t) => (
+    <span className={`fp-status-badge ${v === false ? "warn" : "ok"}`}>
+      {v === false ? t("reference.status.inactive") : t("reference.status.active")}
+    </span>
   ),
 };
 
@@ -29,9 +32,8 @@ const BANK_LABELS = {
 
 const TABS = {
   categories: {
-    label: "Статьи",
+    labelKey: "reference.tab.categories",
     icon: Tag,
-    noun: "статью",
     list: (token, filter) =>
       api.listCategories(token, { company_ids: filter.companyIds, own_only: filter.ownOnly, match: filter.match }),
     create: (token, payload, companyId) => api.createCategory(token, payload, companyId),
@@ -40,29 +42,28 @@ const TABS = {
     moveCompany: (token, id, companyId) => api.moveCategoryCompany(token, id, companyId),
     bulkVisibility: (token, ids, companyIds, isGlobal) => api.bulkVisibilityCategories(token, ids, companyIds, isGlobal),
     fields: [
-      { key: "name", label: "Название статьи", type: "text", required: true },
-      { key: "group_name", label: "Группа", type: "text" },
+      { key: "name", labelKey: "reference.categories.name", type: "text", required: true },
+      { key: "group_name", labelKey: "reference.categories.group", type: "text" },
       {
         key: "type",
-        label: "Тип",
+        labelKey: "reference.categories.type",
         type: "select",
         options: [
-          { value: "income", label: "Приход" },
-          { value: "expense", label: "Расход" },
+          { value: "income", labelKey: "tx.income" },
+          { value: "expense", labelKey: "tx.expense" },
         ],
       },
     ],
     columns: [
-      { key: "name", label: "Статья" },
-      { key: "group_name", label: "Группа" },
-      { key: "type", label: "Тип", render: (v) => (v === "income" ? "Приход" : "Расход") },
+      { key: "name", labelKey: "tx.col.category" },
+      { key: "group_name", labelKey: "reference.categories.group" },
+      { key: "type", labelKey: "reference.categories.type", render: (v, row, t) => (v === "income" ? t("tx.income") : t("tx.expense")) },
       STATUS_COLUMN,
     ],
   },
   projects: {
-    label: "Проекты",
+    labelKey: "reference.tab.projects",
     icon: LayoutDashboard,
-    noun: "проект",
     list: (token, filter) =>
       api.listProjects(token, { company_ids: filter.companyIds, own_only: filter.ownOnly, match: filter.match }),
     create: (token, payload, companyId) => api.createProject(token, payload, companyId),
@@ -70,39 +71,38 @@ const TABS = {
     remove: (token, id) => api.deleteProject(token, id),
     moveCompany: (token, id, companyId) => api.moveProjectCompany(token, id, companyId),
     bulkVisibility: (token, ids, companyIds, isGlobal) => api.bulkVisibilityProjects(token, ids, companyIds, isGlobal),
-    fields: [{ key: "name", label: "Название проекта", type: "text", required: true }],
-    columns: [{ key: "name", label: "Проект" }, STATUS_COLUMN],
+    fields: [{ key: "name", labelKey: "reference.projects.name", type: "text", required: true }],
+    columns: [{ key: "name", labelKey: "reports.project" }, STATUS_COLUMN],
   },
   accounts: {
-    label: "Счета",
+    labelKey: "reference.tab.accounts",
     icon: Building2,
-    noun: "счёт",
     list: (token, companyId) => api.listAccounts(token, { company_id: companyId }),
     create: (token, payload, companyId) => api.createAccount(token, payload, companyId),
     update: (token, id, payload) => api.updateAccount(token, id, payload),
     remove: (token, id) => api.deleteAccount(token, id),
     moveCompany: (token, id, companyId) => api.moveAccountCompany(token, id, companyId),
     fields: [
-      { key: "name", label: "Название счёта", type: "text", required: true },
+      { key: "name", labelKey: "reference.accounts.name", type: "text", required: true },
       {
         key: "currency",
-        label: "Валюта",
+        labelKey: "tx.form.currency",
         type: "select",
         options: [
-          { value: "RUB", label: "RUB" },
-          { value: "USD", label: "USD" },
-          { value: "EUR", label: "EUR" },
-          { value: "CNY", label: "CNY" },
+          { value: "RUB", labelKey: null },
+          { value: "USD", labelKey: null },
+          { value: "EUR", labelKey: null },
+          { value: "CNY", labelKey: null },
         ],
       },
-      { key: "opening_balance", label: "Начальный остаток", type: "number" },
-      { key: "account_number", label: "Номер счёта (для синка с банком)", type: "text" },
+      { key: "opening_balance", labelKey: "reference.accounts.openingBalance", type: "number" },
+      { key: "account_number", labelKey: "reference.accounts.accountNumber", type: "text" },
     ],
     columns: [
-      { key: "name", label: "Счёт" },
-      { key: "currency", label: "Валюта" },
-      { key: "opening_balance", label: "Начальный остаток", render: (v, row) => fmt(v, row.currency) },
-      { key: "account_number", label: "Номер счёта", render: (v) => v || "—" },
+      { key: "name", labelKey: "tx.col.account" },
+      { key: "currency", labelKey: "tx.form.currency" },
+      { key: "opening_balance", labelKey: "reference.accounts.openingBalance", render: (v, row) => fmt(v, row.currency) },
+      { key: "account_number", labelKey: "reference.col.accountNumber", render: (v) => v || "—" },
       STATUS_COLUMN,
     ],
   },
@@ -112,8 +112,8 @@ const TABS = {
 // контактными лицами и связью с СДВФ уже не укладывается в generic-таблицу выше.
 const COUNTERPARTIES_TAB = "counterparties";
 const TAB_BUTTONS = [
-  ...Object.entries(TABS).map(([key, meta]) => ({ key, label: meta.label, icon: meta.icon })),
-  { key: COUNTERPARTIES_TAB, label: "Контрагенты", icon: Contact },
+  ...Object.entries(TABS).map(([key, meta]) => ({ key, labelKey: meta.labelKey, icon: meta.icon })),
+  { key: COUNTERPARTIES_TAB, labelKey: "reference.tab.counterparties", icon: Contact },
 ];
 
 function defaultFormFor(fields) {
@@ -126,6 +126,7 @@ function defaultFormFor(fields) {
 
 export default function Reference() {
   const { token, user } = useAuth();
+  const { t } = useTranslation();
   const companies = user.companies || [];
   const multiCompany = companies.length > 1;
   const roleForCompany = (companyId) => companies.find((m) => m.company.id === companyId)?.role;
@@ -231,7 +232,7 @@ export default function Reference() {
     try {
       const updated = await api.setAccountCurrentBalance(token, editingId, Number(currentBalanceInput));
       setForm((p) => ({ ...p, opening_balance: String(updated.opening_balance) }));
-      setBalanceMessage("Начальный остаток пересчитан и сохранён.");
+      setBalanceMessage(t("reference.balanceRecalculated"));
       setCurrentBalanceInput("");
       reload();
     } catch (err) {
@@ -264,7 +265,7 @@ export default function Reference() {
   async function ensureAccountIdForStatement() {
     if (editingId) return editingId;
     if (!form.name?.trim()) {
-      throw new Error("Сначала укажите название счёта");
+      throw new Error(t("reference.nameRequiredError"));
     }
     const payload = { ...form, is_active: true };
     config.fields.forEach((f) => {
@@ -394,9 +395,7 @@ export default function Reference() {
       reload();
       if (result?.merged_names?.length > 0) {
         window.alert(
-          `Готово. Обновлено записей: ${result.updated}.\n\n` +
-            `В целевых компаниях нашлись записи с теми же названиями — они объединены с выбранными ` +
-            `(операции и планы переехали на выбранную запись, дубль удалён): ${result.merged_names.join(", ")}`
+          t("reference.bulkMergedAlert", { updated: result.updated, names: result.merged_names.join(", ") })
         );
       }
     } catch (err) {
@@ -484,14 +483,11 @@ export default function Reference() {
   }
 
   async function handleDelete(item) {
-    if (!window.confirm(`Удалить «${item.name}»?`)) return;
+    if (!window.confirm(t("reference.deleteConfirm", { name: item.name }))) return;
     try {
       const result = await config.remove(token, item.id);
       if (result?.deactivated) {
-        window.alert(
-          `«${item.name}» уже используется в операциях, поэтому не удалено, а деактивировано — ` +
-            `больше не будет предлагаться при выборе, но история сохранена. Восстановить можно кнопкой в списке.`
-        );
+        window.alert(t("reference.deactivatedAlert", { name: item.name }));
       }
       reload();
     } catch (err) {
@@ -501,7 +497,7 @@ export default function Reference() {
 
   async function handleBulkDelete() {
     const ids = Array.from(selectedIds);
-    if (!window.confirm(`Удалить выбранные записи (${ids.length})?`)) return;
+    if (!window.confirm(t("reference.bulkDeleteConfirm", { count: ids.length }))) return;
     setBulkDeleting(true);
     // Как и у одиночного удаления — запись, которая уже используется в
     // операциях, не стирается, а деактивируется (config.remove сам это решает
@@ -517,9 +513,9 @@ export default function Reference() {
     reload();
     if (deactivated > 0 || failed > 0) {
       window.alert(
-        `Удалено: ${deleted}.` +
-          (deactivated > 0 ? ` Деактивировано (уже используются в операциях): ${deactivated}.` : "") +
-          (failed > 0 ? ` Не удалось: ${failed}.` : "")
+        t("reference.bulkDeletedPart", { count: deleted }) +
+          (deactivated > 0 ? t("reference.bulkDeactivatedPart", { count: deactivated }) : "") +
+          (failed > 0 ? t("reference.bulkFailedPart", { count: failed }) : "")
       );
     }
   }
@@ -545,7 +541,7 @@ export default function Reference() {
       {TAB_BUTTONS.map((meta) => (
         <button key={meta.key} className={tab === meta.key ? "active" : ""} onClick={() => switchTab(meta.key)}>
           <meta.icon size={14} />
-          {meta.label}
+          {t(meta.labelKey)}
         </button>
       ))}
     </div>
@@ -566,7 +562,7 @@ export default function Reference() {
         {tabsRow}
         {multiCompany && !supportsCompanyScope && (
           <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>
-            <option value="">Все компании</option>
+            <option value="">{t("dashboard.allCompanies")}</option>
             {companies.map((m) => (
               <option key={m.company.id} value={m.company.id}>
                 {m.company.name}
@@ -583,11 +579,11 @@ export default function Reference() {
             >
               <Building2 size={13} />
               {companyFilterIds.length === 0
-                ? "Все компании"
+                ? t("dashboard.allCompanies")
                 : companyFilterIds.length === 1
-                ? companies.find((m) => m.company.id === companyFilterIds[0])?.company.name || "1 компания"
-                : `Компаний: ${companyFilterIds.length}`}
-              {ownOnly && companyFilterIds.length > 0 && " · только свои"}
+                ? companies.find((m) => m.company.id === companyFilterIds[0])?.company.name || t("reference.oneCompany")
+                : t("reference.companiesCount", { count: companyFilterIds.length })}
+              {ownOnly && companyFilterIds.length > 0 && t("reference.onlyOwnSuffix")}
               <ChevronDown size={13} className={`fp-combobox-chevron ${companyPopoverOpen ? "rotated" : ""}`} />
             </button>
             {companyPopoverOpen && (
@@ -597,7 +593,7 @@ export default function Reference() {
                   style={{ fontWeight: companyFilterIds.length === 0 ? 600 : 400 }}
                 >
                   <input type="checkbox" checked={companyFilterIds.length === 0} onChange={() => setCompanyFilterIds([])} />
-                  Все компании
+                  {t("dashboard.allCompanies")}
                 </label>
                 <div style={{ borderTop: "1px solid var(--line)", margin: "4px 0" }} />
                 {companies.map((m) => (
@@ -613,12 +609,12 @@ export default function Reference() {
                 <div style={{ borderTop: "1px solid var(--line)", margin: "4px 0" }} />
                 <label className="fp-checkbox-row">
                   <input type="checkbox" checked={ownOnly} onChange={(e) => setOwnOnly(e.target.checked)} />
-                  Только свои — без расшаренных из других
+                  {t("reference.onlyOwnCheckbox")}
                 </label>
                 {companyFilterIds.length > 1 && !ownOnly && (
                   <div style={{ padding: "4px 12px 2px" }}>
                     <div className="fp-note" style={{ margin: "2px 0 4px" }}>
-                      Несколько компаний — что показывать:
+                      {t("reference.multipleCompaniesHint")}
                     </div>
                     <label className="fp-checkbox-row" style={{ padding: "4px 0" }}>
                       <input
@@ -627,7 +623,7 @@ export default function Reference() {
                         checked={matchMode === "union"}
                         onChange={() => setMatchMode("union")}
                       />
-                      Видна хотя бы в одной из них
+                      {t("reference.matchUnion")}
                     </label>
                     <label className="fp-checkbox-row" style={{ padding: "4px 0" }}>
                       <input
@@ -636,7 +632,7 @@ export default function Reference() {
                         checked={matchMode === "intersection"}
                         onChange={() => setMatchMode("intersection")}
                       />
-                      Расшарена между всеми выбранными
+                      {t("reference.matchIntersection")}
                     </label>
                   </div>
                 )}
@@ -646,22 +642,23 @@ export default function Reference() {
         )}
         {tab === "accounts" && canEditAny && (
           <button type="button" className="fp-btn-tiny" onClick={() => runIntegrationSync(true)} disabled={syncing}>
-            <RefreshCw size={13} /> {syncing ? "Синхронизируем…" : "Синхронизировать"}
+            <RefreshCw size={13} /> {syncing ? t("dashboard.syncing") : t("dashboard.sync")}
           </button>
         )}
         {supportsBulkDistribute && canEditAny && selectedIds.size > 0 && (
           <button type="button" className="fp-btn-tiny" onClick={openBulkModal}>
-            <Building2 size={13} /> Распределить по компаниям ({selectedIds.size})
+            <Building2 size={13} /> {t("reference.distributeByCompanies", { count: selectedIds.size })}
           </button>
         )}
         {supportsSelection && canEditAny && selectedIds.size > 0 && (
           <button type="button" className="fp-btn-tiny" onClick={handleBulkDelete} disabled={bulkDeleting}>
-            <Trash2 size={13} /> {bulkDeleting ? "Удаляем…" : `Удалить выбранное (${selectedIds.size})`}
+            <Trash2 size={13} />{" "}
+            {bulkDeleting ? t("tx.deleting") : t("reference.deleteSelected", { count: selectedIds.size })}
           </button>
         )}
         {canEditAny && (
           <button type="button" className="fp-btn-tiny" onClick={openAdd}>
-            <Plus size={13} /> Добавить
+            <Plus size={13} /> {t("common.add")}
           </button>
         )}
       </div>
@@ -675,9 +672,9 @@ export default function Reference() {
 
       <div className="fp-panel fp-table-panel">
         {loading ? (
-          <div className="fp-loading">Загрузка…</div>
+          <div className="fp-loading">{t("common.loading")}</div>
         ) : (items || []).length === 0 ? (
-          <div className="fp-empty">Список пуст</div>
+          <div className="fp-empty">{t("reference.listEmpty")}</div>
         ) : (
           <table className="fp-table">
             <thead>
@@ -695,9 +692,9 @@ export default function Reference() {
                     />
                   </th>
                 )}
-                {showCompanyColumn && <th>Компания</th>}
+                {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
                 {config.columns.map((c) => (
-                  <th key={c.key}>{c.label}</th>
+                  <th key={c.key}>{t(c.labelKey)}</th>
                 ))}
                 <th className="fp-table-actions-col"></th>
               </tr>
@@ -721,7 +718,7 @@ export default function Reference() {
                     {showCompanyColumn && (
                       <td>
                         {item.is_global ? (
-                          <span className="fp-status-badge ok">Все компании</span>
+                          <span className="fp-status-badge ok">{t("reference.allCompaniesTag")}</span>
                         ) : (
                           <>
                             {companies.find((m) => m.company.id === item.company_id)?.company.name || "—"}
@@ -735,7 +732,7 @@ export default function Reference() {
                       </td>
                     )}
                     {config.columns.map((c) => (
-                      <td key={c.key}>{c.render ? c.render(item[c.key], item) : item[c.key] || "—"}</td>
+                      <td key={c.key}>{c.render ? c.render(item[c.key], item, t) : item[c.key] || "—"}</td>
                     ))}
                     <td className="fp-table-actions-col">
                       {canEditRow && (
@@ -746,7 +743,7 @@ export default function Reference() {
                           <button
                             className="fp-icon-btn"
                             onClick={() => handleToggleActive(item)}
-                            title={item.is_active === false ? "Восстановить" : "Деактивировать"}
+                            title={item.is_active === false ? t("payroll.restore") : t("reference.deactivate")}
                           >
                             {item.is_active === false ? <RotateCcw size={14} /> : <Ban size={14} />}
                           </button>
@@ -768,7 +765,7 @@ export default function Reference() {
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>{editingId ? `Редактировать ${config.noun}` : `Новый(ая) ${config.noun}`}</h3>
+              <h3>{t(editingId ? `reference.editTitle.${tab}` : `reference.newTitle.${tab}`)}</h3>
               <button className="fp-icon-btn" onClick={() => setModalOpen(false)}>
                 <X size={18} />
               </button>
@@ -776,7 +773,7 @@ export default function Reference() {
             <form className="fp-form-grid" onSubmit={handleSubmit}>
               {multiCompany && (
                 <label className="fp-span-2">
-                  Компания
+                  {t("tx.form.company")}
                   <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
                     {/* Текущая компания записи может быть уже недоступна для
                         переноса (не admin) — всё равно показываем её в списке,
@@ -798,19 +795,19 @@ export default function Reference() {
                   </select>
                   {editingId && formCompanyId !== originalCompanyId && (
                     <span className="fp-muted" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
-                      Перенос сработает, только если запись ещё нигде не используется.
+                      {t("reference.moveNote")}
                     </span>
                   )}
                 </label>
               )}
               {config.fields.map((f) => (
                 <label key={f.key} className={f.type === "text" && f.key === "name" ? "fp-span-2" : ""}>
-                  {f.label}
+                  {t(f.labelKey)}
                   {f.type === "select" ? (
                     <select value={form[f.key]} onChange={(e) => setForm((p) => ({ ...p, [f.key]: e.target.value }))}>
                       {f.options.map((o) => (
                         <option key={o.value} value={o.value}>
-                          {o.label}
+                          {o.labelKey ? t(o.labelKey) : o.value}
                         </option>
                       ))}
                     </select>
@@ -828,7 +825,7 @@ export default function Reference() {
                   )}
                   {f.key === "opening_balance" && statementResult?.account_opening_balance != null && (
                     <span style={{ color: "var(--expense)", fontSize: 11.5, display: "block", marginTop: 3 }}>
-                      Совпадает с банком — менять не нужно
+                      {t("reference.matchesBank")}
                     </span>
                   )}
                 </label>
@@ -839,19 +836,19 @@ export default function Reference() {
                   className="fp-span-2"
                   style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, marginTop: 4 }}
                 >
-                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Видимость по компаниям</div>
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>{t("reference.visibilityTitle")}</div>
                   <label className="fp-checkbox-row">
                     <input
                       type="checkbox"
                       checked={formIsGlobal}
                       onChange={(e) => setFormIsGlobal(e.target.checked)}
                     />
-                    Все компании (включая те, что появятся позже)
+                    {t("reference.allCompaniesFuture")}
                   </label>
                   {!formIsGlobal && (
                     <>
                       <p className="fp-note" style={{ margin: "6px 0 2px" }}>
-                        Кроме «своей» компании — где ещё выбирать эт{tab === "categories" ? "у статью" : "от проект"}:
+                        {t(`reference.visibilityHint.${tab}`)}
                       </p>
                       <div style={{ display: "flex", flexDirection: "column" }}>
                         {companies
@@ -883,16 +880,15 @@ export default function Reference() {
                   className="fp-span-2"
                   style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, marginTop: 4 }}
                 >
-                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Остаток не совпадает с банком?</div>
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>{t("reference.balanceMismatchTitle")}</div>
                   <p className="fp-note" style={{ margin: "0 0 8px" }}>
-                    Не нужно искать исторический баланс — введите остаток, который видно в банке прямо сейчас,
-                    «Начальный остаток» выше пересчитается автоматически.
+                    {t("reference.balanceMismatchNote")}
                   </p>
                   <div style={{ display: "flex", gap: 6 }}>
                     <input
                       type="number"
                       step="0.01"
-                      placeholder="Остаток на сегодня"
+                      placeholder={t("reference.balanceToday")}
                       value={currentBalanceInput}
                       onChange={(e) => {
                         setBalanceMessage("");
@@ -907,7 +903,7 @@ export default function Reference() {
                       disabled={!currentBalanceInput || settingBalance}
                       style={{ whiteSpace: "nowrap" }}
                     >
-                      {settingBalance ? "Считаем…" : "Указать"}
+                      {settingBalance ? t("reference.calculating") : t("reference.specify")}
                     </button>
                   </div>
                   {balanceMessage && (
@@ -924,17 +920,15 @@ export default function Reference() {
                   style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, marginTop: 4 }}
                 >
                   <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
-                    Импорт из справки/выписки банка (PDF или 1С:Клиент-Банк)
+                    {t("reference.importTitle")}
                   </div>
                   <p className="fp-note" style={{ margin: "0 0 8px" }}>
-                    Для счетов без API банка — PDF-справки Т-Банка/Сбербанка/Альфа-Банка/ВТБ (физлица), либо
-                    файл выгрузки 1С:Клиент-Банк (.txt — Альфа-Бизнес и другие банки для юрлиц/ИП). Формат
-                    определяется автоматически по содержимому файла.
-                    {!editingId && " Счёт сохранится автоматически, как только выберете файл — укажите хотя бы название выше."}
+                    {t("reference.importNote")}
+                    {!editingId && t("reference.importAutoSaveNote")}
                   </p>
                   <label className="fp-btn-ghost" style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                     <Upload size={14} />
-                    {statementFile ? statementFile.name : "Выбрать файл"}
+                    {statementFile ? statementFile.name : t("reference.chooseFile")}
                     <input
                       type="file"
                       accept="application/pdf,.pdf,.txt,text/plain"
@@ -945,7 +939,7 @@ export default function Reference() {
                   </label>
                   {statementBusy && (
                     <div className="fp-muted" style={{ fontSize: 12.5, marginTop: 6 }}>
-                      Разбираем файл…
+                      {t("reference.parsingFile")}
                     </div>
                   )}
                   {statementError && (
@@ -956,24 +950,29 @@ export default function Reference() {
                   {statementPreview && (
                     <div style={{ marginTop: 8, fontSize: 12.5 }}>
                       <div>
-                        Банк: <b>{BANK_LABELS[statementPreview.bank] || statementPreview.bank}</b>
+                        {t("reference.bank")}: <b>{BANK_LABELS[statementPreview.bank] || statementPreview.bank}</b>
                         {statementPreview.period_from && statementPreview.period_to && (
                           <>
                             {" "}
-                            · период {fmtDate(statementPreview.period_from)} — {fmtDate(statementPreview.period_to)}
+                            · {t("payroll.col.period")} {fmtDate(statementPreview.period_from)} — {fmtDate(statementPreview.period_to)}
                           </>
                         )}
                       </div>
                       <div style={{ marginTop: 4 }}>
-                        Новых операций: <b>{statementPreview.created}</b>
-                        {statementPreview.skipped_duplicate > 0 && <> · уже есть в Учёте: {statementPreview.skipped_duplicate}</>}
-                        {statementPreview.skipped_no_fx_rate > 0 && <> · нет курса на дату: {statementPreview.skipped_no_fx_rate}</>}
+                        {t("reference.newOps")}: <b>{statementPreview.created}</b>
+                        {statementPreview.skipped_duplicate > 0 && (
+                          <> · {t("reference.alreadyInSystem")}: {statementPreview.skipped_duplicate}</>
+                        )}
+                        {statementPreview.skipped_no_fx_rate > 0 && (
+                          <> · {t("reference.noRateOnDate")}: {statementPreview.skipped_no_fx_rate}</>
+                        )}
                       </div>
                       {statementPreview.closing_balance != null && (
                         <div style={{ marginTop: 6 }}>
-                          Остаток на {fmtDate(statementPreview.closing_balance_date)}:{" "}
-                          <b>{fmt(statementPreview.closing_balance, form.currency)}</b> — применится к «Начальному
-                          остатку» автоматически{statementPreview.created > 0 ? " после импорта." : "."}
+                          {t("reference.balanceAsOf", { date: fmtDate(statementPreview.closing_balance_date) })}:{" "}
+                          <b>{fmt(statementPreview.closing_balance, form.currency)}</b>
+                          {t("reference.willApplyAuto")}
+                          {statementPreview.created > 0 ? t("reference.afterImport") : "."}
                         </div>
                       )}
                       <div style={{ marginTop: 8 }}>
@@ -984,19 +983,21 @@ export default function Reference() {
                           disabled={statementBusy || (statementPreview.created === 0 && statementPreview.closing_balance == null)}
                         >
                           {statementBusy
-                            ? "Обрабатываем…"
+                            ? t("reference.processing")
                             : statementPreview.created > 0
-                            ? `Импортировать ${statementPreview.created} операций`
-                            : "Применить остаток из справки"}
+                            ? t("reference.importNOps", { count: statementPreview.created })
+                            : t("reference.applyBalanceFromStatement")}
                         </button>
                       </div>
                     </div>
                   )}
                   {statementResult && (
                     <div className="fp-muted" style={{ fontSize: 12.5, marginTop: 6 }}>
-                      Импортировано {statementResult.created} операций
-                      {statementResult.skipped_duplicate > 0 ? `, пропущено дублей: ${statementResult.skipped_duplicate}` : ""}
-                      {statementResult.closing_balance != null ? ". Начальный остаток пересчитан по остатку из справки." : "."}
+                      {t("reference.importedNOps", { count: statementResult.created })}
+                      {statementResult.skipped_duplicate > 0
+                        ? t("reference.skippedDuplicates", { count: statementResult.skipped_duplicate })
+                        : ""}
+                      {statementResult.closing_balance != null ? t("reference.openingBalanceRecalculated") : "."}
                     </div>
                   )}
                 </div>
@@ -1006,10 +1007,10 @@ export default function Reference() {
 
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setModalOpen(false)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={saving}>
-                  {saving ? "Сохраняем…" : "Сохранить"}
+                  {saving ? t("common.saving") : t("common.save")}
                 </button>
               </div>
             </form>
@@ -1021,20 +1022,17 @@ export default function Reference() {
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setBulkModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>Распределить по компаниям ({selectedIds.size})</h3>
+              <h3>{t("reference.distributeTitle", { count: selectedIds.size })}</h3>
               <button className="fp-icon-btn" onClick={() => setBulkModalOpen(false)}>
                 <X size={18} />
               </button>
             </div>
             <p className="fp-note" style={{ margin: "0 0 10px" }}>
-              Выбранные {tab === "categories" ? "статьи" : "проекты"} станут выбираемыми ещё и в отмеченных ниже
-              компаниях — то, что уже настроено у каждой записи, не потеряется, компании только добавляются. Если в
-              какой-то из компаний уже есть запись с тем же названием — она объединится с выбранной автоматически (её
-              операции и планы переедут на выбранную, а сама она будет удалена).
+              {t("reference.distributeNote", { noun: t(`reference.pluralNoun.${tab}`) })}
             </p>
             <label className="fp-checkbox-row">
               <input type="checkbox" checked={bulkIsGlobal} onChange={(e) => setBulkIsGlobal(e.target.checked)} />
-              Все компании (включая те, что появятся позже)
+              {t("reference.allCompaniesFuture")}
             </label>
             {!bulkIsGlobal && (
               <div style={{ display: "flex", flexDirection: "column", marginTop: 4 }}>
@@ -1057,7 +1055,7 @@ export default function Reference() {
             {bulkError && <div className="fp-form-error" style={{ marginTop: 10 }}>{bulkError}</div>}
             <div className="fp-modal-foot">
               <button type="button" className="fp-btn-ghost" onClick={() => setBulkModalOpen(false)}>
-                Отмена
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
@@ -1065,7 +1063,7 @@ export default function Reference() {
                 onClick={handleBulkApply}
                 disabled={bulkSaving || (!bulkIsGlobal && bulkCompanyIds.length === 0)}
               >
-                {bulkSaving ? "Применяем…" : "Применить"}
+                {bulkSaving ? t("reference.applying") : t("reference.apply")}
               </button>
             </div>
           </div>
