@@ -126,13 +126,24 @@ def _parse_number(raw: str) -> Optional[float]:
         return None
 
 
+# Нижняя граница здравого смысла для дат из таблиц — строки "ИТОГО"/суммы
+# внизу листов иногда несут в колонке даты результат SUM() по пустому
+# диапазону, который Google форматирует как дату (напр. "28.05.1905") —
+# без этой защиты такая строка ушла бы в БД как настоящее движение с
+# суммарным (завышенным на порядки) количеством за "день".
+MIN_SANE_DATE = date_type(2020, 1, 1)
+
+
 def _parse_date(raw: str) -> Optional[date_type]:
     raw = (raw or "").strip()
     for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%m/%d/%Y"):
         try:
-            return datetime.strptime(raw, fmt).date()
+            parsed = datetime.strptime(raw, fmt).date()
         except ValueError:
             continue
+        if parsed < MIN_SANE_DATE:
+            return None
+        return parsed
     return None
 
 
