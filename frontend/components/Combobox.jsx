@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { ChevronDown, Plus, X } from "lucide-react";
+import { useTranslation } from "../lib/i18n";
 
 /**
  * Combobox компонент — select с возможностью поиска/фильтрации.
@@ -23,12 +24,15 @@ export function Combobox({
   value,
   onChange,
   options = [],
-  placeholder = "Выберите...",
+  placeholder,
   disabled = false,
   required = false,
   onCreateNew = null,
-  createLabel = "Добавить",
+  createLabel,
 }) {
+  const { t } = useTranslation();
+  const effectivePlaceholder = placeholder ?? t("combobox.selectPlaceholder");
+  const effectiveCreateLabel = createLabel ?? t("common.add");
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [invalid, setInvalid] = useState(false);
@@ -106,7 +110,7 @@ export function Combobox({
         disabled={disabled}
       >
         <span className="fp-combobox-value">
-          {selected ? selected.name : <span className="fp-combobox-placeholder">{placeholder}</span>}
+          {selected ? selected.name : <span className="fp-combobox-placeholder">{effectivePlaceholder}</span>}
         </span>
         <span className="fp-combobox-icons">
           {value && !disabled && (
@@ -124,7 +128,7 @@ export function Combobox({
             ref={inputRef}
             type="text"
             className="fp-combobox-search"
-            placeholder={onCreateNew ? "Поиск или название для добавления..." : "Поиск..."}
+            placeholder={onCreateNew ? t("combobox.searchOrAddPlaceholder") : t("combobox.searchPlaceholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -139,18 +143,18 @@ export function Combobox({
                 onClick={handleCreate}
                 disabled={creating}
               >
-                <Plus size={15} /> {creating ? "Добавляем…" : `${createLabel} «${trimmedSearch}»`}
+                <Plus size={15} /> {creating ? t("combobox.adding") : `${effectiveCreateLabel} «${trimmedSearch}»`}
               </button>
             ) : (
               <div className="fp-combobox-create-hint">
                 <Plus size={15} />
-                {trimmedSearch
-                  ? "Такая запись уже есть в списке ниже"
-                  : "Нет нужной статьи? Напечатайте название — добавим сразу, без похода в Справочники"}
+                {trimmedSearch ? t("combobox.alreadyInList") : t("combobox.noCategoryHint")}
               </div>
             ))}
           <div className="fp-combobox-list">
-            {filtered.length === 0 && !onCreateNew && <div className="fp-combobox-empty">Ничего не найдено</div>}
+            {filtered.length === 0 && !onCreateNew && (
+              <div className="fp-combobox-empty">{t("combobox.nothingFound")}</div>
+            )}
             {filtered.map((opt) => (
               <button
                 key={opt.id}
@@ -194,7 +198,7 @@ export function Combobox({
         }}
         required={required}
       >
-        <option value="">{placeholder}</option>
+        <option value="">{effectivePlaceholder}</option>
         {options.map((opt) => (
           <option key={opt.id} value={opt.id}>
             {opt.name}

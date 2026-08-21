@@ -621,6 +621,14 @@ const DICT = {
     "profile.maxLoginPlaceholder": "Логин или номер в MAX",
     "profile.saving": "Сохранение…",
     "profile.saveFailed": "Не удалось сохранить профиль",
+
+    "combobox.selectPlaceholder": "Выберите...",
+    "combobox.searchOrAddPlaceholder": "Поиск или название для добавления...",
+    "combobox.searchPlaceholder": "Поиск...",
+    "combobox.adding": "Добавляем…",
+    "combobox.alreadyInList": "Такая запись уже есть в списке ниже",
+    "combobox.noCategoryHint": "Нет нужной статьи? Напечатайте название — добавим сразу, без похода в Справочники",
+    "combobox.nothingFound": "Ничего не найдено",
   },
   zh: {
     "common.loading": "加载中…",
@@ -1217,6 +1225,14 @@ const DICT = {
     "profile.maxLoginPlaceholder": "MAX 账号或号码",
     "profile.saving": "保存中…",
     "profile.saveFailed": "保存个人资料失败",
+
+    "combobox.selectPlaceholder": "请选择...",
+    "combobox.searchOrAddPlaceholder": "搜索或输入名称以添加...",
+    "combobox.searchPlaceholder": "搜索...",
+    "combobox.adding": "添加中…",
+    "combobox.alreadyInList": "该记录已在下方列表中",
+    "combobox.noCategoryHint": "没有所需科目？输入名称即可直接添加，无需前往基础数据",
+    "combobox.nothingFound": "未找到结果",
   },
 };
 
