@@ -28,31 +28,25 @@ import { useResource } from "../lib/useResource";
 import { fmtDate } from "../lib/format";
 import { canEditWarehouse } from "../lib/roles";
 import { backdropClickProps } from "../lib/modalBackdrop";
+import { useTranslation } from "../lib/i18n";
 
-const DIRECTION_LABELS = {
-  in: "Приход",
-  out: "Расход",
-  adjustment: "Корректировка",
-  production_consume: "Списано в производство",
-  production_yield: "Получено с производства",
-  transfer_in: "Перемещение (приход)",
-  transfer_out: "Перемещение (расход)",
-};
+// Значения — фиксированный набор (см. StockDirectionEnum на бэкенде), поэтому
+// t(`wh.direction.${direction}`) всегда попадает в словарь.
+function directionLabel(t, direction) {
+  return t(`wh.direction.${direction}`);
+}
+
+function orderStatusLabel(t, status) {
+  return t(`wh.orderStatus.${status}`);
+}
 
 const SECTIONS = [
-  { key: "balances", label: "Остатки", icon: Boxes },
-  { key: "movements", label: "Движения", icon: Package },
-  { key: "orders", label: "Заказы", icon: ClipboardList },
-  { key: "production", label: "Производство", icon: Factory },
-  { key: "catalog", label: "Справочники", icon: Settings },
+  { key: "balances", labelKey: "wh.section.balances", icon: Boxes },
+  { key: "movements", labelKey: "wh.section.movements", icon: Package },
+  { key: "orders", labelKey: "wh.section.orders", icon: ClipboardList },
+  { key: "production", labelKey: "wh.section.production", icon: Factory },
+  { key: "catalog", labelKey: "wh.section.catalog", icon: Settings },
 ];
-
-const ORDER_STATUS_LABELS = {
-  draft: "Черновик",
-  reserved: "Резерв",
-  shipped: "Отгружен",
-  cancelled: "Отменён",
-};
 
 const ORDER_STATUS_BADGE = {
   draft: "warn",
@@ -82,12 +76,12 @@ function compareNatural(a, b) {
 }
 
 const BALANCE_COLUMNS = [
-  { key: "warehouse_name", label: "Склад", type: "text" },
-  { key: "product_name", label: "Товар", type: "text" },
-  { key: "variant_name", label: "Калибр", type: "natural" },
-  { key: "quantity", label: "Остаток", type: "number", align: "right" },
-  { key: "reserved", label: "В резерве", type: "number", align: "right" },
-  { key: "available", label: "Доступно", type: "number", align: "right" },
+  { key: "warehouse_name", labelKey: "wh.col.warehouse", type: "text" },
+  { key: "product_name", labelKey: "wh.col.product", type: "text" },
+  { key: "variant_name", labelKey: "wh.col.variant", type: "natural" },
+  { key: "quantity", labelKey: "wh.col.balance", type: "number", align: "right" },
+  { key: "reserved", labelKey: "wh.col.reserved", type: "number", align: "right" },
+  { key: "available", labelKey: "wh.col.available", type: "number", align: "right" },
 ];
 
 // Универсальный выпадающий мультивыбор с чекбоксами и опцией "выбрать всё"
@@ -95,6 +89,7 @@ const BALANCE_COLUMNS = [
 // Reference.jsx (fp-combobox-popup/fp-checkbox-row), для визуальной
 // консистентности с остальными списками справочников.
 function MultiSelectFilter({ icon: Icon, allLabel, countLabel, options, selectedIds, onChange }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -141,7 +136,7 @@ function MultiSelectFilter({ icon: Icon, allLabel, countLabel, options, selected
           ))}
           {options.length === 0 && (
             <div className="fp-note" style={{ padding: "4px 12px" }}>
-              Нет данных
+              {t("wh.noData")}
             </div>
           )}
         </div>
@@ -151,6 +146,7 @@ function MultiSelectFilter({ icon: Icon, allLabel, countLabel, options, selected
 }
 
 function BalancesPanel({ token, companies, multiCompany }) {
+  const { t } = useTranslation();
   const [hideZero, setHideZero] = useState(false);
   // Остатки — единственная вкладка склада с полностью независимым набором
   // фильтров (компании/склады/товары, каждый — мультивыбор с "выбрать всё"),
@@ -230,13 +226,13 @@ function BalancesPanel({ token, companies, multiCompany }) {
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", padding: "12px 16px 0", fontSize: 13 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
           <input type="checkbox" checked={hideZero} onChange={(e) => setHideZero(e.target.checked)} />
-          Скрыть нулевые остатки
+          {t("wh.hideZero")}
         </label>
         {multiCompany && (
           <MultiSelectFilter
             icon={Building2}
-            allLabel="Все компании"
-            countLabel="Компаний"
+            allLabel={t("dashboard.allCompanies")}
+            countLabel={t("wh.companiesCount")}
             options={companies.map((m) => ({ id: m.company.id, label: m.company.name }))}
             selectedIds={companyFilterIds}
             onChange={(ids) => {
@@ -251,37 +247,37 @@ function BalancesPanel({ token, companies, multiCompany }) {
         )}
         <MultiSelectFilter
           icon={Boxes}
-          allLabel="Все склады"
-          countLabel="Складов"
+          allLabel={t("wh.allWarehouses")}
+          countLabel={t("wh.warehousesCount")}
           options={warehouseOptions}
           selectedIds={warehouseFilterIds}
           onChange={setWarehouseFilterIds}
         />
         <MultiSelectFilter
           icon={Package}
-          allLabel="Все товары"
-          countLabel="Товаров"
+          allLabel={t("wh.allProducts")}
+          countLabel={t("wh.productsCount")}
           options={productOptions}
           selectedIds={productFilterIds}
           onChange={setProductFilterIds}
         />
       </div>
       {loading ? (
-        <div className="fp-loading">Загрузка…</div>
+        <div className="fp-loading">{t("common.loading")}</div>
       ) : (
         <table className="fp-table">
           <thead>
             <tr>
-              {showCompanyColumn && <th>Компания</th>}
+              {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
               {BALANCE_COLUMNS.map((col) => (
                 <th
                   key={col.key}
                   className={col.align === "right" ? "right" : ""}
                   onClick={() => toggleSort(col)}
                   style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
-                  title="Сортировать"
+                  title={t("wh.sortTitle")}
                 >
-                  {col.label}{" "}
+                  {t(col.labelKey)}{" "}
                   {sortKey === col.key ? (
                     sortDir === "asc" ? (
                       <ArrowUp size={11} style={{ verticalAlign: "middle" }} />
@@ -316,7 +312,7 @@ function BalancesPanel({ token, companies, multiCompany }) {
             {sortedBalances.length === 0 && (
               <tr>
                 <td colSpan={showCompanyColumn ? 7 : 6} className="fp-empty">
-                  Остатков пока нет
+                  {t("wh.noBalances")}
                 </td>
               </tr>
             )}
@@ -365,6 +361,7 @@ function MovementsPanel({
   showCompanyColumn,
   roleForCompany,
 }) {
+  const { t } = useTranslation();
   const { data: movements, loading, error, reload } = useResource(
     () => api.listWhMovements(token, { company_id: companyId || undefined }),
     [token, companyId]
@@ -453,7 +450,7 @@ function MovementsPanel({
   }
 
   async function handleDelete(movement) {
-    if (!window.confirm("Удалить движение? Если с ним связано начисление зарплаты — оно тоже будет удалено.")) return;
+    if (!window.confirm(t("wh.deleteMovementConfirm"))) return;
     try {
       await api.deleteWhMovement(token, movement.id);
       reload();
@@ -469,16 +466,16 @@ function MovementsPanel({
         {canEdit && (
           <div style={{ display: "flex", gap: 8 }}>
             <button className="fp-btn-tiny" onClick={() => openMovement("in")}>
-              <Plus size={13} /> Приход
+              <Plus size={13} /> {t("wh.direction.in")}
             </button>
             <button className="fp-btn-tiny" onClick={() => openMovement("out")}>
-              <Plus size={13} /> Расход
+              <Plus size={13} /> {t("wh.direction.out")}
             </button>
             <button className="fp-btn-tiny" onClick={() => openMovement("adjustment")}>
-              <Pencil size={13} /> Корректировка
+              <Pencil size={13} /> {t("wh.direction.adjustment")}
             </button>
             <button className="fp-btn-tiny" onClick={openTransfer}>
-              <ArrowRightLeft size={13} /> Перемещение
+              <ArrowRightLeft size={13} /> {t("wh.transfer")}
             </button>
           </div>
         )}
@@ -486,18 +483,18 @@ function MovementsPanel({
 
       <div className="fp-panel fp-table-panel">
         {loading ? (
-          <div className="fp-loading">Загрузка…</div>
+          <div className="fp-loading">{t("common.loading")}</div>
         ) : (
           <table className="fp-table">
             <thead>
               <tr>
-                {showCompanyColumn && <th>Компания</th>}
-                <th>Дата</th>
-                <th>Склад</th>
-                <th>Товар / калибр</th>
-                <th>Тип</th>
-                <th className="right">Кол-во</th>
-                <th>Примечание</th>
+                {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
+                <th>{t("payroll.col.date")}</th>
+                <th>{t("wh.col.warehouse")}</th>
+                <th>{t("wh.col.productVariant")}</th>
+                <th>{t("cp.col.type")}</th>
+                <th className="right">{t("wh.col.quantity")}</th>
+                <th>{t("wh.col.note")}</th>
                 <th className="fp-table-actions-col"></th>
               </tr>
             </thead>
@@ -515,7 +512,7 @@ function MovementsPanel({
                     <td>
                       {variant ? `${variant.productName} · ${variant.name}` : "—"}
                     </td>
-                    <td className="fp-muted">{DIRECTION_LABELS[m.direction] || m.direction}</td>
+                    <td className="fp-muted">{directionLabel(t, m.direction)}</td>
                     <td className="right">{m.quantity}</td>
                     <td className="fp-muted">{m.note || "—"}</td>
                     <td className="fp-table-actions-col">
@@ -531,7 +528,7 @@ function MovementsPanel({
               {(movements || []).length === 0 && (
                 <tr>
                   <td colSpan={showCompanyColumn ? 8 : 7} className="fp-empty">
-                    Движений пока нет
+                    {t("wh.noMovements")}
                   </td>
                 </tr>
               )}
@@ -545,14 +542,14 @@ function MovementsPanel({
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(null))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>{DIRECTION_LABELS[form.direction]}</h3>
+              <h3>{directionLabel(t, form.direction)}</h3>
               <button className="fp-icon-btn" onClick={() => setModalOpen(null)}>
                 <X size={18} />
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmitMovement}>
               <label>
-                Дата
+                {t("payroll.col.date")}
                 <input
                   type="date"
                   required
@@ -561,14 +558,14 @@ function MovementsPanel({
                 />
               </label>
               <label>
-                Склад
+                {t("wh.col.warehouse")}
                 <select
                   required
                   value={form.warehouse_id}
                   onChange={(e) => setForm((p) => ({ ...p, warehouse_id: e.target.value, product_variant_id: "" }))}
                 >
                   <option value="" disabled>
-                    Выберите склад
+                    {t("wh.selectWarehouse")}
                   </option>
                   {(warehouses || []).map((w) => (
                     <option key={w.id} value={w.id}>
@@ -578,14 +575,14 @@ function MovementsPanel({
                 </select>
               </label>
               <label className="fp-span-2">
-                Товар / калибр
+                {t("wh.col.productVariant")}
                 <select
                   required
                   value={form.product_variant_id}
                   onChange={(e) => setForm((p) => ({ ...p, product_variant_id: e.target.value }))}
                 >
                   <option value="" disabled>
-                    Выберите вариант
+                    {t("wh.selectVariant")}
                   </option>
                   {movementVariants.map((v) => (
                     <option key={v.id} value={v.id}>
@@ -595,7 +592,7 @@ function MovementsPanel({
                 </select>
               </label>
               <label>
-                Количество{form.direction === "adjustment" ? " (можно отрицательное)" : ""}
+                {t("wh.col.quantity")}{form.direction === "adjustment" ? t("wh.quantityCanBeNegative") : ""}
                 <input
                   required
                   type="number"
@@ -605,19 +602,19 @@ function MovementsPanel({
                 />
               </label>
               <label>
-                Примечание
+                {t("wh.col.note")}
                 <input value={form.note} onChange={(e) => setForm((p) => ({ ...p, note: e.target.value }))} />
               </label>
 
               {form.direction === "in" && (
                 <>
                   <label>
-                    Исполнитель (для зарплаты)
+                    {t("wh.executor")}
                     <select
                       value={form.executor_id}
                       onChange={(e) => setForm((p) => ({ ...p, executor_id: e.target.value }))}
                     >
-                      <option value="">— не указан —</option>
+                      <option value="">{t("tx.form.notSpecified")}</option>
                       {(employees || []).map((e) => (
                         <option key={e.id} value={e.id}>
                           {e.full_name}
@@ -626,7 +623,7 @@ function MovementsPanel({
                     </select>
                   </label>
                   <label>
-                    Ставка за единицу
+                    {t("wh.ratePerUnit")}
                     <input
                       type="number"
                       step="0.01"
@@ -635,19 +632,17 @@ function MovementsPanel({
                       onChange={(e) => setForm((p) => ({ ...p, payroll_rate: e.target.value }))}
                     />
                   </label>
-                  <div className="fp-note fp-span-2">
-                    Если указать исполнителя и ставку — начисление автоматически появится в модуле «Зарплата».
-                  </div>
+                  <div className="fp-note fp-span-2">{t("wh.payrollAutoNote")}</div>
                 </>
               )}
 
               {formError && <div className="fp-form-error fp-span-2">{formError}</div>}
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setModalOpen(null)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={saving}>
-                  {saving ? "Сохраняем…" : "Сохранить"}
+                  {saving ? t("common.saving") : t("common.save")}
                 </button>
               </div>
             </form>
@@ -659,14 +654,14 @@ function MovementsPanel({
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(null))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>Перемещение между складами</h3>
+              <h3>{t("wh.transferBetweenWarehouses")}</h3>
               <button className="fp-icon-btn" onClick={() => setModalOpen(null)}>
                 <X size={18} />
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmitTransfer}>
               <label>
-                Дата
+                {t("payroll.col.date")}
                 <input
                   type="date"
                   required
@@ -675,14 +670,14 @@ function MovementsPanel({
                 />
               </label>
               <label>
-                Товар / калибр
+                {t("wh.col.productVariant")}
                 <select
                   required
                   value={transferForm.product_variant_id}
                   onChange={(e) => setTransferForm((p) => ({ ...p, product_variant_id: e.target.value }))}
                 >
                   <option value="" disabled>
-                    Выберите вариант
+                    {t("wh.selectVariant")}
                   </option>
                   {transferVariants.map((v) => (
                     <option key={v.id} value={v.id}>
@@ -692,7 +687,7 @@ function MovementsPanel({
                 </select>
               </label>
               <label>
-                Со склада
+                {t("wh.fromWarehouse")}
                 <select
                   required
                   value={transferForm.from_warehouse_id}
@@ -706,7 +701,7 @@ function MovementsPanel({
                   }
                 >
                   <option value="" disabled>
-                    Выберите склад
+                    {t("wh.selectWarehouse")}
                   </option>
                   {(warehouses || []).map((w) => (
                     <option key={w.id} value={w.id}>
@@ -716,14 +711,14 @@ function MovementsPanel({
                 </select>
               </label>
               <label>
-                На склад
+                {t("wh.toWarehouse")}
                 <select
                   required
                   value={transferForm.to_warehouse_id}
                   onChange={(e) => setTransferForm((p) => ({ ...p, to_warehouse_id: e.target.value }))}
                 >
                   <option value="" disabled>
-                    Выберите склад
+                    {t("wh.selectWarehouse")}
                   </option>
                   {transferToWarehouses
                     .filter((w) => w.id !== transferForm.from_warehouse_id)
@@ -735,7 +730,7 @@ function MovementsPanel({
                 </select>
               </label>
               <label>
-                Количество
+                {t("wh.col.quantity")}
                 <input
                   required
                   type="number"
@@ -745,7 +740,7 @@ function MovementsPanel({
                 />
               </label>
               <label>
-                Примечание
+                {t("wh.col.note")}
                 <input
                   value={transferForm.note}
                   onChange={(e) => setTransferForm((p) => ({ ...p, note: e.target.value }))}
@@ -755,10 +750,10 @@ function MovementsPanel({
               {formError && <div className="fp-form-error fp-span-2">{formError}</div>}
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setModalOpen(null)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={saving}>
-                  {saving ? "Сохраняем…" : "Переместить"}
+                  {saving ? t("common.saving") : t("wh.moveBtn")}
                 </button>
               </div>
             </form>
@@ -794,6 +789,7 @@ function OrdersPanel({
   showCompanyColumn,
   roleForCompany,
 }) {
+  const { t } = useTranslation();
   const { data: orders, loading, error, reload } = useResource(
     () => api.listOrders(token, { company_id: companyId || undefined }),
     [token, companyId]
@@ -907,7 +903,7 @@ function OrdersPanel({
   }
 
   async function handleShip(order) {
-    if (!window.confirm("Отгрузить заказ? Остаток на складе уменьшится.")) return;
+    if (!window.confirm(t("wh.shipConfirm"))) return;
     try {
       await api.shipOrder(token, order.id);
       reload();
@@ -917,7 +913,7 @@ function OrdersPanel({
   }
 
   async function handleCancel(order) {
-    if (!window.confirm("Отменить заказ?")) return;
+    if (!window.confirm(t("wh.cancelConfirm"))) return;
     try {
       await api.cancelOrder(token, order.id);
       reload();
@@ -927,7 +923,7 @@ function OrdersPanel({
   }
 
   async function handleDelete(order) {
-    if (!window.confirm("Удалить черновик заказа?")) return;
+    if (!window.confirm(t("wh.deleteDraftConfirm"))) return;
     try {
       await api.deleteOrder(token, order.id);
       reload();
@@ -942,24 +938,24 @@ function OrdersPanel({
         <div />
         {canEdit && (
           <button type="button" className="fp-btn-tiny" onClick={openAdd}>
-            <Plus size={13} /> Новый заказ
+            <Plus size={13} /> {t("wh.newOrder")}
           </button>
         )}
       </div>
 
       <div className="fp-panel fp-table-panel">
         {loading ? (
-          <div className="fp-loading">Загрузка…</div>
+          <div className="fp-loading">{t("common.loading")}</div>
         ) : (
           <table className="fp-table">
             <thead>
               <tr>
-                {showCompanyColumn && <th>Компания</th>}
-                <th>Дата</th>
-                <th>Клиент</th>
-                <th>Склад</th>
-                <th>Состав</th>
-                <th className="center">Статус</th>
+                {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
+                <th>{t("payroll.col.date")}</th>
+                <th>{t("wh.col.client")}</th>
+                <th>{t("wh.col.warehouse")}</th>
+                <th>{t("wh.col.composition")}</th>
+                <th className="center">{t("reference.status")}</th>
                 <th className="fp-table-actions-col"></th>
               </tr>
             </thead>
@@ -984,7 +980,7 @@ function OrdersPanel({
                   </td>
                   <td className="center">
                     <span className={`fp-status-badge ${ORDER_STATUS_BADGE[o.status] || ""}`}>
-                      {ORDER_STATUS_LABELS[o.status] || o.status}
+                      {orderStatusLabel(t, o.status)}
                     </span>
                   </td>
                   {canEditRow && (
@@ -993,23 +989,23 @@ function OrdersPanel({
                         {o.status === "draft" && (
                           <>
                             <button className="fp-btn-tiny" onClick={() => handleReserve(o)}>
-                              Резерв
+                              {t("wh.reserveBtn")}
                             </button>
-                            <button className="fp-icon-btn" onClick={() => handleShip(o)} title="Отгрузить">
+                            <button className="fp-icon-btn" onClick={() => handleShip(o)} title={t("wh.shipTooltip")}>
                               <Send size={14} />
                             </button>
-                            <button className="fp-icon-btn" onClick={() => handleDelete(o)} title="Удалить">
+                            <button className="fp-icon-btn" onClick={() => handleDelete(o)} title={t("common.delete")}>
                               <Trash2 size={14} />
                             </button>
                           </>
                         )}
                         {o.status === "reserved" && (
-                          <button className="fp-icon-btn" onClick={() => handleShip(o)} title="Отгрузить">
+                          <button className="fp-icon-btn" onClick={() => handleShip(o)} title={t("wh.shipTooltip")}>
                             <Send size={14} />
                           </button>
                         )}
                         {(o.status === "draft" || o.status === "reserved") && (
-                          <button className="fp-icon-btn" onClick={() => handleCancel(o)} title="Отменить">
+                          <button className="fp-icon-btn" onClick={() => handleCancel(o)} title={t("wh.cancelTooltip")}>
                             <Ban size={14} />
                           </button>
                         )}
@@ -1017,12 +1013,12 @@ function OrdersPanel({
                           <button
                             className="fp-icon-btn"
                             onClick={() => api.openSdvfPdf(token, o.id, "invoice")}
-                            title="Открыть Счёт (PDF)"
+                            title={t("wh.openInvoicePdf")}
                           >
                             <FileText size={14} />
                           </button>
                         ) : (
-                          <button className="fp-icon-btn" onClick={() => openDocModal(o, "invoice")} title="Сформировать счёт">
+                          <button className="fp-icon-btn" onClick={() => openDocModal(o, "invoice")} title={t("wh.generateInvoiceTooltip")}>
                             <FileText size={14} />
                           </button>
                         )}
@@ -1030,12 +1026,12 @@ function OrdersPanel({
                           <button
                             className="fp-icon-btn"
                             onClick={() => api.openSdvfPdf(token, o.id, "utd")}
-                            title="Открыть УПД (PDF)"
+                            title={t("wh.openUtdPdf")}
                           >
                             <Receipt size={14} />
                           </button>
                         ) : (
-                          <button className="fp-icon-btn" onClick={() => openDocModal(o, "utd")} title="Сформировать УПД">
+                          <button className="fp-icon-btn" onClick={() => openDocModal(o, "utd")} title={t("wh.generateUtdTooltip")}>
                             <Receipt size={14} />
                           </button>
                         )}
@@ -1048,7 +1044,7 @@ function OrdersPanel({
               {(orders || []).length === 0 && (
                 <tr>
                   <td colSpan={showCompanyColumn ? 7 : 6} className="fp-empty">
-                    Заказов пока нет
+                    {t("wh.noOrders")}
                   </td>
                 </tr>
               )}
@@ -1062,14 +1058,14 @@ function OrdersPanel({
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>Новый заказ</h3>
+              <h3>{t("wh.newOrder")}</h3>
               <button className="fp-icon-btn" onClick={() => setModalOpen(false)}>
                 <X size={18} />
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmit}>
               <label>
-                Склад
+                {t("wh.col.warehouse")}
                 <select
                   required
                   value={form.warehouse_id}
@@ -1083,7 +1079,7 @@ function OrdersPanel({
                   }
                 >
                   <option value="" disabled>
-                    Выберите склад
+                    {t("wh.selectWarehouse")}
                   </option>
                   {(warehouses || []).map((w) => (
                     <option key={w.id} value={w.id}>
@@ -1093,14 +1089,14 @@ function OrdersPanel({
                 </select>
               </label>
               <label>
-                Клиент
+                {t("wh.col.client")}
                 <select
                   required
                   value={form.counterparty_id}
                   onChange={(e) => setForm((p) => ({ ...p, counterparty_id: e.target.value }))}
                 >
                   <option value="" disabled>
-                    Выберите клиента
+                    {t("wh.selectClient")}
                   </option>
                   {orderCounterparties.map((c) => (
                     <option key={c.id} value={c.id}>
@@ -1110,7 +1106,7 @@ function OrdersPanel({
                 </select>
               </label>
               <label>
-                Дата отгрузки (опц.)
+                {t("wh.shipDateOptional")}
                 <input
                   type="date"
                   value={form.requested_date}
@@ -1118,23 +1114,23 @@ function OrdersPanel({
                 />
               </label>
               <label>
-                Примечание
+                {t("wh.col.note")}
                 <input value={form.note} onChange={(e) => setForm((p) => ({ ...p, note: e.target.value }))} />
               </label>
 
               <div className="fp-span-2">
-                <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>Состав заказа</div>
+                <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>{t("wh.orderComposition")}</div>
                 {form.lines.map((line, idx) => (
                   <div key={idx} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "flex-end" }}>
                     <label style={{ flex: 2 }}>
-                      {idx === 0 && "Товар / калибр"}
+                      {idx === 0 && t("wh.col.productVariant")}
                       <select
                         required
                         value={line.product_variant_id}
                         onChange={(e) => updateLine(idx, { product_variant_id: e.target.value })}
                       >
                         <option value="" disabled>
-                          Выберите вариант
+                          {t("wh.selectVariant")}
                         </option>
                         {orderVariants.map((v) => (
                           <option key={v.id} value={v.id}>
@@ -1144,7 +1140,7 @@ function OrdersPanel({
                       </select>
                     </label>
                     <label style={{ flex: 1 }}>
-                      {idx === 0 && "Кол-во"}
+                      {idx === 0 && t("wh.col.quantity")}
                       <input
                         required
                         type="number"
@@ -1166,17 +1162,17 @@ function OrdersPanel({
                   </div>
                 ))}
                 <button type="button" className="fp-btn-tiny" onClick={addLine}>
-                  <Plus size={13} /> Добавить позицию
+                  <Plus size={13} /> {t("wh.addLine")}
                 </button>
               </div>
 
               {formError && <div className="fp-form-error fp-span-2">{formError}</div>}
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setModalOpen(false)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={saving}>
-                  {saving ? "Сохраняем…" : "Создать"}
+                  {saving ? t("common.saving") : t("modules.create")}
                 </button>
               </div>
             </form>
@@ -1188,14 +1184,14 @@ function OrdersPanel({
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setDocModal(null))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>{docModal.type === "invoice" ? "Сформировать счёт" : "Сформировать УПД"}</h3>
+              <h3>{docModal.type === "invoice" ? t("wh.generateInvoiceTooltip") : t("wh.generateUtdTooltip")}</h3>
               <button className="fp-icon-btn" onClick={() => setDocModal(null)}>
                 <X size={18} />
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleDocSubmit}>
               <div className="fp-span-2" style={{ fontSize: 12, color: "var(--ink-soft)" }}>
-                Склад не хранит цену товаров — укажите её для каждой позиции этого документа.
+                {t("wh.noPriceStoredNote")}
               </div>
 
               <div className="fp-span-2">
@@ -1204,13 +1200,13 @@ function OrdersPanel({
                   return (
                     <div key={line.id} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "flex-end" }}>
                       <label style={{ flex: 2 }}>
-                        {v ? `${v.productName} · ${v.name}` : "—"} (кол-во: {line.quantity})
+                        {v ? `${v.productName} · ${v.name}` : "—"}{t("wh.qtyLabel", { qty: line.quantity })}
                         <input
                           required
                           type="number"
                           step="0.01"
                           min="0"
-                          placeholder="Цена за ед."
+                          placeholder={t("wh.pricePerUnit")}
                           value={docPrices[line.id] ?? ""}
                           onChange={(e) => setDocPrices((p) => ({ ...p, [line.id]: e.target.value }))}
                         />
@@ -1221,9 +1217,9 @@ function OrdersPanel({
               </div>
 
               <label>
-                НДС
+                {t("wh.vat")}
                 <select value={docNds} onChange={(e) => setDocNds(e.target.value)}>
-                  <option value="-1">Без НДС</option>
+                  <option value="-1">{t("wh.vatNone")}</option>
                   <option value="0">0%</option>
                   <option value="10">10%</option>
                   <option value="20">20%</option>
@@ -1231,20 +1227,20 @@ function OrdersPanel({
                 </select>
               </label>
               <label>
-                Тип НДС
+                {t("wh.vatType")}
                 <select value={docNdsType} onChange={(e) => setDocNdsType(e.target.value)}>
-                  <option value="onTop">Сверху</option>
-                  <option value="included">В сумме</option>
+                  <option value="onTop">{t("wh.vatOnTop")}</option>
+                  <option value="included">{t("wh.vatIncluded")}</option>
                 </select>
               </label>
 
               {docError && <div className="fp-form-error fp-span-2">{docError}</div>}
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setDocModal(null)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={docSaving}>
-                  {docSaving ? "Формируем…" : "Сформировать"}
+                  {docSaving ? t("wh.generating") : t("wh.generate")}
                 </button>
               </div>
             </form>
@@ -1286,6 +1282,7 @@ function ProductionPanel({
   showCompanyColumn,
   roleForCompany,
 }) {
+  const { t } = useTranslation();
   const [tab, setTab] = useState("recipes");
   const { data: recipes, loading: recipesLoading, error: recipesError, reload: reloadRecipes } = useResource(
     () => api.listRecipes(token, { company_id: companyId || undefined }),
@@ -1380,11 +1377,11 @@ function ProductionPanel({
   }
 
   async function handleDeleteRecipe(recipe) {
-    if (!window.confirm(`Удалить техкарту «${recipe.name}»?`)) return;
+    if (!window.confirm(t("wh.deleteRecipeConfirm", { name: recipe.name }))) return;
     try {
       const result = await api.deleteRecipe(token, recipe.id);
       if (result?.deactivated) {
-        window.alert(`«${recipe.name}» уже использовалась в производстве — деактивирована вместо удаления.`);
+        window.alert(t("wh.recipeDeactivatedAlert", { name: recipe.name }));
       }
       reloadRecipes();
     } catch (err) {
@@ -1420,7 +1417,7 @@ function ProductionPanel({
   }
 
   async function handleDeleteRun(run) {
-    if (!window.confirm("Удалить партию производства? Связанные складские движения тоже будут удалены.")) return;
+    if (!window.confirm(t("wh.deleteRunConfirm"))) return;
     try {
       await api.deleteProductionRun(token, run.id);
       reloadRuns();
@@ -1433,7 +1430,10 @@ function ProductionPanel({
     <>
       <div className="fp-tabs-row">
         <div className="fp-tabs">
-          {Object.entries({ recipes: "Техкарты", runs: "Партии" }).map(([key, label]) => (
+          {[
+            ["recipes", t("wh.tab.recipes")],
+            ["runs", t("wh.tab.runs")],
+          ].map(([key, label]) => (
             <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>
               {label}
             </button>
@@ -1441,12 +1441,12 @@ function ProductionPanel({
         </div>
         {canEdit && tab === "recipes" && (
           <button type="button" className="fp-btn-tiny" onClick={openAddRecipe}>
-            <Plus size={13} /> Новая техкарта
+            <Plus size={13} /> {t("wh.newRecipe")}
           </button>
         )}
         {canEdit && tab === "runs" && (
           <button type="button" className="fp-btn-tiny" onClick={openAddRun}>
-            <Plus size={13} /> Новая партия
+            <Plus size={13} /> {t("wh.newRun")}
           </button>
         )}
       </div>
@@ -1454,16 +1454,16 @@ function ProductionPanel({
       {tab === "recipes" && (
         <div className="fp-panel fp-table-panel">
           {recipesLoading ? (
-            <div className="fp-loading">Загрузка…</div>
+            <div className="fp-loading">{t("common.loading")}</div>
           ) : (
             <table className="fp-table">
               <thead>
                 <tr>
-                  {showCompanyColumn && <th>Компания</th>}
-                  <th>Название</th>
-                  <th>Выход</th>
-                  <th>Состав (норма на 1 ед. выхода)</th>
-                  <th>Статус</th>
+                  {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
+                  <th>{t("automation.col.name")}</th>
+                  <th>{t("wh.col.output")}</th>
+                  <th>{t("wh.col.recipeComposition")}</th>
+                  <th>{t("reference.status")}</th>
                   <th className="fp-table-actions-col"></th>
                 </tr>
               </thead>
@@ -1491,7 +1491,7 @@ function ProductionPanel({
                     </td>
                     <td>
                       <span className={`fp-status-badge ${r.is_active === false ? "warn" : "ok"}`}>
-                        {r.is_active === false ? "Неактивна" : "Активна"}
+                        {r.is_active === false ? t("wh.recipeStatus.inactive") : t("wh.recipeStatus.active")}
                       </span>
                     </td>
                     {canEditRow && (
@@ -1512,7 +1512,7 @@ function ProductionPanel({
                 {(recipes || []).length === 0 && (
                   <tr>
                     <td colSpan={showCompanyColumn ? 6 : 5} className="fp-empty">
-                      Техкарт пока нет
+                      {t("wh.noRecipes")}
                     </td>
                   </tr>
                 )}
@@ -1526,16 +1526,16 @@ function ProductionPanel({
       {tab === "runs" && (
         <div className="fp-panel fp-table-panel">
           {runsLoading ? (
-            <div className="fp-loading">Загрузка…</div>
+            <div className="fp-loading">{t("common.loading")}</div>
           ) : (
             <table className="fp-table">
               <thead>
                 <tr>
-                  {showCompanyColumn && <th>Компания</th>}
-                  <th>Дата</th>
-                  <th>Склад</th>
-                  <th>Техкарта</th>
-                  <th className="right">Кол-во выхода</th>
+                  {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
+                  <th>{t("payroll.col.date")}</th>
+                  <th>{t("wh.col.warehouse")}</th>
+                  <th>{t("wh.col.recipe")}</th>
+                  <th className="right">{t("wh.col.outputQty")}</th>
                   <th className="fp-table-actions-col"></th>
                 </tr>
               </thead>
@@ -1564,7 +1564,7 @@ function ProductionPanel({
                 {(runs || []).length === 0 && (
                   <tr>
                     <td colSpan={showCompanyColumn ? 6 : 5} className="fp-empty">
-                      Партий пока нет
+                      {t("wh.noRuns")}
                     </td>
                   </tr>
                 )}
@@ -1579,7 +1579,7 @@ function ProductionPanel({
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setRecipeModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>{editingRecipeId ? "Редактировать техкарту" : "Новая техкарта"}</h3>
+              <h3>{editingRecipeId ? t("wh.editRecipe") : t("wh.newRecipe")}</h3>
               <button className="fp-icon-btn" onClick={() => setRecipeModalOpen(false)}>
                 <X size={18} />
               </button>
@@ -1587,7 +1587,7 @@ function ProductionPanel({
             <form className="fp-form-grid" onSubmit={handleSubmitRecipe}>
               {multiCompany && (
                 <label className="fp-span-2">
-                  Компания
+                  {t("tx.form.company")}
                   {editingRecipeId ? (
                     <input
                       type="text"
@@ -1617,7 +1617,7 @@ function ProductionPanel({
                 </label>
               )}
               <label className="fp-span-2">
-                Название
+                {t("automation.col.name")}
                 <input
                   required
                   value={recipeForm.name}
@@ -1625,14 +1625,14 @@ function ProductionPanel({
                 />
               </label>
               <label className="fp-span-2">
-                Выходной товар / калибр
+                {t("wh.outputVariant")}
                 <select
                   required
                   value={recipeForm.output_variant_id}
                   onChange={(e) => setRecipeForm((p) => ({ ...p, output_variant_id: e.target.value }))}
                 >
                   <option value="" disabled>
-                    Выберите вариант
+                    {t("wh.selectVariant")}
                   </option>
                   {recipeVariants.map((v) => (
                     <option key={v.id} value={v.id}>
@@ -1644,19 +1644,19 @@ function ProductionPanel({
 
               <div className="fp-span-2">
                 <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>
-                  Сырьё (норма расхода на 1 ед. выхода)
+                  {t("wh.rawMaterialsNote")}
                 </div>
                 {recipeForm.inputs.map((line, idx) => (
                   <div key={idx} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "flex-end" }}>
                     <label style={{ flex: 2 }}>
-                      {idx === 0 && "Товар / калибр"}
+                      {idx === 0 && t("wh.col.productVariant")}
                       <select
                         required
                         value={line.input_variant_id}
                         onChange={(e) => updateRecipeInput(idx, { input_variant_id: e.target.value })}
                       >
                         <option value="" disabled>
-                          Выберите вариант
+                          {t("wh.selectVariant")}
                         </option>
                         {recipeVariants.map((v) => (
                           <option key={v.id} value={v.id}>
@@ -1666,7 +1666,7 @@ function ProductionPanel({
                       </select>
                     </label>
                     <label style={{ flex: 1 }}>
-                      {idx === 0 && "Норма"}
+                      {idx === 0 && t("wh.norm")}
                       <input
                         required
                         type="number"
@@ -1688,17 +1688,17 @@ function ProductionPanel({
                   </div>
                 ))}
                 <button type="button" className="fp-btn-tiny" onClick={addRecipeInput}>
-                  <Plus size={13} /> Добавить сырьё
+                  <Plus size={13} /> {t("wh.addRawMaterial")}
                 </button>
               </div>
 
               {recipeError && <div className="fp-form-error fp-span-2">{recipeError}</div>}
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setRecipeModalOpen(false)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={savingRecipe}>
-                  {savingRecipe ? "Сохраняем…" : "Сохранить"}
+                  {savingRecipe ? t("common.saving") : t("common.save")}
                 </button>
               </div>
             </form>
@@ -1710,21 +1710,21 @@ function ProductionPanel({
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setRunModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>Новая партия производства</h3>
+              <h3>{t("wh.newProductionRun")}</h3>
               <button className="fp-icon-btn" onClick={() => setRunModalOpen(false)}>
                 <X size={18} />
               </button>
             </div>
             <form className="fp-form-grid" onSubmit={handleSubmitRun}>
               <label>
-                Техкарта
+                {t("wh.col.recipe")}
                 <select
                   required
                   value={runForm.recipe_id}
                   onChange={(e) => setRunForm((p) => ({ ...p, recipe_id: e.target.value, warehouse_id: "" }))}
                 >
                   <option value="" disabled>
-                    Выберите техкарту
+                    {t("wh.selectRecipe")}
                   </option>
                   {(recipes || [])
                     .filter((r) => r.is_active !== false)
@@ -1736,14 +1736,14 @@ function ProductionPanel({
                 </select>
               </label>
               <label>
-                Склад
+                {t("wh.col.warehouse")}
                 <select
                   required
                   value={runForm.warehouse_id}
                   onChange={(e) => setRunForm((p) => ({ ...p, warehouse_id: e.target.value }))}
                 >
                   <option value="" disabled>
-                    Выберите склад
+                    {t("wh.selectWarehouse")}
                   </option>
                   {runWarehouses.map((w) => (
                     <option key={w.id} value={w.id}>
@@ -1753,7 +1753,7 @@ function ProductionPanel({
                 </select>
               </label>
               <label>
-                Дата
+                {t("payroll.col.date")}
                 <input
                   type="date"
                   required
@@ -1762,7 +1762,7 @@ function ProductionPanel({
                 />
               </label>
               <label>
-                Кол-во выхода
+                {t("wh.col.outputQty")}
                 <input
                   required
                   type="number"
@@ -1772,17 +1772,17 @@ function ProductionPanel({
                 />
               </label>
               <label className="fp-span-2">
-                Примечание
+                {t("wh.col.note")}
                 <input value={runForm.note} onChange={(e) => setRunForm((p) => ({ ...p, note: e.target.value }))} />
               </label>
 
               {runError && <div className="fp-form-error fp-span-2">{runError}</div>}
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setRunModalOpen(false)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={savingRun}>
-                  {savingRun ? "Сохраняем…" : "Создать"}
+                  {savingRun ? t("common.saving") : t("modules.create")}
                 </button>
               </div>
             </form>
@@ -1812,6 +1812,7 @@ function CatalogPanel({
   showCompanyColumn,
   roleForCompany,
 }) {
+  const { t } = useTranslation();
   const [tab, setTab] = useState("warehouses");
   // Только склады и товары создаются напрямую с выбором компании — вариант
   // всегда наследует компанию от выбранного товара (см. warehouse.py::create_variant).
@@ -1829,23 +1830,23 @@ function CatalogPanel({
 
   const config = {
     warehouses: {
-      label: "Склады",
+      label: t("wh.tab.warehouses"),
       items: warehouses,
       reload: reloadWarehouses,
-      fields: [{ key: "name", label: "Название склада" }],
+      fields: [{ key: "name", label: t("wh.warehouseName") }],
       create: (payload) => api.createWarehouse(token, payload, formCompanyId || undefined),
       update: (id, payload) => api.updateWarehouse(token, id, payload),
       remove: (id) => api.deleteWarehouse(token, id),
       moveCompany: (id, companyId) => api.moveWarehouseCompany(token, id, companyId),
     },
     products: {
-      label: "Товары",
+      label: t("wh.tab.products"),
       items: products,
       reload: reloadProducts,
       fields: [
-        { key: "name", label: "Название товара" },
-        { key: "unit", label: "Единица измерения", default: "кг" },
-        { key: "category", label: "Категория (опц.)" },
+        { key: "name", label: t("wh.productName") },
+        { key: "unit", label: t("wh.unit"), default: "кг" },
+        { key: "category", label: t("wh.category") },
       ],
       create: (payload) => api.createWhProduct(token, payload, formCompanyId || undefined),
       update: (id, payload) => api.updateWhProduct(token, id, payload),
@@ -1853,19 +1854,19 @@ function CatalogPanel({
       moveCompany: (id, companyId) => api.moveWhProductCompany(token, id, companyId),
     },
     variants: {
-      label: "Варианты (калибры)",
+      label: t("wh.variantsFull"),
       items: rawVariants,
       reload: reloadVariants,
       fields: [
         {
           key: "product_id",
-          label: "Товар",
+          label: t("wh.product"),
           type: "select",
           options: (products || [])
             .filter((p) => !multiCompany || !companyId || p.company_id === companyId)
             .map((p) => ({ value: p.id, label: p.name })),
         },
-        { key: "name", label: "Калибр/модификация" },
+        { key: "name", label: t("wh.calibre") },
       ],
       create: (payload) => api.createWhVariant(token, payload),
       update: (id, payload) => api.updateWhVariant(token, id, payload),
@@ -1922,11 +1923,11 @@ function CatalogPanel({
   }
 
   async function handleDelete(item) {
-    if (!window.confirm(`Удалить «${item.name}»?`)) return;
+    if (!window.confirm(t("reference.deleteConfirm", { name: item.name }))) return;
     try {
       const result = await config.remove(item.id);
       if (result?.deactivated) {
-        window.alert(`«${item.name}» уже используется — деактивировано вместо удаления.`);
+        window.alert(t("wh.deactivatedGenericAlert", { name: item.name }));
       }
       config.reload();
     } catch (err) {
@@ -1940,7 +1941,11 @@ function CatalogPanel({
     <>
       <div className="fp-tabs-row">
         <div className="fp-tabs">
-          {Object.entries({ warehouses: "Склады", products: "Товары", variants: "Варианты" }).map(([key, label]) => (
+          {[
+            ["warehouses", t("wh.tab.warehouses")],
+            ["products", t("wh.tab.products")],
+            ["variants", t("wh.tab.variants")],
+          ].map(([key, label]) => (
             <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>
               {label}
             </button>
@@ -1948,7 +1953,7 @@ function CatalogPanel({
         </div>
         {canEdit && (
           <button type="button" className="fp-btn-tiny" onClick={openAdd}>
-            <Plus size={13} /> Добавить
+            <Plus size={13} /> {t("common.add")}
           </button>
         )}
       </div>
@@ -1957,11 +1962,11 @@ function CatalogPanel({
         <table className="fp-table">
           <thead>
             <tr>
-              {showCompanyColumn && <th>Компания</th>}
+              {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
               {config.fields.map((f) => (
                 <th key={f.key}>{f.label}</th>
               ))}
-              <th>Статус</th>
+              <th>{t("reference.status")}</th>
               <th className="fp-table-actions-col"></th>
             </tr>
           </thead>
@@ -1980,7 +1985,7 @@ function CatalogPanel({
                 ))}
                 <td>
                   <span className={`fp-status-badge ${item.is_active === false ? "warn" : "ok"}`}>
-                    {item.is_active === false ? "Неактивен" : "Активен"}
+                    {item.is_active === false ? t("reference.status.inactive") : t("reference.status.active")}
                   </span>
                 </td>
                 {canEditRow && (
@@ -2001,7 +2006,7 @@ function CatalogPanel({
             {(config.items || []).length === 0 && (
               <tr>
                 <td colSpan={config.fields.length + 2 + (showCompanyColumn ? 1 : 0)} className="fp-empty">
-                  Список пуст
+                  {t("reference.listEmpty")}
                 </td>
               </tr>
             )}
@@ -2013,7 +2018,7 @@ function CatalogPanel({
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>{editingId ? "Редактировать" : "Добавить"}</h3>
+              <h3>{editingId ? t("wh.edit") : t("common.add")}</h3>
               <button className="fp-icon-btn" onClick={() => setModalOpen(false)}>
                 <X size={18} />
               </button>
@@ -2021,7 +2026,7 @@ function CatalogPanel({
             <form className="fp-form-grid" onSubmit={handleSubmit}>
               {multiCompany && NEEDS_COMPANY_FIELD[tab] && (
                 <label>
-                  Компания
+                  {t("tx.form.company")}
                   {editingId ? (
                     <>
                       <select value={formCompanyId} onChange={(e) => setFormCompanyId(e.target.value)} required>
@@ -2042,7 +2047,7 @@ function CatalogPanel({
                       </select>
                       {formCompanyId !== originalCompanyId && (
                         <span className="fp-muted" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
-                          Перенос сработает, только если запись ещё нигде не используется.
+                          {t("reference.moveNote")}
                         </span>
                       )}
                     </>
@@ -2067,7 +2072,7 @@ function CatalogPanel({
                       onChange={(e) => setForm((p) => ({ ...p, [f.key]: e.target.value }))}
                     >
                       <option value="" disabled>
-                        Выберите
+                        {t("wh.select")}
                       </option>
                       {f.options.map((o) => (
                         <option key={o.value} value={o.value}>
@@ -2090,10 +2095,10 @@ function CatalogPanel({
               {formError && <div className="fp-form-error fp-span-2">{formError}</div>}
               <div className="fp-modal-foot fp-span-2">
                 <button type="button" className="fp-btn-ghost" onClick={() => setModalOpen(false)}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={saving}>
-                  {saving ? "Сохраняем…" : "Сохранить"}
+                  {saving ? t("common.saving") : t("common.save")}
                 </button>
               </div>
             </form>
@@ -2108,6 +2113,7 @@ function CatalogPanel({
 
 export default function Warehouse() {
   const { token, user } = useAuth();
+  const { t } = useTranslation();
   const companies = user.companies || [];
   const multiCompany = companies.length > 1;
   const roleForCompany = (companyId) => companies.find((m) => m.company.id === companyId)?.role;
@@ -2165,13 +2171,13 @@ export default function Warehouse() {
           {SECTIONS.map((s) => (
             <button key={s.key} className={section === s.key ? "active" : ""} onClick={() => setSection(s.key)}>
               <s.icon size={14} />
-              {s.label}
+              {t(s.labelKey)}
             </button>
           ))}
         </div>
         {multiCompany && (
           <select value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
-            <option value="">Все компании</option>
+            <option value="">{t("dashboard.allCompanies")}</option>
             {companies.map((m) => (
               <option key={m.company.id} value={m.company.id}>
                 {m.company.name}
