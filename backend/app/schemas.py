@@ -869,6 +869,7 @@ class OrderCreateIn(BaseModel):
     counterparty_id: str
     warehouse_id: str
     requested_date: Optional[date] = None
+    courier: Optional[str] = None
     note: Optional[str] = None
     # Условия сделки для будущих 合同/发票 — см. models.py::Order.
     incoterms: Optional[str] = None
@@ -880,6 +881,7 @@ class OrderCreateIn(BaseModel):
 class OrderUpdateIn(BaseModel):
     counterparty_id: Optional[str] = None
     requested_date: Optional[date] = None
+    courier: Optional[str] = None
     note: Optional[str] = None
     incoterms: Optional[str] = None
     incoterms_place: Optional[str] = None
@@ -895,6 +897,7 @@ class OrderOut(BaseModel):
     warehouse_id: str
     status: OrderStatusEnum
     requested_date: Optional[date] = None
+    courier: Optional[str] = None
     note: Optional[str] = None
     incoterms: Optional[str] = None
     incoterms_place: Optional[str] = None

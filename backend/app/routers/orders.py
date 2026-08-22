@@ -94,6 +94,7 @@ def create_order(payload: OrderCreateIn, db: Session = Depends(get_db), user: Us
         warehouse_id=payload.warehouse_id,
         status=OrderStatusEnum.draft,
         requested_date=payload.requested_date,
+        courier=payload.courier,
         note=payload.note,
         incoterms=payload.incoterms,
         incoterms_place=payload.incoterms_place,

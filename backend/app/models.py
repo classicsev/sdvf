@@ -699,6 +699,10 @@ class Order(Base):
         default=OrderStatusEnum.draft,
     )
     requested_date: Mapped[date] = mapped_column(Date, nullable=True)
+    # Кто везёт — реальные листы ("Отгрузки календарь") ведут план по дням с
+    # именем курьера в каждой строке; не привязан к Employee/ЗП, это просто
+    # оперативная пометка "кто везёт эту отгрузку".
+    courier: Mapped[str] = mapped_column(String(200), nullable=True)
     note: Mapped[str] = mapped_column(Text, nullable=True)
     # Условия сделки для будущих 合同 (Sales Contract) / 商业发票 (Commercial
     # Invoice) — см. HANDOVER.md, модуль "Китай", основа под документы.

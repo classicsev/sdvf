@@ -26,6 +26,7 @@ import {
   Check,
   Eye,
 } from "lucide-react";
+import { Combobox } from "./Combobox";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
@@ -777,12 +778,40 @@ const ORDER_FORM_EMPTY = {
   counterparty_id: "",
   warehouse_id: "",
   requested_date: "",
+  courier: "",
   note: "",
   incoterms: "",
   incoterms_place: "",
   payment_terms: "",
   lines: [{ product_variant_id: "", quantity: "" }],
 };
+
+// "Отгрузки календарь" в реальной таблице пользователя — план по дням
+// (Пн/Вт/.../Вс) с именем курьера в каждой строке. Заказы группируем по
+// requested_date тем же способом, без даты — отдельным блоком сверху.
+function groupOrdersByDate(orders) {
+  const withDate = [];
+  const withoutDate = [];
+  (orders || []).forEach((o) => (o.requested_date ? withDate.push(o) : withoutDate.push(o)));
+  withDate.sort((a, b) => a.requested_date.localeCompare(b.requested_date));
+  const groups = [];
+  let current = null;
+  for (const o of withDate) {
+    if (!current || current.date !== o.requested_date) {
+      current = { date: o.requested_date, orders: [] };
+      groups.push(current);
+    }
+    current.orders.push(o);
+  }
+  if (withoutDate.length) groups.unshift({ date: null, orders: withoutDate });
+  return groups;
+}
+
+function weekdayLabel(dateStr) {
+  const d = new Date(dateStr);
+  const label = d.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
 
 function OrdersPanel({
   token,
@@ -802,7 +831,7 @@ function OrdersPanel({
     () => api.listOrders(token, { company_id: companyId || undefined }),
     [token, companyId]
   );
-  const { data: counterparties } = useResource(() => api.listCounterparties(token), [token]);
+  const { data: counterparties, reload: reloadCounterparties } = useResource(() => api.listCounterparties(token), [token]);
   const counterpartiesById = useMemo(
     () => Object.fromEntries((counterparties || []).map((c) => [c.id, c])),
     [counterparties]
@@ -820,6 +849,13 @@ function OrdersPanel({
   const orderVariants = (variants || []).filter(
     (v) => !multiCompany || !form.warehouse_id || v.company_id === orderWarehouseCompany
   );
+  const orderGroups = useMemo(() => groupOrdersByDate(orders), [orders]);
+
+  async function handleCreateCounterparty(name) {
+    const created = await api.createCounterparty(token, { name }, orderWarehouseCompany || undefined);
+    reloadCounterparties();
+    return created;
+  }
 
   // Генерация Счёт/УПД в СДВФ — Склад не хранит цену позиций (только
   // количество), поэтому цена запрашивается у пользователя в момент генерации.
@@ -889,6 +925,7 @@ function OrdersPanel({
         counterparty_id: form.counterparty_id,
         warehouse_id: form.warehouse_id,
         requested_date: form.requested_date || null,
+        courier: form.courier || null,
         note: form.note || null,
         incoterms: form.incoterms || null,
         incoterms_place: form.incoterms_place || null,
@@ -962,23 +999,29 @@ function OrdersPanel({
             <thead>
               <tr>
                 {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
-                <th>{t("payroll.col.date")}</th>
                 <th>{t("wh.col.client")}</th>
                 <th>{t("wh.col.warehouse")}</th>
                 <th>{t("wh.col.composition")}</th>
+                <th>{t("wh.col.courier")}</th>
                 <th className="center">{t("reference.status")}</th>
                 <th className="fp-table-actions-col"></th>
               </tr>
             </thead>
             <tbody>
-              {(orders || []).map((o) => {
+              {orderGroups.map((group) => (
+                <Fragment key={group.date || "no-date"}>
+                  <tr className="fp-table-group-row">
+                    <td colSpan={(showCompanyColumn ? 1 : 0) + 6} className="fp-table-group-label">
+                      {group.date ? weekdayLabel(group.date) : t("wh.noDateGroup")}
+                    </td>
+                  </tr>
+                  {group.orders.map((o) => {
                 const canEditRow = canEditWarehouse(roleForCompany(o.company_id));
                 return (
                 <tr key={o.id}>
                   {showCompanyColumn && (
                     <td>{companies.find((c) => c.company.id === o.company_id)?.company.name || "—"}</td>
                   )}
-                  <td>{o.requested_date ? fmtDate(o.requested_date) : fmtDate(o.created_at)}</td>
                   <td>{counterpartiesById[o.counterparty_id]?.name || "—"}</td>
                   <td className="fp-muted">{warehousesById[o.warehouse_id]?.name || "—"}</td>
                   <td className="fp-muted">
@@ -989,6 +1032,7 @@ function OrdersPanel({
                       })
                       .join(", ")}
                   </td>
+                  <td className="fp-muted">{o.courier || "—"}</td>
                   <td className="center">
                     <span className={`fp-status-badge ${ORDER_STATUS_BADGE[o.status] || ""}`}>
                       {orderStatusLabel(t, o.status)}
@@ -1051,10 +1095,12 @@ function OrdersPanel({
                   )}
                 </tr>
                 );
-              })}
+                  })}
+                </Fragment>
+              ))}
               {(orders || []).length === 0 && (
                 <tr>
-                  <td colSpan={showCompanyColumn ? 7 : 6} className="fp-empty">
+                  <td colSpan={(showCompanyColumn ? 1 : 0) + 6} className="fp-empty">
                     {t("wh.noOrders")}
                   </td>
                 </tr>
@@ -1101,20 +1147,14 @@ function OrdersPanel({
               </label>
               <label>
                 {t("wh.col.client")}
-                <select
-                  required
+                <Combobox
                   value={form.counterparty_id}
-                  onChange={(e) => setForm((p) => ({ ...p, counterparty_id: e.target.value }))}
-                >
-                  <option value="" disabled>
-                    {t("wh.selectClient")}
-                  </option>
-                  {orderCounterparties.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => setForm((p) => ({ ...p, counterparty_id: val }))}
+                  options={orderCounterparties.map((c) => ({ id: c.id, name: c.name }))}
+                  placeholder={t("wh.selectClient")}
+                  required
+                  onCreateNew={handleCreateCounterparty}
+                />
               </label>
               <label>
                 {t("wh.shipDateOptional")}
@@ -1123,6 +1163,10 @@ function OrdersPanel({
                   value={form.requested_date}
                   onChange={(e) => setForm((p) => ({ ...p, requested_date: e.target.value }))}
                 />
+              </label>
+              <label>
+                {t("wh.col.courier")}
+                <input value={form.courier} onChange={(e) => setForm((p) => ({ ...p, courier: e.target.value }))} />
               </label>
               <label>
                 {t("wh.col.note")}
