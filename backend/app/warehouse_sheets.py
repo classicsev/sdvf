@@ -144,7 +144,16 @@ def _parse_date(raw: str) -> Optional[date_type]:
         if parsed < MIN_SANE_DATE:
             return None
         return parsed
-    return None
+    # Некоторые листы (напр. "МСК ПРИход"/"МСК РАСход") пишут дату без года —
+    # "17.08". Год берём текущий календарный на момент синка: на практике
+    # такие листы ведутся в реальном времени, дата всегда "в этом году".
+    try:
+        parsed = datetime.strptime(raw, "%d.%m").date().replace(year=datetime.utcnow().year)
+    except ValueError:
+        return None
+    if parsed < MIN_SANE_DATE:
+        return None
+    return parsed
 
 
 class SyncOutcome:
