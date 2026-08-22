@@ -310,6 +310,11 @@ class Employee(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
     company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
     full_name: Mapped[str] = mapped_column(String(300))
+    # Прозвища/сокращения из реальных источников (напр. Google-таблиц), через
+    # запятую — резолв исполнителя при синке (warehouse_sheets.py::resolve_employee)
+    # проверяет их наравне со словами full_name, чтобы не заводить нового
+    # сотрудника под "Женя Цихм", когда это уже "Женя Цихмейструк".
+    aliases: Mapped[str] = mapped_column(String(300), nullable=True)
     department: Mapped[str] = mapped_column(String(150), nullable=True)
     position: Mapped[str] = mapped_column(String(150), nullable=True)
     employment_type: Mapped[str] = mapped_column(String(50), nullable=True)  # ИП / Самозанятый

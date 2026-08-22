@@ -22,7 +22,7 @@ function KpiCard({ label, value, tone, icon }) {
   );
 }
 
-const EMPLOYEE_EMPTY = { full_name: "", department: "", position: "", employment_type: "", bank_details: "" };
+const EMPLOYEE_EMPTY = { full_name: "", aliases: "", department: "", position: "", employment_type: "", bank_details: "" };
 
 function EmployeesPanel({ token, employees, reload, companyFilter }) {
   const { user } = useAuth();
@@ -54,6 +54,7 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
     setEditingId(emp.id);
     setForm({
       full_name: emp.full_name,
+      aliases: emp.aliases || "",
       department: emp.department || "",
       position: emp.position || "",
       employment_type: emp.employment_type || "",
@@ -233,6 +234,14 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
                   required
                   value={form.full_name}
                   onChange={(e) => setForm((p) => ({ ...p, full_name: e.target.value }))}
+                />
+              </label>
+              <label className="fp-span-2">
+                {t("payroll.aliases")}
+                <input
+                  value={form.aliases}
+                  onChange={(e) => setForm((p) => ({ ...p, aliases: e.target.value }))}
+                  placeholder={t("payroll.aliasesPlaceholder")}
                 />
               </label>
               <label>

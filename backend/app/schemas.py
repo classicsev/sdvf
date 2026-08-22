@@ -243,6 +243,7 @@ class CounterpartySyncResult(BaseModel):
 
 class EmployeeIn(BaseModel):
     full_name: str
+    aliases: Optional[str] = None
     department: Optional[str] = None
     position: Optional[str] = None
     employment_type: Optional[str] = None
@@ -253,6 +254,7 @@ class EmployeeOut(BaseModel):
     id: str
     company_id: str
     full_name: str
+    aliases: Optional[str] = None
     department: Optional[str] = None
     position: Optional[str] = None
     employment_type: Optional[str] = None

@@ -95,15 +95,24 @@ def resolve_employee(db: Session, company_id: str, name: str) -> Optional[Employ
         return None
     needle = name.strip().lower()
     employees = db.query(Employee).filter(Employee.company_id == company_id, Employee.status == "active").all()
+
+    def emp_aliases(emp: Employee) -> list[str]:
+        return [a.strip().lower() for a in (emp.aliases or "").split(",") if a.strip()]
+
     for emp in employees:
-        if emp.full_name.strip().lower() == needle:
+        if emp.full_name.strip().lower() == needle or needle in emp_aliases(emp):
             return emp
     # Реальные листы часто пишут только имя/прозвище водолаза ("Антон"), а не
-    # полное ФИО ("Антон Жаркой") — ищем needle как отдельное слово где-нибудь
-    # в ФИО. Если совпало у НЕСКОЛЬКИХ сотрудников сразу — не угадываем (иначе
-    # риск начислить зарплату не тому), считаем нераспознанным как и при
-    # полном отсутствии совпадения.
-    matches = [emp for emp in employees if needle in {w.lower() for w in emp.full_name.split()}]
+    # полное ФИО ("Антон Жаркой"), или сокращение, заведённое вручную в
+    # aliases сотрудника ("Цихм" -> "Женя Цихмейструк") — ищем needle как
+    # отдельное слово в ФИО или среди алиасов. Если совпало у НЕСКОЛЬКИХ
+    # сотрудников сразу — не угадываем (иначе риск начислить зарплату не
+    # тому), считаем нераспознанным как и при полном отсутствии совпадения.
+    matches = [
+        emp
+        for emp in employees
+        if needle in {w.lower() for w in emp.full_name.split()} or needle in emp_aliases(emp)
+    ]
     if len(matches) == 1:
         return matches[0]
     return None

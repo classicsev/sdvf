@@ -68,6 +68,7 @@ def _employee_to_out(emp: Employee) -> EmployeeOut:
         id=emp.id,
         company_id=emp.company_id,
         full_name=emp.full_name,
+        aliases=emp.aliases,
         department=emp.department,
         position=emp.position,
         employment_type=emp.employment_type,
