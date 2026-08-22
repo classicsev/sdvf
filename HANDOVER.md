@@ -1255,3 +1255,35 @@ spreadsheet_id тех листов, что имеют format=movements — с д
 "Движения" это уже сработает при следующем `sync-all`, но живьём с
 реальными данными ещё не проверено); решение по отрицательным остаткам на
 Артёме — по-прежнему отложено пользователем.
+
+**2026-08-22, кросс-компанийная видимость для Групп проектов.**
+Пользователь заметил реальную нестыковку в UI (со скриншотом): форма
+«Новая группа проектов» не имела блока «Видимость по компаниям», который
+уже есть у Статей и Проектов — единственный справочник без него, хотя
+сознательно упрощённый так при первой реализации (см. раздел "группы
+проектов" выше). Приведено к общему паттерну:
+
+- `models.py::ProjectGroup` — добавлены `is_global` + `visible_companies`
+  (M2M через новую `ProjectGroupCompany`/`project_group_companies`,
+  миграция `46e1df8abff8`), тот же паттерн, что `Category`/`Project`.
+- `reference.py` — `_sync_visible_companies()` расширен на `ProjectGroup`;
+  добавлены `PATCH /project-groups/{id}/company` и `POST /project-groups/
+  bulk-visibility`, дословно по образцу `/projects`.
+- **Найден и исправлен попутный баг** — `app/reference_scope.py`
+  (`apply_visibility_filter`/`apply_own_only_filter`, общая логика
+  видимости и для списков, и для валидации на операциях) была захардкожена
+  только на `Category`/`Project` (`assoc_model = CategoryCompany if model
+  is Category else ProjectCompany` — для `ProjectGroup` это молча
+  подставило бы `ProjectCompany`/`project_id`, в корне неверную
+  ассоциацию). Вынесено в словарь `_ASSOC_BY_MODEL`/`_assoc_for()`, общий
+  для всех трёх справочников — не заметили бы, если бы не пришлось сейчас
+  чинить конкретно этот путь.
+- Фронтенд: `"projectGroups"` добавлен в `supportsCompanyScope`
+  (`Reference.jsx`), `moveCompany`/`bulkVisibility` подключены в
+  `TABS.projectGroups` — форма получила тот же блок чекбоксов, что у
+  Статей/Проектов, без дублирования JSX (генерик уже это умел).
+
+Проверено: `alembic upgrade→downgrade→upgrade`, полный `pytest` (453,
+без регрессий), Playwright — блок «Видимость по компаниям» рендерится в
+форме группы проекта, 0 console errors. Задеплоено с бэкапом БД перед
+миграцией.
