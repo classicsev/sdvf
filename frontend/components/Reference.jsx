@@ -80,10 +80,14 @@ const TABS = {
   projectGroups: {
     labelKey: "reference.tab.projectGroups",
     icon: LayoutDashboard,
-    list: (token, companyId) => api.listProjectGroups(token, { company_id: companyId }),
+    list: (token, filter) =>
+      api.listProjectGroups(token, { company_ids: filter.companyIds, own_only: filter.ownOnly, match: filter.match }),
     create: (token, payload, companyId) => api.createProjectGroup(token, payload, companyId),
     update: (token, id, payload) => api.updateProjectGroup(token, id, payload),
     remove: (token, id) => api.deleteProjectGroup(token, id),
+    moveCompany: (token, id, companyId) => api.moveProjectGroupCompany(token, id, companyId),
+    bulkVisibility: (token, ids, companyIds, isGlobal) =>
+      api.bulkVisibilityProjectGroups(token, ids, companyIds, isGlobal),
     fields: [{ key: "name", labelKey: "reference.projectGroups.name", type: "text", required: true }],
     columns: [{ key: "name", labelKey: "reference.projectGroups.name" }, STATUS_COLUMN],
   },
@@ -150,7 +154,7 @@ export default function Reference() {
   // компонентом ниже; TABS.categories тут только чтобы хуки ниже не падали.
   const config = TABS[tab] || TABS.categories;
   const isCounterparties = tab === COUNTERPARTIES_TAB;
-  const supportsCompanyScope = tab === "categories" || tab === "projects";
+  const supportsCompanyScope = tab === "categories" || tab === "projects" || tab === "projectGroups";
 
   // Счета/Контрагенты: нет межкомпанийной видимости, простой фильтр на одну
   // компанию ("" = все доступные). Статьи/Проекты — свой, более гибкий

@@ -107,6 +107,8 @@ class ProjectOut(ProjectIn):
 class ProjectGroupIn(BaseModel):
     name: str
     is_active: bool = True
+    is_global: bool = False
+    visible_company_ids: list[str] = []
 
 
 class ProjectGroupOut(ProjectGroupIn):
@@ -114,6 +116,7 @@ class ProjectGroupOut(ProjectGroupIn):
 
     id: str
     company_id: str
+    is_active: bool
 
 
 class AccountIn(BaseModel):

@@ -36,6 +36,7 @@ from app.models import (
     Project,
     ProjectCompany,
     ProjectGroup,
+    ProjectGroupCompany,
     RoleEnum,
     Transaction,
     TxTypeEnum,
@@ -86,8 +87,12 @@ def _sync_visible_companies(db: Session, user: User, obj, is_global: bool, visib
     Компании, которыми пользователь не управляет (не admin), молча
     отбрасываются — иначе можно было бы "подарить" видимость статьи в чужую
     компанию через один API-запрос."""
-    assoc_model = CategoryCompany if isinstance(obj, Category) else ProjectCompany
-    fk_name = "category_id" if isinstance(obj, Category) else "project_id"
+    if isinstance(obj, Category):
+        assoc_model, fk_name = CategoryCompany, "category_id"
+    elif isinstance(obj, ProjectGroup):
+        assoc_model, fk_name = ProjectGroupCompany, "project_group_id"
+    else:
+        assoc_model, fk_name = ProjectCompany, "project_id"
     db.query(assoc_model).filter(getattr(assoc_model, fk_name) == obj.id).delete()
     if is_global:
         return
@@ -288,10 +293,18 @@ def bulk_visibility_categories(
     "/project-groups", response_model=list[ProjectGroupOut], dependencies=[Depends(require_module("finance"))]
 )
 def list_project_groups(
-    company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    company_id: Optional[str] = None,
+    company_ids: list[str] = Query(default=[]),
+    match: str = "union",
+    own_only: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    company_ids = resolve_company_ids_multi(db, user, company_id, [])
-    return db.query(ProjectGroup).filter(ProjectGroup.company_id.in_(company_ids)).all()
+    filter_ids = resolve_company_ids_multi(db, user, company_id, company_ids)
+    query = db.query(ProjectGroup)
+    if own_only:
+        return apply_own_only_filter(query, ProjectGroup, filter_ids).all()
+    return apply_visibility_filter(db, query, ProjectGroup, filter_ids, mode=match).all()
 
 
 @router.post(
@@ -304,8 +317,11 @@ def create_project_group(
     user: User = Depends(get_current_user),
 ):
     target = resolve_write_company_id(db, user, company_id, ADMIN_ONLY)
-    obj = ProjectGroup(**payload.model_dump(), company_id=target)
+    fields = payload.model_dump(exclude={"visible_company_ids"})
+    obj = ProjectGroup(**fields, company_id=target)
     db.add(obj)
+    db.flush()
+    _sync_visible_companies(db, user, obj, payload.is_global, payload.visible_company_ids)
     db.commit()
     db.refresh(obj)
     return obj
@@ -321,8 +337,9 @@ def update_project_group(
 ):
     obj = _get_or_404(db, user, ProjectGroup, group_id)
     check_company_role(db, user, obj.company_id, ADMIN_ONLY)
-    for k, v in payload.model_dump().items():
+    for k, v in payload.model_dump(exclude={"visible_company_ids"}).items():
         setattr(obj, k, v)
+    _sync_visible_companies(db, user, obj, payload.is_global, payload.visible_company_ids)
     db.commit()
     db.refresh(obj)
     return obj
@@ -334,6 +351,34 @@ def delete_project_group(group_id: str, db: Session = Depends(get_db), user: Use
     check_company_role(db, user, obj.company_id, ADMIN_ONLY)
     deleted = delete_or_deactivate(db, obj, [(Project, "group_id")])
     return {"deleted": deleted, "deactivated": not deleted}
+
+
+@router.patch(
+    "/project-groups/{group_id}/company",
+    response_model=ProjectGroupOut,
+    dependencies=[Depends(require_module("finance"))],
+)
+def move_project_group_company(
+    group_id: str,
+    payload: MoveCompanyIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    obj = _get_or_404(db, user, ProjectGroup, group_id)
+    return _move_to_company(db, user, obj, payload, [(Project, "group_id")])
+
+
+@router.post(
+    "/project-groups/bulk-visibility",
+    response_model=BulkVisibilityOut,
+    dependencies=[Depends(require_module("finance"))],
+)
+def bulk_visibility_project_groups(
+    payload: BulkVisibilityIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    return _bulk_distribute(
+        db, user, ProjectGroup, ProjectGroupCompany, "project_group_id", payload, [(Project, "group_id")]
+    )
 
 
 @router.get("/projects", response_model=list[ProjectOut], dependencies=[Depends(require_module("finance"))])

@@ -171,9 +171,9 @@ class CategoryCompany(Base):
 class ProjectGroup(Base):
     """Группа проектов — уровень иерархии выше Project (например, «Пчёлы» как
     сезонное направление, внутри которого заводятся проекты по месяцам).
-    Без is_global/visible_companies — в отличие от Project/Category, группа
-    видна только в своей компании; кросс-компанийный шаринг не запрашивался,
-    добавить по аналогии с Project будет несложно, если понадобится."""
+    is_global/visible_companies — тот же паттерн кросс-компанийной видимости,
+    что у Category/Project (см. ниже), чтобы не было несогласованности:
+    остальные справочники это умеют, группы проектов тоже должны."""
 
     __tablename__ = "project_groups"
 
@@ -181,6 +181,21 @@ class ProjectGroup(Base):
     company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
     name: Mapped[str] = mapped_column(String(200))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_global: Mapped[bool] = mapped_column(Boolean, default=False)
+    visible_companies = relationship("Company", secondary="project_group_companies", viewonly=True)
+
+    @property
+    def visible_company_ids(self) -> list[str]:
+        return [c.id for c in self.visible_companies]
+
+
+class ProjectGroupCompany(Base):
+    __tablename__ = "project_group_companies"
+
+    project_group_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("project_groups.id"), primary_key=True
+    )
+    company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"), primary_key=True)
 
 
 class Project(Base):

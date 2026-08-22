@@ -241,6 +241,14 @@ export const api = {
   updateProjectGroup: (token, id, payload) =>
     request(`/project-groups/${id}`, { method: "PATCH", token, body: payload }),
   deleteProjectGroup: (token, id) => request(`/project-groups/${id}`, { method: "DELETE", token }),
+  moveProjectGroupCompany: (token, id, companyId) =>
+    request(`/project-groups/${id}/company`, { method: "PATCH", token, body: { company_id: companyId } }),
+  bulkVisibilityProjectGroups: (token, ids, companyIds, isGlobal) =>
+    request("/project-groups/bulk-visibility", {
+      method: "POST",
+      token,
+      body: { ids, company_ids: companyIds, is_global: isGlobal },
+    }),
 
   listProjects: (token, query) => request("/projects", { token, query }),
   createProject: (token, payload, companyId) =>
