@@ -671,6 +671,21 @@ class WarehouseOut(WarehouseIn):
     company_id: str
 
 
+class EquipmentIn(BaseModel):
+    name: str
+    quantity: Optional[float] = None
+    quantity_unit: Optional[str] = None
+    note: Optional[str] = None
+    is_active: bool = True
+
+
+class EquipmentOut(EquipmentIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    company_id: str
+
+
 class ProductIn(BaseModel):
     name: str
     unit: str = "кг"

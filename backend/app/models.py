@@ -535,6 +535,22 @@ class Warehouse(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class Equipment(Base):
+    __tablename__ = "equipment"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
+    name: Mapped[str] = mapped_column(String(300))
+    # Реальные данные вперемешку: "3" (шт по умолчанию), "1,5рул", "20м", "много" —
+    # количество не всегда чистое число, поэтому храним как есть, без принудительного
+    # разбора на число+единицу (см. import-скрипт: то, что распозналось как число,
+    # идёт в quantity, остаток строки — в quantity_unit; "много" целиком в unit).
+    quantity: Mapped[float] = mapped_column(Numeric(12, 2), nullable=True)
+    quantity_unit: Mapped[str] = mapped_column(String(50), nullable=True)
+    note: Mapped[str] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class Product(Base):
     __tablename__ = "products"
 

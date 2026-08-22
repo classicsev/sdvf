@@ -387,6 +387,15 @@ export const api = {
   moveWarehouseCompany: (token, id, companyId) =>
     request(`/warehouse/warehouses/${id}/company`, { method: "PATCH", token, body: { company_id: companyId } }),
 
+  listEquipment: (token, query) => request("/warehouse/equipment", { token, query }),
+  createEquipment: (token, payload, companyId) =>
+    request("/warehouse/equipment", { method: "POST", token, body: payload, query: { company_id: companyId } }),
+  updateEquipment: (token, id, payload) =>
+    request(`/warehouse/equipment/${id}`, { method: "PATCH", token, body: payload }),
+  deleteEquipment: (token, id) => request(`/warehouse/equipment/${id}`, { method: "DELETE", token }),
+  moveEquipmentCompany: (token, id, companyId) =>
+    request(`/warehouse/equipment/${id}/company`, { method: "PATCH", token, body: { company_id: companyId } }),
+
   listWhProducts: (token, query) => request("/warehouse/products", { token, query }),
   createWhProduct: (token, payload, companyId) =>
     request("/warehouse/products", { method: "POST", token, body: payload, query: { company_id: companyId } }),

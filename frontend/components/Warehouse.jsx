@@ -1843,6 +1843,8 @@ function CatalogPanel({
   reloadProducts,
   rawVariants,
   reloadVariants,
+  equipment,
+  reloadEquipment,
   companies,
   multiCompany,
   companyId,
@@ -1851,9 +1853,9 @@ function CatalogPanel({
 }) {
   const { t } = useTranslation();
   const [tab, setTab] = useState("warehouses");
-  // Только склады и товары создаются напрямую с выбором компании — вариант
-  // всегда наследует компанию от выбранного товара (см. warehouse.py::create_variant).
-  const NEEDS_COMPANY_FIELD = { warehouses: true, products: true, variants: false };
+  // Только склады, товары и оборудование создаются напрямую с выбором компании —
+  // вариант всегда наследует компанию от выбранного товара (см. warehouse.py::create_variant).
+  const NEEDS_COMPANY_FIELD = { warehouses: true, products: true, variants: false, equipment: true };
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -1910,6 +1912,21 @@ function CatalogPanel({
       remove: (id) => api.deleteWhVariant(token, id),
       moveCompany: null,
     },
+    equipment: {
+      label: t("wh.tab.equipment"),
+      items: equipment,
+      reload: reloadEquipment,
+      fields: [
+        { key: "name", label: t("wh.equipmentName") },
+        { key: "quantity", label: t("wh.quantity"), type: "number" },
+        { key: "quantity_unit", label: t("wh.quantityUnit") },
+        { key: "note", label: t("wh.note") },
+      ],
+      create: (payload) => api.createEquipment(token, payload, formCompanyId || undefined),
+      update: (id, payload) => api.updateEquipment(token, id, payload),
+      remove: (id) => api.deleteEquipment(token, id),
+      moveCompany: (id, companyId) => api.moveEquipmentCompany(token, id, companyId),
+    },
   }[tab];
 
   function openAdd() {
@@ -1940,15 +1957,22 @@ function CatalogPanel({
     setSaving(true);
     setFormError("");
     try {
+      // Числовые поля (пока только "quantity" у оборудования) идут строками из
+      // input — пустая строка не проходит Optional[float] на бэкенде, приводим
+      // к числу/null перед отправкой.
+      const payload = { ...form };
+      config.fields.forEach((f) => {
+        if (f.type === "number") payload[f.key] = payload[f.key] === "" ? null : Number(payload[f.key]);
+      });
       if (editingId) {
         // Перенос в другую компанию — отдельным вызовом раньше остальных правок
         // (бэкенд блокирует его, если запись уже где-то используется).
         if (config.moveCompany && multiCompany && formCompanyId && formCompanyId !== originalCompanyId) {
           await config.moveCompany(editingId, formCompanyId);
         }
-        await config.update(editingId, form);
+        await config.update(editingId, payload);
       } else {
-        await config.create(form);
+        await config.create(payload);
       }
       setModalOpen(false);
       config.reload();
@@ -1982,6 +2006,7 @@ function CatalogPanel({
             ["warehouses", t("wh.tab.warehouses")],
             ["products", t("wh.tab.products")],
             ["variants", t("wh.tab.variants")],
+            ["equipment", t("wh.tab.equipment")],
           ].map(([key, label]) => (
             <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>
               {label}
@@ -2122,8 +2147,10 @@ function CatalogPanel({
                   <label key={f.key}>
                     {f.label}
                     <input
+                      type={f.type === "number" ? "number" : "text"}
+                      step={f.type === "number" ? "any" : undefined}
                       required={f.key === "name"}
-                      value={form[f.key] || ""}
+                      value={form[f.key] ?? ""}
                       onChange={(e) => setForm((p) => ({ ...p, [f.key]: e.target.value }))}
                     />
                   </label>
@@ -2175,6 +2202,10 @@ export default function Warehouse() {
   );
   const { data: rawVariants, reload: reloadVariants } = useResource(
     () => api.listWhVariants(token, query),
+    [token, companyId]
+  );
+  const { data: equipment, reload: reloadEquipment } = useResource(
+    () => api.listEquipment(token, query),
     [token, companyId]
   );
 
@@ -2236,6 +2267,8 @@ export default function Warehouse() {
           reloadProducts={reloadProducts}
           rawVariants={rawVariants}
           reloadVariants={reloadVariants}
+          equipment={equipment}
+          reloadEquipment={reloadEquipment}
         />
       )}
       {section === "sync" && <SheetSyncPanel {...shared} canEdit={canEdit} products={products} />}

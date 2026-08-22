@@ -17,6 +17,7 @@ from app.auth import (
 from app.database import get_db
 from app.models import (
     Employee,
+    Equipment,
     Order,
     OrderLine,
     OrderStatusEnum,
@@ -32,6 +33,8 @@ from app.models import (
 )
 from app.schemas import (
     EmployeeMiniOut,
+    EquipmentIn,
+    EquipmentOut,
     MoveCompanyIn,
     ProductIn,
     ProductOut,
@@ -186,6 +189,71 @@ def move_warehouse_company(
     check_company_role(db, user, obj.company_id, ADMIN_ONLY)
     check_company_role(db, user, payload.company_id, ADMIN_ONLY)
     move_to_company(db, obj, payload.company_id, [(StockMovement, "warehouse_id")])
+    db.refresh(obj)
+    return obj
+
+
+# ---------------------------------------------------------------------------
+# Оборудование — отдельный от товарного склада учёт (насосы, шланги, инструмент
+# и т.п.), не завязан на Product/ProductVariant/StockMovement, т.к. это не
+# морепродукты и не оборачивается движениями прихода/расхода — просто
+# инвентарный список с количеством.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/equipment", response_model=list[EquipmentOut], dependencies=[WAREHOUSE_MODULE])
+def list_equipment(
+    company_id: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    company_ids = resolve_company_ids(db, user, company_id)
+    return db.query(Equipment).filter(Equipment.company_id.in_(company_ids)).order_by(Equipment.name).all()
+
+
+@router.post("/equipment", response_model=EquipmentOut, dependencies=[WAREHOUSE_MODULE])
+def create_equipment(
+    payload: EquipmentIn,
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    target = resolve_write_company_id(db, user, company_id, WAREHOUSE_EDITORS)
+    obj = Equipment(**payload.model_dump(), company_id=target)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.patch("/equipment/{equipment_id}", response_model=EquipmentOut, dependencies=[WAREHOUSE_MODULE])
+def update_equipment(
+    equipment_id: str, payload: EquipmentIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    obj = get_or_404_accessible(db, Equipment, equipment_id, get_accessible_company_ids(db, user), "Оборудование не найдено")
+    check_company_role(db, user, obj.company_id, WAREHOUSE_EDITORS)
+    for k, v in payload.model_dump().items():
+        setattr(obj, k, v)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.delete("/equipment/{equipment_id}", dependencies=[WAREHOUSE_MODULE])
+def delete_equipment(equipment_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    obj = get_or_404_accessible(db, Equipment, equipment_id, get_accessible_company_ids(db, user), "Оборудование не найдено")
+    check_company_role(db, user, obj.company_id, WAREHOUSE_EDITORS)
+    db.delete(obj)
+    db.commit()
+    return {"deleted": True}
+
+
+@router.patch("/equipment/{equipment_id}/company", response_model=EquipmentOut, dependencies=[WAREHOUSE_MODULE])
+def move_equipment_company(
+    equipment_id: str, payload: MoveCompanyIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    obj = get_or_404_accessible(db, Equipment, equipment_id, get_accessible_company_ids(db, user), "Оборудование не найдено")
+    check_company_role(db, user, obj.company_id, ADMIN_ONLY)
+    check_company_role(db, user, payload.company_id, ADMIN_ONLY)
+    move_to_company(db, obj, payload.company_id, [])
     db.refresh(obj)
     return obj
 
