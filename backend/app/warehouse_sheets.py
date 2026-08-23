@@ -487,22 +487,42 @@ def export_balances(db: Session, connection: WarehouseSheetConnection, spreadshe
     ws.update(values, "A1")
 
 
-CONTRAGENTS_TAB_NAME = "Контрагенты"
-CONTRAGENTS_HEADER = ["Название", "ИНН", "Обновлено"]
+BASE_TAB_NAME = "Справочники"
+BASE_HEADER = ["Склады", "Водолазы", "Чистка", "Контрагент", "ИНН", "Обновлено"]
+BASE_STARTER_WAREHOUSES = ["Артём", "Седанка", "Москва", "Русский остров"]
+PERSONNEL_CLEANER_POSITIONS = ("Чистильщик", "Бригадир", "Ассистент")
+
+
+def _get_or_create_base_tab(sh) -> "gspread.Worksheet":
+    """Единая вкладка "Справочники" — аналог старой ручной БАЗА, но с
+    автоподтяжкой части столбцов из приложения (названа не "База", т.к.
+    имена вкладок Google Sheets уникальны без учёта регистра — конфликт с
+    легаси "БАЗА"). Пользователь прямо попросил (2026-08-24) не плодить
+    отдельные вкладки на каждую переменную ("у меня в старой версии вся
+    база переменных в одной вкладке - это лучше"), поэтому Водолазы/Чистка/
+    Контрагент/ИНН пишутся сюда же, что раньше уходило в отдельные вкладки
+    "Персонал"/"Контрагенты". Столбец "Склады" (A) —
+    НИКОГДА не трогается синком, это чисто ручной список пользователя."""
+    try:
+        return sh.worksheet(BASE_TAB_NAME)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=BASE_TAB_NAME, rows=1000, cols=len(BASE_HEADER))
+        seed = [BASE_HEADER] + [[w, "", "", "", "", ""] for w in BASE_STARTER_WAREHOUSES]
+        ws.update(seed, "A1")
+        return ws
 
 
 def export_counterparties(db: Session, connection: WarehouseSheetConnection, spreadsheet_id: str, company_id: str) -> None:
-    """Список контрагентов из справочника приложения (уже синхронизирован с
-    СДВФ) — один раз в реальную таблицу, для выпадающих списков в листах
-    "Расход". Односторонне и только на чтение из приложения — правки в самом
-    списке контрагентов делаются в приложении, не в этой вкладке (см.
-    HANDOVER.md, 2026-08-23, "единая вкладка Приход/Расход")."""
+    """Столбцы "Контрагент"/"ИНН"/"Обновлено" (D:F) вкладки "База" — список
+    контрагентов из справочника приложения (уже синхронизирован с СДВФ).
+    Односторонне и только на чтение из приложения — правки в самом списке
+    контрагентов делаются в приложении, не в этой вкладке. Трогает только
+    свои столбцы (D:F), не весь лист — соседние столбцы (Склады/Водолазы/
+    Чистка) не должны затираться (см. HANDOVER.md, 2026-08-24, "вкладка
+    База — консолидация")."""
     gc = get_client(connection)
     sh = gc.open_by_key(spreadsheet_id)
-    try:
-        ws = sh.worksheet(CONTRAGENTS_TAB_NAME)
-    except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=CONTRAGENTS_TAB_NAME, rows=1000, cols=len(CONTRAGENTS_HEADER))
+    ws = _get_or_create_base_tab(sh)
 
     counterparties = (
         db.query(Counterparty)
@@ -511,20 +531,16 @@ def export_counterparties(db: Session, connection: WarehouseSheetConnection, spr
         .all()
     )
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
-    values = [CONTRAGENTS_HEADER] + [[c.name, c.inn or "", now] for c in counterparties]
-    ws.clear()
-    ws.update(values, "A1")
-
-
-PERSONNEL_TAB_NAME = "Персонал"
-PERSONNEL_HEADER = ["Чистка", "Водолазы"]
-PERSONNEL_CLEANER_POSITIONS = ("Чистильщик", "Бригадир", "Ассистент")
+    values = [["Контрагент", "ИНН", "Обновлено"]] + [[c.name, c.inn or "", now] for c in counterparties]
+    ws.batch_clear(["D1:F1000"])
+    ws.update(values, "D1")
 
 
 def export_personnel(db: Session, connection: WarehouseSheetConnection, spreadsheet_id: str, company_id: str) -> None:
-    """Аналог старой ручной вкладки "БАЗА" (столбцы "Чистка"/"Водолазы") —
-    подтягивается из справочника сотрудников приложения, а не ведётся руками.
-    Односторонне: правки самих сотрудников — в приложении, не в этой вкладке.
+    """Столбцы "Водолазы"/"Чистка" (B:C) вкладки "База" — подтягивается из
+    справочника сотрудников приложения, а не ведётся руками. Односторонне:
+    правки самих сотрудников — в приложении, не в этой вкладке. Трогает
+    только свои столбцы (B:C), не весь лист (см. export_counterparties).
     "Чистка" — только сотрудники с должностью Чистильщик/Бригадир/Ассистент
     (от этого столбца зависит начисление ЗП, см. HANDOVER.md, "Чистил").
     "Водолазы" — все активные сотрудники (широкий список: улов приписывается
@@ -532,10 +548,7 @@ def export_personnel(db: Session, connection: WarehouseSheetConnection, spreadsh
     имени" здесь не страшно)."""
     gc = get_client(connection)
     sh = gc.open_by_key(spreadsheet_id)
-    try:
-        ws = sh.worksheet(PERSONNEL_TAB_NAME)
-    except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=PERSONNEL_TAB_NAME, rows=200, cols=len(PERSONNEL_HEADER))
+    ws = _get_or_create_base_tab(sh)
 
     employees = (
         db.query(Employee)
@@ -547,12 +560,12 @@ def export_personnel(db: Session, connection: WarehouseSheetConnection, spreadsh
     divers = [e.full_name for e in employees if e.full_name]
 
     rows = max(len(cleaners), len(divers))
-    values = [PERSONNEL_HEADER] + [
-        [cleaners[i] if i < len(cleaners) else "", divers[i] if i < len(divers) else ""]
+    values = [["Водолазы", "Чистка"]] + [
+        [divers[i] if i < len(divers) else "", cleaners[i] if i < len(cleaners) else ""]
         for i in range(rows)
     ]
-    ws.clear()
-    ws.update(values, "A1")
+    ws.batch_clear(["B1:C1000"])
+    ws.update(values, "B1")
 
 
 MONTH_NAMES_RU = [
