@@ -419,14 +419,23 @@ def get_balances(
 
 
 def compute_balances(
-    db: Session, company_ids: list[str], warehouse_id: str | None = None, include_empty: bool = False
+    db: Session,
+    company_ids: list[str],
+    warehouse_id: str | None = None,
+    include_empty: bool = False,
+    as_of_date=None,
 ) -> list[StockBalanceOut]:
     """Вынесено из `get_balances`, чтобы переиспользовать в
     `app/warehouse_sheets.py::export_balances` (пишет остатки в Google Таблицу)
-    без HTTP self-call."""
+    без HTTP self-call.
+
+    `as_of_date` — остаток накопительно НА КОНЕЦ этой даты (движения после неё
+    не учитываются), для месячного среза в реальной таблице (см. HANDOVER.md,
+    2026-08-23). Резерв/доступно — понятие "на сейчас", для исторического
+    среза не считается (всегда 0), это не задним числом применимая величина."""
     # Зарезервированное количество = сумма позиций заказов в статусе "reserved" по тому
     # же складу и варианту — доступно-к-обещанию (available) не хранится, а считается
-    # так же на лету, как и сам остаток.
+    # так же на лету, как и сам остаток. Не применимо к историческому срезу.
     reserved_subq = (
         db.query(
             Order.warehouse_id.label("warehouse_id"),
@@ -438,16 +447,14 @@ def compute_balances(
         .group_by(Order.warehouse_id, OrderLine.product_variant_id)
         .subquery()
     )
-    movement_subq = (
-        db.query(
-            StockMovement.warehouse_id.label("warehouse_id"),
-            StockMovement.product_variant_id.label("product_variant_id"),
-            func.sum(_signed_quantity_expr()).label("quantity"),
-        )
-        .filter(StockMovement.company_id.in_(company_ids))
-        .group_by(StockMovement.warehouse_id, StockMovement.product_variant_id)
-        .subquery()
-    )
+    movement_query = db.query(
+        StockMovement.warehouse_id.label("warehouse_id"),
+        StockMovement.product_variant_id.label("product_variant_id"),
+        func.sum(_signed_quantity_expr()).label("quantity"),
+    ).filter(StockMovement.company_id.in_(company_ids))
+    if as_of_date is not None:
+        movement_query = movement_query.filter(StockMovement.date <= as_of_date)
+    movement_subq = movement_query.group_by(StockMovement.warehouse_id, StockMovement.product_variant_id).subquery()
 
     if include_empty:
         # Показать все активные варианты товаров на всех активных складах, даже те,

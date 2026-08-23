@@ -24,7 +24,8 @@ from app.schemas import (
     WarehouseSheetTabIn,
     WarehouseSheetTabOut,
 )
-from app.warehouse_sheets import export_balances, store_credentials, sync_tab
+from app.routers.warehouse import compute_balances
+from app.warehouse_sheets import export_balances, store_credentials, sync_tab, update_ostatok_balance
 
 router = APIRouter(prefix="/warehouse/sheets", tags=["warehouse-sheets"])
 
@@ -229,6 +230,10 @@ def sync_all(
                 export_balances(db, conn, spreadsheet_id, conn.company_id)
             except Exception:
                 pass  # остатки — вторичный эффект, не должны валить весь синк движений
+            try:
+                update_ostatok_balance(db, conn, spreadsheet_id, conn.company_id)
+            except Exception:
+                pass  # аналогично — лист "ОСТАТОК"/"Месяц" не обязаны существовать везде
 
         conn.last_sync_at = now
         db.add(conn)
@@ -241,3 +246,35 @@ def sync_all(
     return WarehouseSheetSyncAllResult(
         processed=processed, skipped_rate_limited=skipped_rate_limited, results=results, message=message
     )
+
+
+@router.get("/balance-as-of", dependencies=[WAREHOUSE_MODULE])
+def balance_as_of(
+    year: int,
+    month: int,
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Остаток накопительно на конец указанного месяца — для месячного среза
+    в реальной Google-таблице (лист "ОСТАТОК"), дёргается из Apps Script по
+    API-ключу вместо ненадёжных SUMIFS-формул на месте (см. HANDOVER.md,
+    2026-08-23 — прямая попытка формулами разошлась с реальными данными)."""
+    import calendar
+    from datetime import date as date_type
+
+    company_ids = resolve_company_ids(db, user, company_id)
+    if not (1 <= month <= 12):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Месяц должен быть от 1 до 12")
+    last_day = calendar.monthrange(year, month)[1]
+    as_of = date_type(year, month, last_day)
+    balances = compute_balances(db, company_ids, include_empty=True, as_of_date=as_of)
+    return [
+        {
+            "warehouse_name": b.warehouse_name,
+            "product_name": b.product_name,
+            "variant_name": b.variant_name,
+            "quantity": float(b.quantity),
+        }
+        for b in balances
+    ]

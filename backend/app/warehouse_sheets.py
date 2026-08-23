@@ -484,3 +484,77 @@ def export_balances(db: Session, connection: WarehouseSheetConnection, spreadshe
     ]
     ws.clear()
     ws.update(values, "A1")
+
+
+MONTH_NAMES_RU = [
+    "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+]
+
+# Строка в листе "ОСТАТОК" (колонка I) ↔ товар+вариант в приложении — построено
+# по факту сопоставления реальных названий (см. HANDOVER.md, 2026-08-23).
+# Только склад "Артём" — остальные секции листа (МААКА/Русский) вне охвата.
+OSTATOK_ROWS = [
+    (4, "Устрица Императорская", "40/60"),
+    (5, "Устрица Императорская", "60/100"),
+    (6, "Устрица Императорская", "100/150"),
+    (7, "Устрица Императорская", "150/200"),
+    (8, "Устрица Императорская", "200/300"),
+    (9, "Устрица Императорская", "300/500"),
+    (17, "Устрица Хасанская", "40/60"),
+    (18, "Устрица Хасанская", "60/100"),
+    (19, "Устрица Хасанская", "100/150"),
+    (20, "Устрица Хасанская", "150/200"),
+    (21, "Устрица Хасанская", "200/300"),
+    (22, "Устрица Хасанская", "300/500"),
+    (23, "Устрица Хасанская", "500+"),
+    (25, "Вонголе", "стандарт"),
+    (26, "Спизула", "стандарт"),
+    (27, "Анадара", "стандарт"),
+    (28, "Мидия", "стандарт"),
+    (29, "Гребешок", "стандарт"),
+    (30, "Каллиста", "стандарт"),
+    (31, "Глицимерисс", "стандарт"),
+    (32, "Мактра китайская", "стандарт"),
+    (33, "Гуидак", "стандарт"),
+    (34, "Осьминог", "стандарт"),
+    (35, "Трепанг", "стандарт"),
+]
+
+
+def update_ostatok_balance(db: Session, connection: WarehouseSheetConnection, spreadsheet_id: str, company_id: str) -> None:
+    """Пишет в лист "ОСТАТОК" остаток накопительно на конец месяца, выбранного
+    на вкладке "Месяц" (B1=год, B2=месяц словом) — вызывается из sync_all той
+    же дешёвой периодикой, что и остальной синк. Не через Apps Script/внешний
+    HTTP: у onEdit simple trigger нет доступа к внешним сервисам (UrlFetchApp
+    запрещён в этом режиме авторизации), поэтому расчёт живёт здесь, в уже
+    работающем пути с сервис-аккаунтом — надёжнее и без лишней настройки
+    доступа (см. HANDOVER.md, 2026-08-23)."""
+    gc = get_client(connection)
+    sh = gc.open_by_key(spreadsheet_id)
+    try:
+        control = sh.worksheet("Месяц")
+        ostatok = sh.worksheet("ОСТАТОК")
+    except gspread.WorksheetNotFound:
+        return
+
+    year = control.acell("B1").value
+    month_name = (control.acell("B2").value or "").strip()
+    if not year or month_name not in MONTH_NAMES_RU:
+        return
+    year = int(float(str(year).replace(",", ".")))
+    month = MONTH_NAMES_RU.index(month_name) + 1
+    last_day = [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28,
+                31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
+    as_of = date_type(year, month, last_day)
+
+    balances = compute_balances(db, [company_id], include_empty=True, as_of_date=as_of)
+    by_key = {
+        (b.product_name, b.variant_name): b.quantity for b in balances if b.warehouse_name == "Артём"
+    }
+
+    updates = []
+    for row, product_name, variant_name in OSTATOK_ROWS:
+        qty = by_key.get((product_name, variant_name), 0)
+        updates.append({"range": f"I{row}", "values": [[float(qty)]]})
+    ostatok.batch_update(updates, value_input_option="USER_ENTERED")
