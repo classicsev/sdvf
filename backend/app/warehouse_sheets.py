@@ -361,6 +361,13 @@ def sync_tab(db: Session, connection: WarehouseSheetConnection, tab: WarehouseSh
             {"range": f"{marker_col}{row_number}", "values": [[value]]} for row_number, value in outcome.marks.items()
         ]
         ws.batch_update(cell_updates)
+        # Маркер на wide-строке с несколькими калибрами — это склеенный список
+        # ID движений через запятую (может быть 100+ символов), а колонка по
+        # умолчанию наследует WRAP от соседей — без явного OVERFLOW_CELL это
+        # раздувает высоту строки на глаз пользователя (реальный баг, найден
+        # 2026-08-23). Overflow не портит данные — просто не переносит текст
+        # визуально, сама ячейка остаётся читаемой по клику.
+        ws.format(f"{marker_col}1:{marker_col}5000", {"wrapStrategy": "OVERFLOW_CELL"})
 
     tab.last_synced_row = last_row
     db.add(tab)

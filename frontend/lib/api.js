@@ -439,6 +439,7 @@ export const api = {
   addOrderLine: (token, id, payload) => request(`/orders/${id}/lines`, { method: "POST", token, body: payload }),
   removeOrderLine: (token, id, lineId) => request(`/orders/${id}/lines/${lineId}`, { method: "DELETE", token }),
   reserveOrder: (token, id) => request(`/orders/${id}/reserve`, { method: "POST", token }),
+  unreserveOrder: (token, id) => request(`/orders/${id}/unreserve`, { method: "POST", token }),
   cancelOrder: (token, id) => request(`/orders/${id}/cancel`, { method: "POST", token }),
   shipOrder: (token, id) => request(`/orders/${id}/ship`, { method: "POST", token }),
   generateInvoice: (token, id, payload) =>

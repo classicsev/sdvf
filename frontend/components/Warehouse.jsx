@@ -360,6 +360,7 @@ function MovementsPanel({
   warehouses,
   variants,
   variantsById,
+  activeVariants,
   warehousesById,
   companies,
   multiCompany,
@@ -381,7 +382,7 @@ function MovementsPanel({
   const [saving, setSaving] = useState(false);
 
   // Вариант товара должен принадлежать той же компании, что и выбранный склад.
-  const movementVariants = (variants || []).filter(
+  const movementVariants = (activeVariants || []).filter(
     (v) => !multiCompany || !form.warehouse_id || v.company_id === warehousesById[form.warehouse_id]?.company_id
   );
   const transferToWarehouses = (warehouses || []).filter(
@@ -390,7 +391,7 @@ function MovementsPanel({
       !transferForm.from_warehouse_id ||
       w.company_id === warehousesById[transferForm.from_warehouse_id]?.company_id
   );
-  const transferVariants = (variants || []).filter(
+  const transferVariants = (activeVariants || []).filter(
     (v) =>
       !multiCompany ||
       !transferForm.from_warehouse_id ||
@@ -582,20 +583,13 @@ function MovementsPanel({
               </label>
               <label className="fp-span-2">
                 {t("wh.col.productVariant")}
-                <select
-                  required
+                <Combobox
                   value={form.product_variant_id}
-                  onChange={(e) => setForm((p) => ({ ...p, product_variant_id: e.target.value }))}
-                >
-                  <option value="" disabled>
-                    {t("wh.selectVariant")}
-                  </option>
-                  {movementVariants.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.productName} · {v.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => setForm((p) => ({ ...p, product_variant_id: val }))}
+                  options={movementVariants.map((v) => ({ id: v.id, name: `${v.productName} · ${v.name}` }))}
+                  placeholder={t("wh.selectVariant")}
+                  required
+                />
               </label>
               <label>
                 {t("wh.col.quantity")}{form.direction === "adjustment" ? t("wh.quantityCanBeNegative") : ""}
@@ -677,20 +671,13 @@ function MovementsPanel({
               </label>
               <label>
                 {t("wh.col.productVariant")}
-                <select
-                  required
+                <Combobox
                   value={transferForm.product_variant_id}
-                  onChange={(e) => setTransferForm((p) => ({ ...p, product_variant_id: e.target.value }))}
-                >
-                  <option value="" disabled>
-                    {t("wh.selectVariant")}
-                  </option>
-                  {transferVariants.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.productName} · {v.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => setTransferForm((p) => ({ ...p, product_variant_id: val }))}
+                  options={transferVariants.map((v) => ({ id: v.id, name: `${v.productName} · ${v.name}` }))}
+                  placeholder={t("wh.selectVariant")}
+                  required
+                />
               </label>
               <label>
                 {t("wh.fromWarehouse")}
@@ -819,6 +806,7 @@ function OrdersPanel({
   warehouses,
   variants,
   variantsById,
+  activeVariants,
   warehousesById,
   companies,
   multiCompany,
@@ -838,6 +826,7 @@ function OrdersPanel({
   );
 
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingOrder, setEditingOrder] = useState(null);
   const [form, setForm] = useState(ORDER_FORM_EMPTY);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -846,7 +835,7 @@ function OrdersPanel({
   const orderCounterparties = (counterparties || []).filter(
     (c) => !multiCompany || !form.warehouse_id || c.company_id === orderWarehouseCompany
   );
-  const orderVariants = (variants || []).filter(
+  const orderVariants = (activeVariants || []).filter(
     (v) => !multiCompany || !form.warehouse_id || v.company_id === orderWarehouseCompany
   );
   const orderGroups = useMemo(() => groupOrdersByDate(orders), [orders]);
@@ -899,7 +888,25 @@ function OrdersPanel({
   }
 
   function openAdd() {
+    setEditingOrder(null);
     setForm(ORDER_FORM_EMPTY);
+    setFormError("");
+    setModalOpen(true);
+  }
+
+  function openEdit(order) {
+    setEditingOrder(order);
+    setForm({
+      counterparty_id: order.counterparty_id,
+      warehouse_id: order.warehouse_id,
+      requested_date: order.requested_date || "",
+      courier: order.courier || "",
+      note: order.note || "",
+      incoterms: order.incoterms || "",
+      incoterms_place: order.incoterms_place || "",
+      payment_terms: order.payment_terms || "",
+      lines: order.lines.map((l) => ({ product_variant_id: l.product_variant_id, quantity: String(l.quantity) })),
+    });
     setFormError("");
     setModalOpen(true);
   }
@@ -920,18 +927,23 @@ function OrdersPanel({
     e.preventDefault();
     setSaving(true);
     setFormError("");
+    const payload = {
+      counterparty_id: form.counterparty_id,
+      warehouse_id: form.warehouse_id,
+      requested_date: form.requested_date || null,
+      courier: form.courier || null,
+      note: form.note || null,
+      incoterms: form.incoterms || null,
+      incoterms_place: form.incoterms_place || null,
+      payment_terms: form.payment_terms || null,
+      lines: form.lines.map((l) => ({ product_variant_id: l.product_variant_id, quantity: Number(l.quantity) })),
+    };
     try {
-      await api.createOrder(token, {
-        counterparty_id: form.counterparty_id,
-        warehouse_id: form.warehouse_id,
-        requested_date: form.requested_date || null,
-        courier: form.courier || null,
-        note: form.note || null,
-        incoterms: form.incoterms || null,
-        incoterms_place: form.incoterms_place || null,
-        payment_terms: form.payment_terms || null,
-        lines: form.lines.map((l) => ({ product_variant_id: l.product_variant_id, quantity: Number(l.quantity) })),
-      });
+      if (editingOrder) {
+        await api.updateOrder(token, editingOrder.id, payload);
+      } else {
+        await api.createOrder(token, payload);
+      }
       setModalOpen(false);
       reload();
     } catch (err) {
@@ -944,6 +956,15 @@ function OrdersPanel({
   async function handleReserve(order) {
     try {
       await api.reserveOrder(token, order.id);
+      reload();
+    } catch (err) {
+      window.alert(err.message);
+    }
+  }
+
+  async function handleUnreserve(order) {
+    try {
+      await api.unreserveOrder(token, order.id);
       reload();
     } catch (err) {
       window.alert(err.message);
@@ -1024,7 +1045,12 @@ function OrdersPanel({
                   )}
                   <td>{counterpartiesById[o.counterparty_id]?.name || "—"}</td>
                   <td className="fp-muted">{warehousesById[o.warehouse_id]?.name || "—"}</td>
-                  <td className="fp-muted">
+                  <td className="fp-muted fp-table-comment-col" title={o.lines
+                      .map((l) => {
+                        const v = variantsById[l.product_variant_id];
+                        return v ? `${v.productName} ${v.name} × ${l.quantity}` : `${l.quantity}`;
+                      })
+                      .join(", ")}>
                     {o.lines
                       .map((l) => {
                         const v = variantsById[l.product_variant_id];
@@ -1041,22 +1067,29 @@ function OrdersPanel({
                   {canEditRow && (
                     <td className="fp-table-actions-col">
                       <span className="fp-row-actions">
+                        {(o.status === "draft" || o.status === "reserved") && (
+                          <button className="fp-icon-btn" onClick={() => openEdit(o)} title={t("wh.editTooltip")}>
+                            <Pencil size={14} />
+                          </button>
+                        )}
                         {o.status === "draft" && (
-                          <>
-                            <button className="fp-btn-tiny" onClick={() => handleReserve(o)}>
-                              {t("wh.reserveBtn")}
-                            </button>
-                            <button className="fp-icon-btn" onClick={() => handleShip(o)} title={t("wh.shipTooltip")}>
-                              <Send size={14} />
-                            </button>
-                            <button className="fp-icon-btn" onClick={() => handleDelete(o)} title={t("common.delete")}>
-                              <Trash2 size={14} />
-                            </button>
-                          </>
+                          <button className="fp-btn-tiny" onClick={() => handleReserve(o)}>
+                            {t("wh.reserveBtn")}
+                          </button>
                         )}
                         {o.status === "reserved" && (
+                          <button className="fp-btn-tiny" onClick={() => handleUnreserve(o)} title={t("wh.unreserveTooltip")}>
+                            {t("wh.unreserveBtn")}
+                          </button>
+                        )}
+                        {(o.status === "draft" || o.status === "reserved") && (
                           <button className="fp-icon-btn" onClick={() => handleShip(o)} title={t("wh.shipTooltip")}>
                             <Send size={14} />
+                          </button>
+                        )}
+                        {o.status === "draft" && (
+                          <button className="fp-icon-btn" onClick={() => handleDelete(o)} title={t("common.delete")}>
+                            <Trash2 size={14} />
                           </button>
                         )}
                         {(o.status === "draft" || o.status === "reserved") && (
@@ -1115,7 +1148,7 @@ function OrdersPanel({
         <div className="fp-modal-backdrop" {...backdropClickProps(() => setModalOpen(false))}>
           <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fp-modal-head">
-              <h3>{t("wh.newOrder")}</h3>
+              <h3>{editingOrder ? t("wh.editOrder") : t("wh.newOrder")}</h3>
               <button className="fp-icon-btn" onClick={() => setModalOpen(false)}>
                 <X size={18} />
               </button>
@@ -1205,20 +1238,13 @@ function OrdersPanel({
                   <div key={idx} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "flex-end" }}>
                     <label style={{ flex: 2 }}>
                       {idx === 0 && t("wh.col.productVariant")}
-                      <select
-                        required
+                      <Combobox
                         value={line.product_variant_id}
-                        onChange={(e) => updateLine(idx, { product_variant_id: e.target.value })}
-                      >
-                        <option value="" disabled>
-                          {t("wh.selectVariant")}
-                        </option>
-                        {orderVariants.map((v) => (
-                          <option key={v.id} value={v.id}>
-                            {v.productName} · {v.name}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(val) => updateLine(idx, { product_variant_id: val })}
+                        options={orderVariants.map((v) => ({ id: v.id, name: `${v.productName} · ${v.name}` }))}
+                        placeholder={t("wh.selectVariant")}
+                        required
+                      />
                     </label>
                     <label style={{ flex: 1 }}>
                       {idx === 0 && t("wh.col.quantity")}
@@ -1253,7 +1279,7 @@ function OrdersPanel({
                   {t("common.cancel")}
                 </button>
                 <button type="submit" className="fp-btn-primary" disabled={saving}>
-                  {saving ? t("common.saving") : t("modules.create")}
+                  {saving ? t("common.saving") : editingOrder ? t("common.save") : t("modules.create")}
                 </button>
               </div>
             </form>
@@ -2260,6 +2286,15 @@ export default function Warehouse() {
     [rawVariants, productsById]
   );
   const variantsById = useMemo(() => Object.fromEntries(variants.map((v) => [v.id, v])), [variants]);
+  // Для выпадающих списков (создание движения/заказа) — без неактивных
+  // вариантов и вариантов деактивированных товаров (напр. мусорных
+  // артефактов после разбора широких листов синка). variants/variantsById
+  // остаются полными — по ним резолвятся названия в уже существующих
+  // записях (Остатки/Движения), исторические записи не должны пропадать.
+  const activeVariants = useMemo(
+    () => variants.filter((v) => v.is_active !== false && productsById[v.product_id]?.is_active !== false),
+    [variants, productsById]
+  );
 
   const showCompanyColumn = multiCompany && !companyId;
   const shared = {
@@ -2274,6 +2309,7 @@ export default function Warehouse() {
     products,
     variants,
     variantsById,
+    activeVariants,
   };
 
   return (

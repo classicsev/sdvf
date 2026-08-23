@@ -129,15 +129,52 @@ def update_order(
     check_company_role(db, user, order.company_id, WAREHOUSE_EDITORS)
     if order.status not in OPEN_STATUSES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Заказ закрыт, изменения недоступны")
-    changes = payload.model_dump(exclude_unset=True)
+    accessible = get_accessible_company_ids(db, user)
+    changes = payload.model_dump(exclude_unset=True, exclude={"lines"})
+    if changes.get("warehouse_id"):
+        warehouse = get_or_404_accessible(db, Warehouse, changes["warehouse_id"], accessible, "Склад не найден")
+        if warehouse.company_id != order.company_id:
+            raise HTTPException(status_code=400, detail="Склад принадлежит другой компании")
     if changes.get("counterparty_id"):
-        get_or_404_accessible(
-            db, Counterparty, changes["counterparty_id"], [order.company_id], "Контрагент не найден"
+        counterparty = get_or_404_accessible(
+            db, Counterparty, changes["counterparty_id"], accessible, "Контрагент не найден"
         )
+        if counterparty.company_id != order.company_id:
+            raise HTTPException(status_code=400, detail="Контрагент принадлежит другой компании")
     for k, v in changes.items():
         setattr(order, k, v)
+
+    if payload.lines is not None:
+        if not payload.lines:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нужна хотя бы одна позиция")
+        for line in payload.lines:
+            variant = get_or_404_accessible(
+                db, ProductVariant, line.product_variant_id, accessible, "Вариант товара не найден"
+            )
+            if variant.company_id != order.company_id:
+                raise HTTPException(status_code=400, detail="Вариант товара принадлежит другой компании")
+            if line.quantity <= 0:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Количество должно быть больше нуля")
+        for old_line in list(order.lines):
+            db.delete(old_line)
+        db.flush()
+        order.lines = [
+            OrderLine(
+                company_id=order.company_id,
+                product_variant_id=l.product_variant_id,
+                quantity=l.quantity,
+                package_count=l.package_count,
+                package_type=l.package_type,
+                gross_weight=l.gross_weight,
+                net_weight=l.net_weight,
+                marks=l.marks,
+            )
+            for l in payload.lines
+        ]
+
     db.commit()
     db.refresh(order)
+    log_action(db, user, action="update", entity_type="order", entity_id=order.id, company_id=order.company_id)
     return order
 
 
@@ -221,6 +258,13 @@ def reserve_order(order_id: str, db: Session = Depends(get_db), user: User = Dep
     return _transition(db, order, (OrderStatusEnum.draft,), OrderStatusEnum.reserved, user)
 
 
+@router.post("/{order_id}/unreserve", response_model=OrderOut, dependencies=[WAREHOUSE_MODULE])
+def unreserve_order(order_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    order = _get_order_or_404(db, user, order_id)
+    check_company_role(db, user, order.company_id, WAREHOUSE_EDITORS)
+    return _transition(db, order, (OrderStatusEnum.reserved,), OrderStatusEnum.draft, user)
+
+
 @router.post("/{order_id}/cancel", response_model=OrderOut, dependencies=[WAREHOUSE_MODULE])
 def cancel_order(order_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     order = _get_order_or_404(db, user, order_id)
@@ -238,24 +282,38 @@ def ship_order(order_id: str, db: Session = Depends(get_db), user: User = Depend
         )
 
     today = datetime.utcnow().date()
+    shipped_movements = []
     for line in order.lines:
-        db.add(
-            StockMovement(
-                company_id=order.company_id,
-                date=today,
-                warehouse_id=order.warehouse_id,
-                product_variant_id=line.product_variant_id,
-                direction=StockDirectionEnum.out,
-                quantity=line.quantity,
-                note="Отгрузка по заказу",
-                order_id=order.id,
-                created_by=user.id,
-            )
+        movement = StockMovement(
+            company_id=order.company_id,
+            date=today,
+            warehouse_id=order.warehouse_id,
+            product_variant_id=line.product_variant_id,
+            direction=StockDirectionEnum.out,
+            quantity=line.quantity,
+            note="Отгрузка по заказу",
+            order_id=order.id,
+            created_by=user.id,
         )
+        db.add(movement)
+        shipped_movements.append(movement)
     order.status = OrderStatusEnum.shipped
     db.commit()
     db.refresh(order)
     log_action(db, user, action="order_shipped", entity_type="order", entity_id=order.id, company_id=order.company_id)
+
+    # Как и при создании движения напрямую (warehouse.py::create_movement) —
+    # отгрузка заказа тоже должна попасть в подключённые Google-таблицы;
+    # раньше этого не было (StockMovement создавался в обход build_movement),
+    # найдено по жалобе пользователя, что заказ не появился в таблице.
+    try:
+        from app.warehouse_sheets import push_movement_to_configured_tabs
+
+        for movement in shipped_movements:
+            push_movement_to_configured_tabs(db, movement)
+    except Exception:
+        pass
+
     return order
 
 

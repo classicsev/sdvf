@@ -880,12 +880,16 @@ class OrderCreateIn(BaseModel):
 
 class OrderUpdateIn(BaseModel):
     counterparty_id: Optional[str] = None
+    warehouse_id: Optional[str] = None
     requested_date: Optional[date] = None
     courier: Optional[str] = None
     note: Optional[str] = None
     incoterms: Optional[str] = None
     incoterms_place: Optional[str] = None
     payment_terms: Optional[str] = None
+    # None — не трогать состав; пустой список запрещён на уровне эндпоинта
+    # (заказ без позиций бессмысленен), явный список — полная замена состава.
+    lines: Optional[list[OrderLineIn]] = None
 
 
 class OrderOut(BaseModel):
