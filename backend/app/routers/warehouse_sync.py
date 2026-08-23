@@ -25,7 +25,7 @@ from app.schemas import (
     WarehouseSheetTabOut,
 )
 from app.routers.warehouse import compute_balances
-from app.warehouse_sheets import export_balances, store_credentials, sync_tab, update_ostatok_balance
+from app.warehouse_sheets import export_balances, store_credentials, sync_tab
 
 router = APIRouter(prefix="/warehouse/sheets", tags=["warehouse-sheets"])
 
@@ -230,10 +230,12 @@ def sync_all(
                 export_balances(db, conn, spreadsheet_id, conn.company_id)
             except Exception:
                 pass  # остатки — вторичный эффект, не должны валить весь синк движений
-            try:
-                update_ostatok_balance(db, conn, spreadsheet_id, conn.company_id)
-            except Exception:
-                pass  # аналогично — лист "ОСТАТОК"/"Месяц" не обязаны существовать везде
+            # update_ostatok_balance() отключено (2026-08-23) — пользователь прямо
+            # потребовал вернуть лист "ОСТАТОК" на живые формулы вместо периодически
+            # переписываемых приложением статичных чисел: реальная таблица должна
+            # оставаться источником истины и реагировать мгновенно на правки, а не
+            # раз в цикл синка. Функция оставлена в warehouse_sheets.py на случай,
+            # если к идее вернутся осознанно и по-другому — просто не вызывается.
 
         conn.last_sync_at = now
         db.add(conn)
