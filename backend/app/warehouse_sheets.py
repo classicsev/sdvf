@@ -516,6 +516,45 @@ def export_counterparties(db: Session, connection: WarehouseSheetConnection, spr
     ws.update(values, "A1")
 
 
+PERSONNEL_TAB_NAME = "Персонал"
+PERSONNEL_HEADER = ["Чистка", "Водолазы"]
+PERSONNEL_CLEANER_POSITIONS = ("Чистильщик", "Бригадир", "Ассистент")
+
+
+def export_personnel(db: Session, connection: WarehouseSheetConnection, spreadsheet_id: str, company_id: str) -> None:
+    """Аналог старой ручной вкладки "БАЗА" (столбцы "Чистка"/"Водолазы") —
+    подтягивается из справочника сотрудников приложения, а не ведётся руками.
+    Односторонне: правки самих сотрудников — в приложении, не в этой вкладке.
+    "Чистка" — только сотрудники с должностью Чистильщик/Бригадир/Ассистент
+    (от этого столбца зависит начисление ЗП, см. HANDOVER.md, "Чистил").
+    "Водолазы" — все активные сотрудники (широкий список: улов приписывается
+    водолазу, но это не завязано на зарплату, ошибиться в сторону "лишнего
+    имени" здесь не страшно)."""
+    gc = get_client(connection)
+    sh = gc.open_by_key(spreadsheet_id)
+    try:
+        ws = sh.worksheet(PERSONNEL_TAB_NAME)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=PERSONNEL_TAB_NAME, rows=200, cols=len(PERSONNEL_HEADER))
+
+    employees = (
+        db.query(Employee)
+        .filter(Employee.company_id == company_id, Employee.status == "active")
+        .order_by(Employee.full_name)
+        .all()
+    )
+    cleaners = [e.full_name for e in employees if e.position in PERSONNEL_CLEANER_POSITIONS]
+    divers = [e.full_name for e in employees if e.full_name]
+
+    rows = max(len(cleaners), len(divers))
+    values = [PERSONNEL_HEADER] + [
+        [cleaners[i] if i < len(cleaners) else "", divers[i] if i < len(divers) else ""]
+        for i in range(rows)
+    ]
+    ws.clear()
+    ws.update(values, "A1")
+
+
 MONTH_NAMES_RU = [
     "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
     "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",

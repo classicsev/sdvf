@@ -25,7 +25,7 @@ from app.schemas import (
     WarehouseSheetTabOut,
 )
 from app.routers.warehouse import compute_balances
-from app.warehouse_sheets import export_balances, export_counterparties, store_credentials, sync_tab
+from app.warehouse_sheets import export_balances, export_counterparties, export_personnel, store_credentials, sync_tab
 
 router = APIRouter(prefix="/warehouse/sheets", tags=["warehouse-sheets"])
 
@@ -234,6 +234,10 @@ def sync_all(
                 export_counterparties(db, conn, spreadsheet_id, conn.company_id)
             except Exception:
                 pass  # аналогично — список контрагентов вторичен относительно самого синка движений
+            try:
+                export_personnel(db, conn, spreadsheet_id, conn.company_id)
+            except Exception:
+                pass  # аналогично — список сотрудников (аналог "БАЗА") вторичен относительно самого синка движений
             # update_ostatok_balance() отключено (2026-08-23) — пользователь прямо
             # потребовал вернуть лист "ОСТАТОК" на живые формулы вместо периодически
             # переписываемых приложением статичных чисел: реальная таблица должна
