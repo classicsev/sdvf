@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from app.crypto import decrypt_field, encrypt_field
 from app.models import (
+    Counterparty,
     Employee,
     Product,
     ProductVariant,
@@ -482,6 +483,35 @@ def export_balances(db: Session, connection: WarehouseSheetConnection, spreadshe
         [b.warehouse_name, b.product_name, b.variant_name, b.quantity, b.reserved, b.available, now]
         for b in balances
     ]
+    ws.clear()
+    ws.update(values, "A1")
+
+
+CONTRAGENTS_TAB_NAME = "Контрагенты"
+CONTRAGENTS_HEADER = ["Название", "ИНН", "Обновлено"]
+
+
+def export_counterparties(db: Session, connection: WarehouseSheetConnection, spreadsheet_id: str, company_id: str) -> None:
+    """Список контрагентов из справочника приложения (уже синхронизирован с
+    СДВФ) — один раз в реальную таблицу, для выпадающих списков в листах
+    "Расход". Односторонне и только на чтение из приложения — правки в самом
+    списке контрагентов делаются в приложении, не в этой вкладке (см.
+    HANDOVER.md, 2026-08-23, "единая вкладка Приход/Расход")."""
+    gc = get_client(connection)
+    sh = gc.open_by_key(spreadsheet_id)
+    try:
+        ws = sh.worksheet(CONTRAGENTS_TAB_NAME)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=CONTRAGENTS_TAB_NAME, rows=1000, cols=len(CONTRAGENTS_HEADER))
+
+    counterparties = (
+        db.query(Counterparty)
+        .filter(Counterparty.company_id == company_id, Counterparty.is_active.is_(True))
+        .order_by(Counterparty.name)
+        .all()
+    )
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    values = [CONTRAGENTS_HEADER] + [[c.name, c.inn or "", now] for c in counterparties]
     ws.clear()
     ws.update(values, "A1")
 
