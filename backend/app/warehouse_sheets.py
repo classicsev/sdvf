@@ -177,6 +177,11 @@ class SyncOutcome:
         self.unresolved_warehouses: set[str] = set()
         self.marks: dict[int, str] = {}
         self.preview_rows: list[dict] = []
+        # Все реально созданные движения этого прохода — используется, чтобы
+        # тут же отдать их в push_movement_to_configured_tabs() и продублировать
+        # в универсальный лист "Движения" (единый непрерывный источник по всем
+        # видам сразу — основа для месячного фильтра поверх всей таблицы).
+        self.created_movements: list = []
 
     def as_result(self, tab: WarehouseSheetTab) -> dict:
         return {
@@ -241,6 +246,7 @@ def _process_movements_format(
         movement = build_movement(db, company_id, payload)
         db.flush()
         outcome.marks[i] = movement.id
+        outcome.created_movements.append(movement)
         outcome.imported += 1
 
     return outcome, last_row
@@ -323,6 +329,7 @@ def _process_wide_format(
             movement = build_movement(db, company_id, payload)
             db.flush()
             row_movement_ids.append(movement.id)
+            outcome.created_movements.append(movement)
             outcome.imported += 1
 
         if row_movement_ids and not dry_run:
@@ -373,6 +380,18 @@ def sync_tab(db: Session, connection: WarehouseSheetConnection, tab: WarehouseSh
     db.add(tab)
     db.commit()
 
+    # Легаси wide-листы (Имп++ и т.п.) сами по себе не дают единого
+    # непрерывного вида по всем видам сразу — дублируем каждое новое
+    # движение в универсальный лист "Движения" тем же путём, что и движения,
+    # созданные напрямую в приложении (см. push_movement_to_configured_tabs).
+    # Не для самого формата movements — там это уже родной путь синка.
+    if tab.format != WarehouseSheetTabFormat.movements and outcome.created_movements:
+        try:
+            for movement in outcome.created_movements:
+                push_movement_to_configured_tabs(db, movement)
+        except Exception:
+            pass
+
     return outcome.as_result(tab)
 
 
@@ -411,11 +430,15 @@ def export_movement_to_sheet(db: Session, connection: WarehouseSheetConnection, 
 
 
 def push_movement_to_configured_tabs(db: Session, movement) -> None:
-    """Вызывается из warehouse.py::create_movement сразу после того, как
-    движение создано ЧЕРЕЗ САМО ПРИЛОЖЕНИЕ (не через синк из таблицы!) —
-    иначе получился бы цикл: импортировали из листа → тут же отправили
-    обратно тем же движком. sync_tab() эту функцию никогда не вызывает,
-    поэтому цикла нет структурно, а не по случайности.
+    """Вызывается из warehouse.py::create_movement (движение создано через
+    само приложение) И из sync_tab() (движение только что импортировано из
+    легаси wide-листа) — во втором случае это специально сделано, чтобы
+    "Движения" стал единым непрерывным списком по всем видам сразу
+    (см. 2026-08-23, месячный фильтр поверх всей таблицы). Цикл здесь не
+    структурный запрет, а маркер: export_movement_to_sheet() сразу пишет
+    movement.id в колонку-маркер добавленной строки, поэтому при следующем
+    sync_tab() для самой "Движения" эта строка уже помечена и не
+    импортируется повторно (см. _process_movements_format::already_marked).
 
     Ошибка Google API здесь не должна ронять создание самой операции —
     операция уже сохранена в БД, отправка в таблицу вторичный эффект."""
