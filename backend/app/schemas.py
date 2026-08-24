@@ -38,6 +38,27 @@ class TransactionOut(TransactionBase):
     created_at: datetime
     created_by: Optional[str] = None
     external_ref: Optional[str] = None
+    transfer_pair_id: Optional[str] = None
+
+
+class TransferCreate(BaseModel):
+    """Перевод между своими же счетами (в т.ч. между разными компаниями
+    одного холдинга) — не доход и не расход, см. app/holding_transfers.py.
+    Валюта берётся из счёта списания; счёт зачисления должен быть в той же
+    валюте (кросс-валютные переводы пока не поддержаны — см. HANDOVER.md)."""
+
+    date_odds: date
+    date_opu: Optional[date] = None
+    from_account_id: str
+    to_account_id: str
+    amount: float
+    commission: float = 0
+    comment: Optional[str] = None
+
+
+class TransferOut(BaseModel):
+    expense: TransactionOut
+    income: TransactionOut
 
 
 class TransactionUpdate(BaseModel):

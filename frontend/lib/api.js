@@ -203,6 +203,8 @@ export const api = {
   updateTransaction: (token, id, payload) =>
     request(`/transactions/${id}`, { method: "PATCH", token, body: payload }),
   deleteTransaction: (token, id) => request(`/transactions/${id}`, { method: "DELETE", token }),
+  createTransfer: (token, payload) =>
+    request("/transactions/transfer", { method: "POST", token, body: payload }),
   closeMonth: (token, companyId, month) =>
     request("/transactions/close-month", { method: "POST", token, body: { company_id: companyId, month } }),
   batchDeleteTransactions: (token, transactionIds) =>

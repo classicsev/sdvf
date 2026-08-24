@@ -38,6 +38,8 @@ const EMPTY_FORM = {
   commission: "0",
   comment: "",
   bank_payment_purpose: "",
+  from_account_id: "",
+  to_account_id: "",
 };
 
 export default function Transactions() {
@@ -223,7 +225,15 @@ export default function Transactions() {
   function updateFormCompany(companyId) {
     setFormCompanyId(companyId);
     // Счёт/статья/проект/контрагент из прошлой компании могут не подойти к новой — сбрасываем.
-    setForm((prev) => ({ ...prev, account_id: "", category_id: "", project_id: "", counterparty_id: "" }));
+    setForm((prev) => ({
+      ...prev,
+      account_id: "",
+      category_id: "",
+      project_id: "",
+      counterparty_id: "",
+      from_account_id: "",
+      to_account_id: "",
+    }));
   }
 
   // Инлайн-создание статьи/проекта/контрагента прямо из выпадающего списка
@@ -247,11 +257,39 @@ export default function Transactions() {
     return created;
   }
 
+  async function handleTransferSubmit() {
+    if (form.from_account_id === form.to_account_id) {
+      throw new Error(t("tx.form.sameAccountError"));
+    }
+    await api.createTransfer(token, {
+      date_odds: form.date_odds,
+      date_opu: form.date_opu || null,
+      from_account_id: form.from_account_id,
+      to_account_id: form.to_account_id,
+      amount: Number(form.amount),
+      commission: Number(form.commission || 0),
+      comment: form.comment || null,
+    });
+    if (addAnother) {
+      setForm((prev) => ({ ...EMPTY_FORM, date_odds: prev.date_odds, type: "transfer" }));
+      setSaveConfirmMsg(t("tx.savedConfirm"));
+      setTimeout(() => setSaveConfirmMsg(""), 1500);
+    } else {
+      setModalOpen(false);
+    }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setFormError("");
     setSaving(true);
     try {
+      if (!editing && form.type === "transfer") {
+        await handleTransferSubmit();
+        reload();
+        setSelectedTransactionIds(new Set());
+        return;
+      }
       const payload = {
         date_odds: form.date_odds,
         date_opu: form.date_opu || null,
@@ -300,7 +338,8 @@ export default function Transactions() {
   }
 
   async function handleDelete(tx) {
-    if (!window.confirm(t("tx.deleteConfirm"))) return;
+    const confirmMsg = tx.transfer_pair_id ? t("tx.deleteConfirmTransfer") : t("tx.deleteConfirm");
+    if (!window.confirm(confirmMsg)) return;
     try {
       await api.deleteTransaction(token, tx.id);
       reload();
@@ -436,6 +475,14 @@ export default function Transactions() {
   const selectableCounterparties = selectable(counterparties, form.counterparty_id);
   const editableCompanies = companies.filter((m) => canEditTransactions(m.role));
   const showCompanyColumn = multiCompany && !filters.company;
+  // Перемещение — не привязано к одной выбранной в форме компании: счета
+  // списания/зачисления могут принадлежать РАЗНЫМ компаниям одного холдинга
+  // (см. app/holding_transfers.py на бэкенде), поэтому список счетов здесь —
+  // все доступные пользователю на редактирование, без фильтра по formCompanyId.
+  const isTransfer = !editing && form.type === "transfer";
+  const transferAccountOptions = (accounts || [])
+    .filter((a) => a.is_active !== false)
+    .map((a) => ({ id: a.id, name: `${a.name} (${a.currency})` }));
 
   return (
     <div className="fp-dash">
@@ -698,6 +745,11 @@ export default function Transactions() {
                     <td>
                       <span className={`fp-cat-dot ${tx.type}`} />
                       {cat?.name || "—"}
+                      {tx.transfer_pair_id && (
+                        <span className="fp-source-badge" title={t("tx.transferBadge")} style={{ marginLeft: 6 }}>
+                          🔁
+                        </span>
+                      )}
                     </td>
                     <td>{proj?.name || <span className="fp-muted">—</span>}</td>
                     <td>{cp?.name || <span className="fp-muted">—</span>}</td>
@@ -802,10 +854,19 @@ export default function Transactions() {
               >
                 {t("tx.expense")}
               </button>
+              {!editing && (
+                <button
+                  type="button"
+                  className={form.type === "transfer" ? "active transfer" : ""}
+                  onClick={() => updateField("type", "transfer")}
+                >
+                  {t("tx.transfer")}
+                </button>
+              )}
             </div>
 
             <form className="fp-form-grid" onSubmit={handleSubmit}>
-              {multiCompany && (
+              {multiCompany && !isTransfer && (
                 <label className="fp-span-2">
                   {t("tx.form.company")}
                   {editing ? (
@@ -842,66 +903,94 @@ export default function Transactions() {
                 {t("tx.form.dateOpu")}
                 <input type="date" value={form.date_opu} onChange={(e) => updateField("date_opu", e.target.value)} />
               </label>
-              <label>
-                {t("tx.form.account")}
-                <Combobox
-                  value={form.account_id}
-                  onChange={(val) => updateField("account_id", val)}
-                  options={selectableAccounts.map((a) => ({
-                    id: a.id,
-                    name: `${a.name} (${a.currency})${a.is_active === false ? t("tx.deactivatedSuffix") : ""}`
-                  }))}
-                  placeholder={t("tx.form.selectAccount")}
-                  required
-                />
-              </label>
 
-              <label>
-                {t("tx.form.category")}
-                <Combobox
-                  value={form.category_id}
-                  onChange={(val) => updateField("category_id", val)}
-                  options={filteredCategories.map((c) => ({
-                    id: c.id,
-                    name: `${c.name}${c.is_active === false ? t("tx.deactivatedSuffixF") : ""}`
-                  }))}
-                  placeholder={t("tx.form.selectCategory")}
-                  required
-                  onCreateNew={handleCreateCategory}
-                />
-              </label>
-              <label>
-                {t("tx.form.project")}
-                <Combobox
-                  value={form.project_id}
-                  onChange={(val) => updateField("project_id", val)}
-                  options={selectableProjects.map((p) => ({
-                    id: p.id,
-                    name: `${p.name}${p.is_active === false ? t("tx.deactivatedSuffix") : ""}`
-                  }))}
-                  placeholder={t("tx.form.notSpecified")}
-                  onCreateNew={handleCreateProject}
-                />
-              </label>
+              {isTransfer ? (
+                <>
+                  <label>
+                    {t("tx.form.fromAccount")}
+                    <Combobox
+                      value={form.from_account_id}
+                      onChange={(val) => updateField("from_account_id", val)}
+                      options={transferAccountOptions}
+                      placeholder={t("tx.form.selectFromAccount")}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t("tx.form.toAccount")}
+                    <Combobox
+                      value={form.to_account_id}
+                      onChange={(val) => updateField("to_account_id", val)}
+                      options={transferAccountOptions}
+                      placeholder={t("tx.form.selectToAccount")}
+                      required
+                    />
+                  </label>
+                </>
+              ) : (
+                <>
+                  <label>
+                    {t("tx.form.account")}
+                    <Combobox
+                      value={form.account_id}
+                      onChange={(val) => updateField("account_id", val)}
+                      options={selectableAccounts.map((a) => ({
+                        id: a.id,
+                        name: `${a.name} (${a.currency})${a.is_active === false ? t("tx.deactivatedSuffix") : ""}`
+                      }))}
+                      placeholder={t("tx.form.selectAccount")}
+                      required
+                    />
+                  </label>
 
-              <label>
-                {t("tx.form.counterparty")}
-                <Combobox
-                  value={form.counterparty_id}
-                  onChange={(val) => updateField("counterparty_id", val)}
-                  options={selectableCounterparties.map((c) => ({
-                    id: c.id,
-                    name: `${c.name}${c.is_active === false ? t("tx.deactivatedSuffix") : ""}`
-                  }))}
-                  placeholder={t("tx.form.notSpecified")}
-                  onCreateNew={handleCreateCounterparty}
-                />
-              </label>
+                  <label>
+                    {t("tx.form.category")}
+                    <Combobox
+                      value={form.category_id}
+                      onChange={(val) => updateField("category_id", val)}
+                      options={filteredCategories.map((c) => ({
+                        id: c.id,
+                        name: `${c.name}${c.is_active === false ? t("tx.deactivatedSuffixF") : ""}`
+                      }))}
+                      placeholder={t("tx.form.selectCategory")}
+                      required
+                      onCreateNew={handleCreateCategory}
+                    />
+                  </label>
+                  <label>
+                    {t("tx.form.project")}
+                    <Combobox
+                      value={form.project_id}
+                      onChange={(val) => updateField("project_id", val)}
+                      options={selectableProjects.map((p) => ({
+                        id: p.id,
+                        name: `${p.name}${p.is_active === false ? t("tx.deactivatedSuffix") : ""}`
+                      }))}
+                      placeholder={t("tx.form.notSpecified")}
+                      onCreateNew={handleCreateProject}
+                    />
+                  </label>
 
-              <label>
-                {t("tx.form.currency")}
-                <input value={form.currency} onChange={(e) => updateField("currency", e.target.value.toUpperCase())} />
-              </label>
+                  <label>
+                    {t("tx.form.counterparty")}
+                    <Combobox
+                      value={form.counterparty_id}
+                      onChange={(val) => updateField("counterparty_id", val)}
+                      options={selectableCounterparties.map((c) => ({
+                        id: c.id,
+                        name: `${c.name}${c.is_active === false ? t("tx.deactivatedSuffix") : ""}`
+                      }))}
+                      placeholder={t("tx.form.notSpecified")}
+                      onCreateNew={handleCreateCounterparty}
+                    />
+                  </label>
+
+                  <label>
+                    {t("tx.form.currency")}
+                    <input value={form.currency} onChange={(e) => updateField("currency", e.target.value.toUpperCase())} />
+                  </label>
+                </>
+              )}
 
               <label>
                 {t("tx.form.amount")}
@@ -923,14 +1012,16 @@ export default function Transactions() {
                 />
               </label>
 
-              <label className="fp-span-2">
-                {t("tx.form.bankPurpose")} {editing?.external_ref ? t("tx.form.fromBank") : t("tx.form.optional")}
-                <input
-                  value={form.bank_payment_purpose}
-                  onChange={(e) => updateField("bank_payment_purpose", e.target.value)}
-                  placeholder={t("tx.form.bankPurposePlaceholder")}
-                />
-              </label>
+              {!isTransfer && (
+                <label className="fp-span-2">
+                  {t("tx.form.bankPurpose")} {editing?.external_ref ? t("tx.form.fromBank") : t("tx.form.optional")}
+                  <input
+                    value={form.bank_payment_purpose}
+                    onChange={(e) => updateField("bank_payment_purpose", e.target.value)}
+                    placeholder={t("tx.form.bankPurposePlaceholder")}
+                  />
+                </label>
+              )}
 
               <label className="fp-span-2">
                 {t("tx.form.comment")}

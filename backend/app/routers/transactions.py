@@ -21,9 +21,10 @@ from app.auth import (
 from app.automation_engine import apply_rules
 from app.database import get_db
 from app.fx import convert_to_rub
-from app.models import Account, Category, Counterparty, Project, RoleEnum, Transaction, User
+from app.holding_transfers import get_or_create_internal_transfer_category
+from app.models import Account, Category, Counterparty, Project, RoleEnum, Transaction, TxTypeEnum, User
 from app.reference_scope import get_visible_or_404
-from app.schemas import CloseMonthIn, TransactionCreate, TransactionOut, TransactionUpdate, TransactionBatchDelete
+from app.schemas import CloseMonthIn, TransactionCreate, TransactionOut, TransactionUpdate, TransactionBatchDelete, TransferCreate, TransferOut
 from app.utils import get_or_404_accessible
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -191,6 +192,84 @@ def create_transaction(
     return tx
 
 
+@router.post(
+    "/transfer",
+    response_model=TransferOut,
+    dependencies=[Depends(require_module("finance"))],
+)
+def create_transfer(
+    payload: TransferCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Перевод между своими счетами (в т.ч. между двумя компаниями одного
+    холдинга) — деньги никуда не заработались и не потратились, просто
+    переложены из одного кармана в другой. Создаёт ДВЕ строки Transaction
+    (списание + зачисление) с уже существующими категориями
+    is_internal_transfer=True (см. app/holding_transfers.py — эти категории
+    исключены из П&Л/дашборда, но остаются в списке операций и в остатке
+    счёта), связанные друг с другом через transfer_pair_id."""
+    if payload.from_account_id == payload.to_account_id:
+        raise HTTPException(status_code=422, detail="Счёт списания и счёт зачисления должны различаться")
+
+    accessible = get_accessible_company_ids(db, user)
+    from_account = get_or_404_accessible(db, Account, payload.from_account_id, accessible, "Счёт списания не найден")
+    to_account = get_or_404_accessible(db, Account, payload.to_account_id, accessible, "Счёт зачисления не найден")
+    check_company_role(db, user, from_account.company_id, EDITORS)
+    check_company_role(db, user, to_account.company_id, EDITORS)
+
+    if from_account.currency != to_account.currency:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Счета в разных валютах ({from_account.currency} и {to_account.currency}) — перевод между ними пока не поддержан",
+        )
+
+    amount_rub = _convert_to_rub(db, from_account.currency, payload.amount, payload.date_odds)
+
+    expense_category = get_or_create_internal_transfer_category(db, TxTypeEnum.expense, from_account.company_id)
+    income_category = get_or_create_internal_transfer_category(db, TxTypeEnum.income, to_account.company_id)
+    db.commit()
+
+    expense_tx = Transaction(
+        company_id=from_account.company_id,
+        date_odds=payload.date_odds,
+        date_opu=payload.date_opu,
+        account_id=from_account.id,
+        category_id=expense_category.id,
+        type=TxTypeEnum.expense,
+        amount=payload.amount,
+        currency=from_account.currency,
+        amount_rub=amount_rub,
+        commission=payload.commission,
+        comment=payload.comment,
+        created_by=user.id,
+    )
+    income_tx = Transaction(
+        company_id=to_account.company_id,
+        date_odds=payload.date_odds,
+        date_opu=payload.date_opu,
+        account_id=to_account.id,
+        category_id=income_category.id,
+        type=TxTypeEnum.income,
+        amount=payload.amount,
+        currency=to_account.currency,
+        amount_rub=amount_rub,
+        comment=payload.comment,
+        created_by=user.id,
+    )
+    db.add(expense_tx)
+    db.add(income_tx)
+    db.flush()
+    expense_tx.transfer_pair_id = income_tx.id
+    income_tx.transfer_pair_id = expense_tx.id
+    db.commit()
+    db.refresh(expense_tx)
+    db.refresh(income_tx)
+    log_action(db, user, action="create", entity_type="transaction", entity_id=expense_tx.id, company_id=from_account.company_id)
+    log_action(db, user, action="create", entity_type="transaction", entity_id=income_tx.id, company_id=to_account.company_id)
+    return TransferOut(expense=expense_tx, income=income_tx)
+
+
 @router.patch(
     "/{transaction_id}",
     response_model=TransactionOut,
@@ -296,10 +375,24 @@ def delete_transaction(
     _check_can_edit(user, tx, role)
     tx_company_id = tx.company_id
 
+    # Часть "Перемещения" (см. create_transfer) — удаляем сразу обе стороны,
+    # иначе останется висячее списание/зачисление без пары, искажающее остаток
+    # только одного из двух счетов.
+    pair = None
+    if tx.transfer_pair_id:
+        pair = db.get(Transaction, tx.transfer_pair_id)
+        if pair:
+            check_company_role(db, user, pair.company_id, EDITORS)
+            _check_can_edit(user, pair, role)
+
     db.delete(tx)
+    if pair:
+        db.delete(pair)
     db.commit()
     log_action(db, user, action="delete", entity_type="transaction", entity_id=transaction_id, company_id=tx_company_id)
-    return {"deleted": True}
+    if pair:
+        log_action(db, user, action="delete", entity_type="transaction", entity_id=pair.id, company_id=pair.company_id)
+    return {"deleted": True, "paired_deleted": pair is not None}
 
 
 @router.delete(

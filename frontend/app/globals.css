@@ -12,6 +12,8 @@
   --accent-soft: #DCEAE4;
   --expense: #A8503F;
   --expense-soft: #F3E1DC;
+  --transfer: #4A6FA5;
+  --transfer-soft: #E1E8F3;
   --gold: #C9A227;
 }
 
@@ -239,6 +241,7 @@ html, body {
 }
 .fp-type-toggle button.active.income { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .fp-type-toggle button.active.expense { background: var(--expense-soft); border-color: var(--expense); color: var(--expense); }
+.fp-type-toggle button.active.transfer { background: var(--transfer-soft); border-color: var(--transfer); color: var(--transfer); }
 
 .fp-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
 .fp-form-grid label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--ink-soft); min-width: 0; }

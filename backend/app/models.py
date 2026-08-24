@@ -471,6 +471,11 @@ class Transaction(Base):
     # задним числом), только помечает "уже сопоставлено", чтобы не сопоставлять
     # повторно при следующем автозапуске после синка Т-Банка.
     jump_payment_id: Mapped[str] = mapped_column(String(50), nullable=True)
+    # Связывает две строки "Перемещения" (списание с одного счёта + зачисление
+    # на другой, см. POST /transactions/transfer) друг с другом — NULL у
+    # обычных операций. Обе строки уже несут категорию is_internal_transfer=True
+    # (см. app/holding_transfers.py), это поле только для парного удаления/UI.
+    transfer_pair_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=True)
 
     created_by: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
