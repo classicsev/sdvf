@@ -9,7 +9,18 @@ from app.auth import create_access_token, hash_password
 from app.config import settings
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, Category, Company, CompanyMember, Counterparty, Project, RoleEnum, TxTypeEnum, User
+from app.models import (
+    Account,
+    Category,
+    Company,
+    CompanyMember,
+    Counterparty,
+    Project,
+    ProjectGroup,
+    RoleEnum,
+    TxTypeEnum,
+    User,
+)
 
 TEST_DATABASE_URL = settings.database_url.rsplit("/", 1)[0] + "/finance_test_db"
 
@@ -148,12 +159,20 @@ def make_account(
     return account
 
 
-def make_project(db_session, name="Тестовый проект", company_id=None):
-    project = Project(company_id=company_id or _current_company_id, name=name)
+def make_project(db_session, name="Тестовый проект", company_id=None, group_id=None):
+    project = Project(company_id=company_id or _current_company_id, name=name, group_id=group_id)
     db_session.add(project)
     db_session.commit()
     db_session.refresh(project)
     return project
+
+
+def make_project_group(db_session, name="Тестовая группа проектов", company_id=None):
+    group = ProjectGroup(company_id=company_id or _current_company_id, name=name)
+    db_session.add(group)
+    db_session.commit()
+    db_session.refresh(group)
+    return group
 
 
 def make_counterparty(db_session, name="Тестовый контрагент", company_id=None):

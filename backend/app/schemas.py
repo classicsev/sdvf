@@ -173,6 +173,18 @@ class ProjectGroupOut(ProjectGroupIn):
     is_active: bool
 
 
+class ProjectBudgetLineIn(BaseModel):
+    category_id: str
+    amount: float
+
+
+class ProjectBudgetLineOut(ProjectBudgetLineIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+
+
 class AccountIn(BaseModel):
     name: str
     currency: str = "RUB"

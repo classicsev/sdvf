@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import Query as SAQuery
 
 from app.auth import get_current_user, require_module, require_roles, resolve_company_ids, scope_project_filter
 from app.database import get_db
@@ -17,6 +18,7 @@ from app.models import (
     PayrollAccrual,
     PayrollPayment,
     Project,
+    ProjectBudgetLine,
     RoleEnum,
     Transaction,
     TxTypeEnum,
@@ -595,48 +597,129 @@ def debt_report(
     ]
 
 
+def _method_confirmed_column(method: str):
+    """"accrual" (по умолчанию, П&Л) | "cash" (кассовый — для отдельного
+    проекта без активов/пассивов совпадает с денежным потоком, поэтому
+    отдельного 3-го варианта, в отличие от ПланФакта, нет — см. HANDOVER.md,
+    "Карточка проекта")."""
+    return Transaction.payment_confirmed if method == "cash" else Transaction.accrual_confirmed
+
+
+def _project_transactions_query(
+    db: Session,
+    company_ids: list[str],
+    method: str,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> SAQuery:
+    """Базовый запрос по операциям С проектом (project_id задан) — общий для
+    profitability_report (список) и project_detail (карточка одного
+    проекта), не дублировать SQL дважды."""
+    confirmed_col = _method_confirmed_column(method)
+    query = db.query(Transaction).filter(
+        Transaction.company_id.in_(company_ids),
+        Transaction.project_id.isnot(None),
+        confirmed_col.is_(True),
+    )
+    if date_from:
+        query = query.filter(Transaction.date_odds >= date_from)
+    if date_to:
+        query = query.filter(Transaction.date_odds <= date_to)
+    return query
+
+
+def _project_statuses(db: Session, company_ids: list[str], project_ids: list[str]) -> dict[str, str]:
+    """Плановый (нет ни одной оплаченной операции) / В работе (есть хоть
+    одна payment_confirmed=True — НЕЗАВИСИМО от того, каким методом сейчас
+    смотрят отчёт, статус — это факт оплаты, не переключается вместе с
+    методом расчёта прибыли) / Завершён (проект деактивирован —
+    is_active=False сильнее "в работе")."""
+    if not project_ids:
+        return {}
+    active_flags = dict(db.query(Project.id, Project.is_active).filter(Project.id.in_(project_ids)).all())
+    has_payment = {
+        pid
+        for (pid,) in db.query(Transaction.project_id)
+        .filter(
+            Transaction.company_id.in_(company_ids),
+            Transaction.project_id.in_(project_ids),
+            Transaction.payment_confirmed.is_(True),
+        )
+        .distinct()
+        .all()
+    }
+    statuses = {}
+    for pid in project_ids:
+        if not active_flags.get(pid, True):
+            statuses[pid] = "closed"
+        elif pid in has_payment:
+            statuses[pid] = "in_progress"
+        else:
+            statuses[pid] = "planned"
+    return statuses
+
+
 @router.get("/profitability", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
 def profitability_report(
     project: Optional[str] = None,
     company_id: Optional[str] = None,
+    method: str = "accrual",
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     company_ids = resolve_company_ids(db, user, company_id)
-    query = db.query(Transaction).filter(
-        Transaction.company_id.in_(company_ids),
-        Transaction.project_id.isnot(None),
-        Transaction.accrual_confirmed.is_(True),
-    )
-
     forced_project = scope_project_filter(user)
+
+    # Список проектов в скоупе показываем ВЕСЬ, даже без единой операции —
+    # раньше проект без движений молча исчезал из отчёта; теперь виден со
+    # статусом "Плановый" (см. _project_statuses), это и есть источник
+    # статусов/итоговых колонок для списка проектов в Reference.jsx.
+    projects_query = db.query(Project).filter(Project.company_id.in_(company_ids))
+    if forced_project:
+        projects_query = projects_query.filter(Project.id == forced_project)
+    elif project:
+        projects_query = projects_query.filter(Project.id == project)
+    projects = projects_query.all()
+    project_ids = [p.id for p in projects]
+
+    query = _project_transactions_query(db, company_ids, method, date_from, date_to)
     if forced_project:
         query = query.filter(Transaction.project_id == forced_project)
     elif project:
         query = query.filter(Transaction.project_id == project)
 
     rows = (
-        query.join(Project, Transaction.project_id == Project.id)
-        .with_entities(Project.id, Project.name, Transaction.type, func.sum(Transaction.amount_rub))
-        .group_by(Project.id, Project.name, Transaction.type)
+        query.with_entities(Transaction.project_id, Transaction.type, func.sum(Transaction.amount_rub))
+        .group_by(Transaction.project_id, Transaction.type)
         .all()
     )
-
     by_project: dict = {}
-    for project_id, name, tx_type, total in rows:
-        row = by_project.setdefault(
-            project_id, {"project_id": project_id, "project": name, "revenue": 0.0, "expense": 0.0}
-        )
+    for project_id, tx_type, total in rows:
+        row = by_project.setdefault(project_id, {"revenue": 0.0, "expense": 0.0})
         if tx_type == TxTypeEnum.income:
             row["revenue"] = float(total)
         else:
             row["expense"] = float(total)
 
+    statuses = _project_statuses(db, company_ids, project_ids)
+
     result = []
-    for row in by_project.values():
-        row["profit"] = row["revenue"] - row["expense"]
-        row["margin"] = row["profit"] / row["revenue"] if row["revenue"] else None
-        result.append(row)
+    for p in projects:
+        agg = by_project.get(p.id, {"revenue": 0.0, "expense": 0.0})
+        revenue, expense = agg["revenue"], agg["expense"]
+        result.append(
+            {
+                "project_id": p.id,
+                "project": p.name,
+                "revenue": revenue,
+                "expense": expense,
+                "profit": revenue - expense,
+                "margin": (revenue - expense) / revenue if revenue else None,
+                "status": statuses.get(p.id, "planned"),
+            }
+        )
 
     # Операции без проекта иначе исчезают из отчёта бесследно — добавляем
     # псевдо-строку "Нераспределено". Только когда not forced_project:
@@ -644,14 +727,18 @@ def profitability_report(
     # агрегат по ВСЕМ нераспределённым операциям компании ему показывать
     # нельзя — это утечка данных за пределы разрешённого проекта.
     if not forced_project:
+        confirmed_col = _method_confirmed_column(method)
+        unalloc_query = db.query(Transaction).filter(
+            Transaction.company_id.in_(company_ids),
+            Transaction.project_id.is_(None),
+            confirmed_col.is_(True),
+        )
+        if date_from:
+            unalloc_query = unalloc_query.filter(Transaction.date_odds >= date_from)
+        if date_to:
+            unalloc_query = unalloc_query.filter(Transaction.date_odds <= date_to)
         unalloc_rows = (
-            db.query(Transaction)
-            .filter(
-                Transaction.company_id.in_(company_ids),
-                Transaction.project_id.is_(None),
-                Transaction.accrual_confirmed.is_(True),
-            )
-            .with_entities(Transaction.type, func.sum(Transaction.amount_rub))
+            unalloc_query.with_entities(Transaction.type, func.sum(Transaction.amount_rub))
             .group_by(Transaction.type)
             .all()
         )
@@ -670,9 +757,141 @@ def profitability_report(
                     "expense": expense,
                     "profit": revenue - expense,
                     "margin": (revenue - expense) / revenue if revenue else None,
+                    "status": None,
                 }
             )
     return result
+
+
+@router.get("/projects/{project_id}/detail", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
+def project_detail(
+    project_id: str,
+    method: str = "accrual",
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    plan_source: str = "operations",
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Карточка проекта — см. HANDOVER.md, "Карточка проекта" (аналог
+    ПланФакта, но лучше: диапазон дат, который profitability_report так и
+    не научился принимать, тут есть с самого начала). Одна строка на
+    проект + помесячная разбивка + расходы по статьям + план (операции или
+    бюджет) — всё за один запрос, без похода на отдельную страницу П&Л."""
+    company_ids = resolve_company_ids(db, user, company_id)
+    forced_project = scope_project_filter(user)
+    if forced_project and forced_project != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Проект не найден")
+
+    project_obj = db.query(Project).filter(Project.id == project_id, Project.company_id.in_(company_ids)).first()
+    if project_obj is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Проект не найден")
+
+    query = _project_transactions_query(db, company_ids, method, date_from, date_to).filter(
+        Transaction.project_id == project_id
+    )
+
+    revenue = (
+        query.filter(Transaction.type == TxTypeEnum.income)
+        .with_entities(func.coalesce(func.sum(Transaction.amount_rub), 0))
+        .scalar()
+    )
+    expense = (
+        query.filter(Transaction.type == TxTypeEnum.expense)
+        .with_entities(func.coalesce(func.sum(Transaction.amount_rub), 0))
+        .scalar()
+    )
+    revenue, expense = float(revenue), float(expense)
+    profit = revenue - expense
+    margin = profit / revenue if revenue else None
+
+    date_range_row = (
+        db.query(func.min(Transaction.date_odds), func.max(Transaction.date_odds))
+        .filter(Transaction.project_id == project_id, Transaction.company_id.in_(company_ids))
+        .first()
+    )
+    date_range = {
+        "min": date_range_row[0].isoformat() if date_range_row and date_range_row[0] else None,
+        "max": date_range_row[1].isoformat() if date_range_row and date_range_row[1] else None,
+    }
+
+    month_label = func.to_char(Transaction.date_odds, "YYYY-MM").label("period")
+    month_rows = (
+        query.with_entities(month_label, Transaction.type, func.sum(Transaction.amount_rub))
+        .group_by(month_label, Transaction.type)
+        .order_by(month_label)
+        .all()
+    )
+    by_month_map: dict = {}
+    for period, tx_type, total in month_rows:
+        row = by_month_map.setdefault(period, {"period": period, "revenue": 0.0, "expense": 0.0})
+        if tx_type == TxTypeEnum.income:
+            row["revenue"] = float(total)
+        else:
+            row["expense"] = float(total)
+    by_month = list(by_month_map.values())
+
+    group_expr = func.coalesce(Category.group_name, Category.name)
+    category_rows = (
+        query.filter(Transaction.type == TxTypeEnum.expense)
+        .join(Category, Transaction.category_id == Category.id)
+        .with_entities(group_expr.label("category"), func.sum(Transaction.amount_rub))
+        .group_by(group_expr)
+        .order_by(func.sum(Transaction.amount_rub).desc())
+        .all()
+    )
+    by_category = [{"category": category, "amount": float(total)} for category, total in category_rows]
+
+    project_status = _project_statuses(db, company_ids, [project_id]).get(project_id, "planned")
+
+    plan = {"revenue": 0.0, "expense": 0.0}
+    if plan_source == "budget":
+        budget_rows = (
+            db.query(Category.type, func.sum(ProjectBudgetLine.amount))
+            .join(Category, ProjectBudgetLine.category_id == Category.id)
+            .filter(ProjectBudgetLine.project_id == project_id)
+            .group_by(Category.type)
+            .all()
+        )
+        for tx_type, total in budget_rows:
+            if tx_type == TxTypeEnum.income:
+                plan["revenue"] = float(total)
+            else:
+                plan["expense"] = float(total)
+    else:
+        # "Операции" — тот же приём, что уже используется в payment_calendar:
+        # план — это ещё не подтверждённые по начислению операции проекта.
+        plan_rows = (
+            db.query(Transaction.type, func.sum(Transaction.amount_rub))
+            .filter(
+                Transaction.company_id.in_(company_ids),
+                Transaction.project_id == project_id,
+                Transaction.accrual_confirmed.is_(False),
+            )
+            .group_by(Transaction.type)
+            .all()
+        )
+        for tx_type, total in plan_rows:
+            if tx_type == TxTypeEnum.income:
+                plan["revenue"] = float(total)
+            else:
+                plan["expense"] = float(total)
+
+    return {
+        "project_id": project_obj.id,
+        "project_name": project_obj.name,
+        "status": project_status,
+        "date_range": date_range,
+        "revenue": revenue,
+        "expense": expense,
+        "profit": profit,
+        "margin": margin,
+        "by_month": by_month,
+        "by_category": by_category,
+        "plan_source": plan_source,
+        "plan": plan,
+    }
 
 
 @router.get("/payment-calendar", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])

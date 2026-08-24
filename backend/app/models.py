@@ -224,6 +224,27 @@ class ProjectCompany(Base):
     company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"), primary_key=True)
 
 
+class ProjectBudgetLine(Base):
+    """Плановая сумма по статье внутри проекта (карточка проекта, "источник
+    плана: Бюджет") — плоский план без частоты/повторов, сильно проще
+    старой убранной модели Planning: одна цифра на (проект, статья), не
+    дата-привязанный ряд. Второй источник плана ("Операции") не хранит
+    ничего отдельно — это уже существующие неподтверждённые операции этого
+    проекта, см. GET /reports/projects/{id}/detail."""
+
+    __tablename__ = "project_budget_lines"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
+    project_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"))
+    category_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("categories.id"))
+    amount: Mapped[float] = mapped_column(Numeric(14, 2))
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "category_id", name="uq_project_budget_lines_project_category"),
+    )
+
+
 class Counterparty(Base):
     """Карточка контрагента-организации. Первична именно организация, контакты
     (физлица) подвязываются к ней — см. CounterpartyContact. Источник истины по

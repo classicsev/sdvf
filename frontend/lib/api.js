@@ -223,6 +223,8 @@ export const api = {
   balanceReport: (token, query) => request("/reports/balance", { token, query }),
   debtReport: (token, query) => request("/reports/debt", { token, query }),
   profitabilityReport: (token, query) => request("/reports/profitability", { token, query }),
+  projectDetail: (token, projectId, query) =>
+    request(`/reports/projects/${projectId}/detail`, { token, query }),
   paymentCalendar: (token, query) => request("/reports/payment-calendar", { token, query }),
 
   listCategories: (token, query) => request("/categories", { token, query }),
@@ -267,6 +269,12 @@ export const api = {
       token,
       body: { ids, company_ids: companyIds, is_global: isGlobal },
     }),
+
+  listProjectBudgetLines: (token, projectId) => request(`/projects/${projectId}/budget-lines`, { token }),
+  replaceProjectBudgetLines: (token, projectId, lines) =>
+    request(`/projects/${projectId}/budget-lines`, { method: "POST", token, body: lines }),
+  deleteProjectBudgetLine: (token, projectId, lineId) =>
+    request(`/projects/${projectId}/budget-lines/${lineId}`, { method: "DELETE", token }),
 
   listAccounts: (token, query) => request("/accounts", { token, query }),
   createAccount: (token, payload, companyId) =>

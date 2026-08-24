@@ -5,7 +5,9 @@ import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { fmt } from "../lib/format";
+import { canEditReference } from "../lib/roles";
 import { useTranslation } from "../lib/i18n";
+import ProjectCard from "./ProjectCard";
 
 const TAB_KEYS = ["cashflow", "pnl", "balance", "debt", "profitability", "calendar"];
 
@@ -267,11 +269,20 @@ function DebtTab({ token }) {
 
 function ProfitabilityTab({ token }) {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const canEdit = (user.companies || []).some((m) => canEditReference(m.role));
   const [companyId, setCompanyId] = useState("");
+  const [projectCardId, setProjectCardId] = useState(null);
   const { data, loading, error } = useResource(
     () => api.profitabilityReport(token, { company_id: companyId || undefined }),
     [token, companyId]
   );
+
+  if (projectCardId) {
+    return (
+      <ProjectCard token={token} projectId={projectCardId} onBack={() => setProjectCardId(null)} canEdit={canEdit} />
+    );
+  }
 
   return (
     <div>
@@ -296,7 +307,15 @@ function ProfitabilityTab({ token }) {
             <tbody>
               {(data || []).map((row) => (
                 <tr key={row.project_id || "unallocated"}>
-                  <td>{row.project}</td>
+                  <td>
+                    {row.project_id ? (
+                      <button type="button" className="fp-link-button" onClick={() => setProjectCardId(row.project_id)}>
+                        {row.project}
+                      </button>
+                    ) : (
+                      row.project
+                    )}
+                  </td>
                   <td className="right fp-mono fp-amount-income">{fmt(row.revenue, "RUB")}</td>
                   <td className="right fp-mono fp-amount-expense">{fmt(row.expense, "RUB")}</td>
                   <td className="right fp-mono">{fmt(row.profit, "RUB")}</td>

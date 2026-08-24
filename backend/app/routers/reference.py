@@ -34,6 +34,7 @@ from app.models import (
     PayrollPayment,
     Planning,
     Project,
+    ProjectBudgetLine,
     ProjectCompany,
     ProjectGroup,
     ProjectGroupCompany,
@@ -57,6 +58,8 @@ from app.schemas import (
     CounterpartySdvfLinkIn,
     CounterpartySyncResult,
     MoveCompanyIn,
+    ProjectBudgetLineIn,
+    ProjectBudgetLineOut,
     ProjectGroupIn,
     ProjectGroupOut,
     ProjectIn,
@@ -501,6 +504,86 @@ def bulk_visibility_projects(
             (CompanyMember, "project_id"),
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# Бюджет проекта (карточка проекта, "источник плана: Бюджет" — см.
+# HANDOVER.md "Карточка проекта"). Плоский план на статью, без дат/частоты.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/projects/{project_id}/budget-lines",
+    response_model=list[ProjectBudgetLineOut],
+    dependencies=[Depends(require_module("finance"))],
+)
+def list_project_budget_lines(
+    project_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    _get_or_404(db, user, Project, project_id)
+    return db.query(ProjectBudgetLine).filter(ProjectBudgetLine.project_id == project_id).all()
+
+
+@router.post(
+    "/projects/{project_id}/budget-lines",
+    response_model=list[ProjectBudgetLineOut],
+    dependencies=[Depends(require_module("finance"))],
+)
+def replace_project_budget_lines(
+    project_id: str,
+    payload: list[ProjectBudgetLineIn],
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Сохраняет весь список плановых строк сразу (upsert по category_id,
+    отсутствующие в payload строки удаляются) — фронту проще прислать
+    целиком отредактированную таблицу, чем городить точечные PATCH на
+    каждую строку."""
+    project = _get_or_404(db, user, Project, project_id)
+    check_company_role(db, user, project.company_id, ADMIN_ONLY)
+
+    existing = {
+        line.category_id: line
+        for line in db.query(ProjectBudgetLine).filter(ProjectBudgetLine.project_id == project_id).all()
+    }
+    seen_category_ids = set()
+    for item in payload:
+        seen_category_ids.add(item.category_id)
+        line = existing.get(item.category_id)
+        if line:
+            line.amount = item.amount
+        else:
+            db.add(
+                ProjectBudgetLine(
+                    company_id=project.company_id,
+                    project_id=project_id,
+                    category_id=item.category_id,
+                    amount=item.amount,
+                )
+            )
+    for category_id, line in existing.items():
+        if category_id not in seen_category_ids:
+            db.delete(line)
+    db.commit()
+    return db.query(ProjectBudgetLine).filter(ProjectBudgetLine.project_id == project_id).all()
+
+
+@router.delete("/projects/{project_id}/budget-lines/{line_id}", dependencies=[Depends(require_module("finance"))])
+def delete_project_budget_line(
+    project_id: str, line_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    project = _get_or_404(db, user, Project, project_id)
+    check_company_role(db, user, project.company_id, ADMIN_ONLY)
+    line = (
+        db.query(ProjectBudgetLine)
+        .filter(ProjectBudgetLine.id == line_id, ProjectBudgetLine.project_id == project_id)
+        .first()
+    )
+    if line is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Строка бюджета не найдена")
+    db.delete(line)
+    db.commit()
+    return {"deleted": True}
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,17 @@ import { fmt, fmtDate } from "../lib/format";
 import { canEditReference } from "../lib/roles";
 import { backdropClickProps } from "../lib/modalBackdrop";
 import Counterparties from "./Counterparties";
+import ProjectCard from "./ProjectCard";
 import { useTranslation } from "../lib/i18n";
+
+// Вычисляемый статус проекта (planned/in_progress/closed — см.
+// backend/app/routers/reports.py::_project_statuses) — не путать со
+// STATUS_COLUMN ниже (обычный вкл/выкл is_active, общий для всех вкладок).
+function renderProjectStatus(status, t) {
+  if (!status) return "—";
+  const variant = status === "in_progress" ? "ok" : status === "closed" ? "neutral" : "warn";
+  return <span className={`fp-status-badge ${variant}`}>{t(`reference.projects.status.${status}`)}</span>;
+}
 
 const STATUS_COLUMN = {
   key: "is_active",
@@ -75,7 +85,23 @@ const TABS = {
       { key: "name", labelKey: "reference.projects.name", type: "text", required: true },
       { key: "group_id", labelKey: "reference.projects.group", type: "select", optionsFrom: "projectGroups", allowEmpty: true },
     ],
-    columns: [{ key: "name", labelKey: "reports.project" }, STATUS_COLUMN],
+    columns: [
+      { key: "name", labelKey: "reports.project" },
+      {
+        key: "status",
+        labelKey: "reference.projects.projectStatus",
+        render: (v, row, t) => renderProjectStatus(v, t),
+      },
+      { key: "revenue", labelKey: "reports.revenue", render: (v) => (v == null ? "—" : fmt(v, "RUB")) },
+      { key: "expense", labelKey: "dashboard.table.expense", render: (v) => (v == null ? "—" : fmt(v, "RUB")) },
+      { key: "profit", labelKey: "reports.profit", render: (v) => (v == null ? "—" : fmt(v, "RUB")) },
+      {
+        key: "margin",
+        labelKey: "reports.margin",
+        render: (v) => (v === null || v === undefined ? "—" : `${(v * 100).toFixed(1)}%`),
+      },
+      STATUS_COLUMN,
+    ],
   },
   projectGroups: {
     labelKey: "reference.tab.projectGroups",
@@ -183,6 +209,13 @@ export default function Reference() {
     setTab("projects");
   }
 
+  // Клик по названию проекта открывает карточку проекта (см. ProjectCard.jsx)
+  // ВМЕСТО остального содержимого вкладки — как view: "operations"|"balances"
+  // в Transactions.jsx, не модалка (карточка с графиком/бюджетом/списком
+  // операций физически не влезает в .fp-modal, тот капнут на 480px).
+  // Сбрасывается при ручном переключении вкладок, как groupFilter.
+  const [projectCardId, setProjectCardId] = useState(null);
+
   useEffect(() => {
     function handleClickOutside(e) {
       if (companyPopoverRef.current && !companyPopoverRef.current.contains(e.target)) {
@@ -218,7 +251,26 @@ export default function Reference() {
   // Список проектов, отфильтрованный кликом по группе (см. openProjectsForGroup) —
   // фильтрация на клиенте, без отдельного запроса к бэкенду.
   const activeGroupName = groupFilter ? (projectGroups || []).find((g) => g.id === groupFilter)?.name : null;
-  const displayedItems = tab === "projects" && groupFilter ? (items || []).filter((p) => p.group_id === groupFilter) : items;
+
+  // Доходы/Расходы/Прибыль/Рентабельность/Статус на саму вкладку "Проекты" —
+  // отдельный запрос к уже существующему /reports/profitability, склеенный
+  // по project_id на клиенте (не раздувать сам /projects агрегацией, которая
+  // ему не свойственна). Статус — вычисляемый на бэкенде (см. HANDOVER.md,
+  // "Карточка проекта"): planned/in_progress/closed.
+  const { data: projectProfitability } = useResource(
+    () => (tab === "projects" ? api.profitabilityReport(token, {}) : Promise.resolve([])),
+    [token, tab]
+  );
+  const profitabilityByProject = Object.fromEntries(
+    (projectProfitability || []).filter((r) => r.project_id).map((r) => [r.project_id, r])
+  );
+
+  const groupFilteredItems =
+    tab === "projects" && groupFilter ? (items || []).filter((p) => p.group_id === groupFilter) : items;
+  const displayedItems =
+    tab === "projects"
+      ? (groupFilteredItems || []).map((p) => ({ ...p, ...profitabilityByProject[p.id] }))
+      : groupFilteredItems;
 
   // Автосинк банковских интеграций — только на вкладке Счетов, только для тех,
   // кто вообще может ими управлять. Бэкенд сам решает, не рано ли реально идти
@@ -484,6 +536,7 @@ export default function Reference() {
 
   function switchTab(key) {
     setGroupFilter("");
+    setProjectCardId(null);
     setTab(key);
   }
 
@@ -594,6 +647,20 @@ export default function Reference() {
       <div className="fp-dash">
         <div className="fp-tabs-row">{tabsRow}</div>
         <Counterparties />
+      </div>
+    );
+  }
+
+  if (tab === "projects" && projectCardId) {
+    return (
+      <div className="fp-dash">
+        <div className="fp-tabs-row">{tabsRow}</div>
+        <ProjectCard
+          token={token}
+          projectId={projectCardId}
+          onBack={() => setProjectCardId(null)}
+          canEdit={canEditAny}
+        />
       </div>
     );
   }
@@ -794,6 +861,17 @@ export default function Reference() {
                             {item.name}
                           </button>
                         </td>
+                      ) : tab === "projects" && c.key === "name" ? (
+                        <td key={c.key}>
+                          <button
+                            type="button"
+                            className="fp-link-button"
+                            onClick={() => setProjectCardId(item.id)}
+                            title={t("reference.projects.openCard")}
+                          >
+                            {item.name}
+                          </button>
+                        </td>
                       ) : (
                         <td key={c.key}>{c.render ? c.render(item[c.key], item, t) : item[c.key] || "—"}</td>
                       )
@@ -822,6 +900,20 @@ export default function Reference() {
               })}
             </tbody>
           </table>
+        )}
+        {tab === "projects" && (displayedItems || []).length > 0 && (
+          <div className="fp-table-totals-row">
+            <span>{t("reference.projects.totalsLabel", { count: displayedItems.length })}</span>
+            <span>
+              {t("reports.revenue")}: {fmt(displayedItems.reduce((s, p) => s + (p.revenue || 0), 0), "RUB")}
+            </span>
+            <span>
+              {t("dashboard.table.expense")}: {fmt(displayedItems.reduce((s, p) => s + (p.expense || 0), 0), "RUB")}
+            </span>
+            <span>
+              {t("reports.profit")}: {fmt(displayedItems.reduce((s, p) => s + (p.profit || 0), 0), "RUB")}
+            </span>
+          </div>
         )}
       </div>
 
