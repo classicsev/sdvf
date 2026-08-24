@@ -36,7 +36,12 @@ def reconcile_opening_balance(
                 )
             )
         )
-        .filter(Transaction.account_id == account.id, Transaction.date_odds <= resolved_as_of)
+        .filter(
+            Transaction.account_id == account.id,
+            Transaction.date_odds <= resolved_as_of,
+            Transaction.payment_confirmed.is_(True),
+            Transaction.reclass_pair_id.is_(None),
+        )
         .scalar()
     ) or Decimal("0")
 

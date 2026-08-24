@@ -94,10 +94,6 @@ export function canEditAutomation(role) {
   return role === "admin";
 }
 
-export function canEditPlanning(role) {
-  return role === "admin";
-}
-
 export function canEditWarehouse(role) {
   return role === "admin" || role === "warehouse_operator";
 }

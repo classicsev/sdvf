@@ -205,6 +205,8 @@ export const api = {
   deleteTransaction: (token, id) => request(`/transactions/${id}`, { method: "DELETE", token }),
   createTransfer: (token, payload) =>
     request("/transactions/transfer", { method: "POST", token, body: payload }),
+  createReclass: (token, payload, companyId) =>
+    request("/transactions/reclass", { method: "POST", token, body: payload, query: { company_id: companyId } }),
   closeMonth: (token, companyId, month) =>
     request("/transactions/close-month", { method: "POST", token, body: { company_id: companyId, month } }),
   batchDeleteTransactions: (token, transactionIds) =>
@@ -318,12 +320,6 @@ export const api = {
       token,
       query: { company_id: companyId, create_missing: createMissing },
     }),
-
-  listPlanning: (token, query) => request("/planning", { token, query }),
-  createPlanning: (token, payload, companyId) =>
-    request("/planning", { method: "POST", token, body: payload, query: { company_id: companyId } }),
-  updatePlanning: (token, id, payload) => request(`/planning/${id}`, { method: "PATCH", token, body: payload }),
-  deletePlanning: (token, id) => request(`/planning/${id}`, { method: "DELETE", token }),
 
   listEmployees: (token, query) => request("/payroll/employees", { token, query }),
   createEmployee: (token, payload, companyId) =>

@@ -15,7 +15,6 @@ from app.routers import (
     oauth,
     orders,
     payroll,
-    planning,
     production,
     reference,
     reports,
@@ -61,7 +60,6 @@ app.include_router(transactions.router)
 app.include_router(reports.router)
 app.include_router(payroll.router)
 app.include_router(reference.router)
-app.include_router(planning.router)
 app.include_router(automation.router)
 app.include_router(audit.router)
 app.include_router(api_keys.router)

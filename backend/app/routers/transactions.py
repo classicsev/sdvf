@@ -24,7 +24,17 @@ from app.fx import convert_to_rub
 from app.holding_transfers import get_or_create_internal_transfer_category
 from app.models import Account, Category, Counterparty, Project, RoleEnum, Transaction, TxTypeEnum, User
 from app.reference_scope import get_visible_or_404
-from app.schemas import CloseMonthIn, TransactionCreate, TransactionOut, TransactionUpdate, TransactionBatchDelete, TransferCreate, TransferOut
+from app.schemas import (
+    CloseMonthIn,
+    ReclassCreate,
+    ReclassOut,
+    TransactionCreate,
+    TransactionOut,
+    TransactionUpdate,
+    TransactionBatchDelete,
+    TransferCreate,
+    TransferOut,
+)
 from app.utils import get_or_404_accessible
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -242,6 +252,7 @@ def create_transfer(
         amount_rub=amount_rub,
         commission=payload.commission,
         comment=payload.comment,
+        payment_confirmed=payload.payment_confirmed,
         created_by=user.id,
     )
     income_tx = Transaction(
@@ -255,6 +266,7 @@ def create_transfer(
         currency=to_account.currency,
         amount_rub=amount_rub,
         comment=payload.comment,
+        payment_confirmed=payload.payment_confirmed,
         created_by=user.id,
     )
     db.add(expense_tx)
@@ -268,6 +280,82 @@ def create_transfer(
     log_action(db, user, action="create", entity_type="transaction", entity_id=expense_tx.id, company_id=from_account.company_id)
     log_action(db, user, action="create", entity_type="transaction", entity_id=income_tx.id, company_id=to_account.company_id)
     return TransferOut(expense=expense_tx, income=income_tx)
+
+
+@router.post(
+    "/reclass",
+    response_model=ReclassOut,
+    dependencies=[Depends(require_module("finance"))],
+)
+def create_reclass(
+    payload: ReclassCreate,
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Операция "Начисление" — перенос уже учтённой суммы с одной статьи на
+    другую БЕЗ движения денег (напр. расход по ошибке завели под одну
+    статью, нужно перенести на другую). Создаёт ДВЕ строки Transaction
+    ОДНОГО типа (income/income или expense/expense) с ПРОТИВОПОЛОЖНЫМ знаком
+    amount — одна гасит исходную статью, другая добавляет в целевую, в
+    сумме ноль (общий П&Л не меняется, меняется только разбивка по статьям).
+    Обе ноги исключены из остатка счёта через reclass_pair_id (см.
+    _account_balance/reconcile_opening_balance) — account_id указывается
+    только для отображения в списке операций."""
+    target = resolve_write_company_id(db, user, company_id, EDITORS)
+
+    if payload.from_category_id == payload.to_category_id:
+        raise HTTPException(status_code=422, detail="Статья списания и статья зачисления должны различаться")
+
+    get_or_404_accessible(db, Account, payload.account_id, [target], "Счёт не найден")
+    from_category = get_visible_or_404(db, Category, payload.from_category_id, [target], "Статья списания не найдена")
+    to_category = get_visible_or_404(db, Category, payload.to_category_id, [target], "Статья зачисления не найдена")
+
+    if from_category.type != to_category.type:
+        raise HTTPException(
+            status_code=422,
+            detail="Нельзя переносить сумму между статьями разного типа (доход/расход)",
+        )
+
+    amount_rub = _convert_to_rub(db, payload.currency, payload.amount, payload.date_odds)
+
+    from_leg = Transaction(
+        company_id=target,
+        date_odds=payload.date_odds,
+        date_opu=payload.date_opu,
+        account_id=payload.account_id,
+        category_id=from_category.id,
+        type=from_category.type,
+        amount=-payload.amount,
+        currency=payload.currency,
+        amount_rub=-amount_rub,
+        comment=payload.comment,
+        created_by=user.id,
+    )
+    to_leg = Transaction(
+        company_id=target,
+        date_odds=payload.date_odds,
+        date_opu=payload.date_opu,
+        account_id=payload.account_id,
+        category_id=to_category.id,
+        type=to_category.type,
+        amount=payload.amount,
+        currency=payload.currency,
+        amount_rub=amount_rub,
+        comment=payload.comment,
+        created_by=user.id,
+    )
+    db.add(from_leg)
+    db.add(to_leg)
+    db.flush()
+    from_leg.reclass_pair_id = to_leg.id
+    to_leg.reclass_pair_id = from_leg.id
+    db.commit()
+    db.refresh(from_leg)
+    db.refresh(to_leg)
+    log_action(db, user, action="create", entity_type="transaction", entity_id=from_leg.id, company_id=target)
+    log_action(db, user, action="create", entity_type="transaction", entity_id=to_leg.id, company_id=target)
+    return ReclassOut(from_leg=from_leg, to_leg=to_leg)
 
 
 @router.patch(
@@ -375,12 +463,13 @@ def delete_transaction(
     _check_can_edit(user, tx, role)
     tx_company_id = tx.company_id
 
-    # Часть "Перемещения" (см. create_transfer) — удаляем сразу обе стороны,
-    # иначе останется висячее списание/зачисление без пары, искажающее остаток
-    # только одного из двух счетов.
+    # Часть "Перемещения" (create_transfer) или "Начисления" (create_reclass)
+    # — удаляем сразу обе стороны, иначе останется висячая нога без пары,
+    # искажающая остаток счёта или разбивку по статьям.
+    pair_id = tx.transfer_pair_id or tx.reclass_pair_id
     pair = None
-    if tx.transfer_pair_id:
-        pair = db.get(Transaction, tx.transfer_pair_id)
+    if pair_id:
+        pair = db.get(Transaction, pair_id)
         if pair:
             check_company_role(db, user, pair.company_id, EDITORS)
             _check_can_edit(user, pair, role)

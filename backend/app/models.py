@@ -476,6 +476,22 @@ class Transaction(Base):
     # обычных операций. Обе строки уже несут категорию is_internal_transfer=True
     # (см. app/holding_transfers.py), это поле только для парного удаления/UI.
     transfer_pair_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=True)
+    # Связывает две строки "Начисления" — переноса суммы с одной статьи на
+    # другую БЕЗ движения денег (см. POST /transactions/reclass). В отличие
+    # от transfer_pair_id (там деньги реально двигались — эти строки ДОЛЖНЫ
+    # участвовать в остатке счёта), ноги reclass ИСКЛЮЧАЮТСЯ из остатка
+    # (см. _account_balance/reconcile_opening_balance) — какой account_id у
+    # них указан, значения для остатка не имеет.
+    reclass_pair_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=True)
+    # План/факт по двум независимым измерениям (см. HANDOVER.md, "План/факт
+    # (ПланФакт-стиль)"): payment_confirmed — деньги реально пришли/ушли со
+    # счёта (влияет на остаток и "кассовые" отчёты); accrual_confirmed —
+    # услуга/товар реально оказаны/отгружены (влияет на П&Л-отчёты). По
+    # умолчанию True — существующие и большинство новых операций сразу факт,
+    # снять галочку = операция остаётся плановой по этому измерению до
+    # подтверждения.
+    payment_confirmed: Mapped[bool] = mapped_column(Boolean, default=True)
+    accrual_confirmed: Mapped[bool] = mapped_column(Boolean, default=True)
 
     created_by: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -40,6 +40,10 @@ const EMPTY_FORM = {
   bank_payment_purpose: "",
   from_account_id: "",
   to_account_id: "",
+  from_category_id: "",
+  to_category_id: "",
+  payment_confirmed: true,
+  accrual_confirmed: true,
 };
 
 export default function Transactions() {
@@ -205,6 +209,12 @@ export default function Transactions() {
       commission: String(tx.commission || 0),
       comment: tx.comment || "",
       bank_payment_purpose: tx.bank_payment_purpose || "",
+      from_account_id: "",
+      to_account_id: "",
+      from_category_id: "",
+      to_category_id: "",
+      payment_confirmed: tx.payment_confirmed !== false,
+      accrual_confirmed: tx.accrual_confirmed !== false,
     });
     setFormCompanyId(tx.company_id || "");
     setFormError("");
@@ -233,6 +243,8 @@ export default function Transactions() {
       counterparty_id: "",
       from_account_id: "",
       to_account_id: "",
+      from_category_id: "",
+      to_category_id: "",
     }));
   }
 
@@ -269,9 +281,37 @@ export default function Transactions() {
       amount: Number(form.amount),
       commission: Number(form.commission || 0),
       comment: form.comment || null,
+      payment_confirmed: form.payment_confirmed,
     });
     if (addAnother) {
       setForm((prev) => ({ ...EMPTY_FORM, date_odds: prev.date_odds, type: "transfer" }));
+      setSaveConfirmMsg(t("tx.savedConfirm"));
+      setTimeout(() => setSaveConfirmMsg(""), 1500);
+    } else {
+      setModalOpen(false);
+    }
+  }
+
+  async function handleReclassSubmit() {
+    if (form.from_category_id === form.to_category_id) {
+      throw new Error(t("tx.form.sameCategoryError"));
+    }
+    await api.createReclass(
+      token,
+      {
+        date_odds: form.date_odds,
+        date_opu: form.date_opu || null,
+        account_id: form.account_id,
+        from_category_id: form.from_category_id,
+        to_category_id: form.to_category_id,
+        currency: form.currency,
+        amount: Number(form.amount),
+        comment: form.comment || null,
+      },
+      formCompanyId || undefined
+    );
+    if (addAnother) {
+      setForm((prev) => ({ ...EMPTY_FORM, date_odds: prev.date_odds, type: "reclass" }));
       setSaveConfirmMsg(t("tx.savedConfirm"));
       setTimeout(() => setSaveConfirmMsg(""), 1500);
     } else {
@@ -290,6 +330,12 @@ export default function Transactions() {
         setSelectedTransactionIds(new Set());
         return;
       }
+      if (!editing && form.type === "reclass") {
+        await handleReclassSubmit();
+        reload();
+        setSelectedTransactionIds(new Set());
+        return;
+      }
       const payload = {
         date_odds: form.date_odds,
         date_opu: form.date_opu || null,
@@ -303,6 +349,8 @@ export default function Transactions() {
         commission: Number(form.commission || 0),
         comment: form.comment || null,
         bank_payment_purpose: form.bank_payment_purpose || null,
+        payment_confirmed: form.payment_confirmed,
+        accrual_confirmed: form.accrual_confirmed,
       };
       if (editing) {
         await api.updateTransaction(token, editing.id, payload);
@@ -338,7 +386,7 @@ export default function Transactions() {
   }
 
   async function handleDelete(tx) {
-    const confirmMsg = tx.transfer_pair_id ? t("tx.deleteConfirmTransfer") : t("tx.deleteConfirm");
+    const confirmMsg = tx.transfer_pair_id || tx.reclass_pair_id ? t("tx.deleteConfirmTransfer") : t("tx.deleteConfirm");
     if (!window.confirm(confirmMsg)) return;
     try {
       await api.deleteTransaction(token, tx.id);
@@ -483,6 +531,18 @@ export default function Transactions() {
   const transferAccountOptions = (accounts || [])
     .filter((a) => a.is_active !== false)
     .map((a) => ({ id: a.id, name: `${a.name} (${a.currency})` }));
+
+  // Начисление — перенос суммы между статьями ОДНОЙ компании (не холдинга,
+  // в отличие от Перемещения — тут ничего не движется между юрлицами),
+  // поэтому категории/счёт берём из уже отфильтрованных по formCompanyId
+  // списков. "Статья зачисления" сужена под тип "статьи списания" — нельзя
+  // мешать доход/расход, иначе перенос не netится в ноль (см. бэкенд).
+  const isReclass = !editing && form.type === "reclass";
+  const reclassFromCategoryOptions = selectable(categories, form.from_category_id);
+  const reclassFromCategoryType = categories?.find((c) => c.id === form.from_category_id)?.type;
+  const reclassToCategoryOptions = selectable(categories, form.to_category_id).filter(
+    (c) => !reclassFromCategoryType || c.type === reclassFromCategoryType
+  );
 
   return (
     <div className="fp-dash">
@@ -750,6 +810,25 @@ export default function Transactions() {
                           🔁
                         </span>
                       )}
+                      {tx.reclass_pair_id && (
+                        <span className="fp-source-badge" title={t("tx.reclassBadge")} style={{ marginLeft: 6 }}>
+                          ↔️
+                        </span>
+                      )}
+                      {(tx.payment_confirmed === false || tx.accrual_confirmed === false) && (
+                        <span
+                          className="fp-source-badge plan"
+                          style={{ marginLeft: 6 }}
+                          title={[
+                            tx.payment_confirmed === false ? t("tx.form.confirmPayment") : null,
+                            tx.accrual_confirmed === false ? t("tx.form.confirmAccrual") : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" / ") + ` — ${t("tx.notConfirmedTitle")}`}
+                        >
+                          {t("tx.planBadge")}
+                        </span>
+                      )}
                     </td>
                     <td>{proj?.name || <span className="fp-muted">—</span>}</td>
                     <td>{cp?.name || <span className="fp-muted">—</span>}</td>
@@ -765,8 +844,9 @@ export default function Transactions() {
                       className={`right fp-mono fp-amount-${tx.type} fp-table-amount-col`}
                       style={{ right: canEdit ? 90 : 0 }}
                     >
-                      {tx.type === "expense" ? "-" : ""}
-                      {fmt(tx.amount, tx.currency)}
+                      {tx.reclass_pair_id ? "" : tx.type === "expense" ? "-" : ""}
+                      {fmt(tx.reclass_pair_id ? Math.abs(tx.amount) : tx.amount, tx.currency)}
+                      {tx.reclass_pair_id && tx.amount < 0 && " (−)"}
                       {tx.currency !== "RUB" && (
                         <div className="fp-sub-value">≈ {fmt(tx.amount_rub, "RUB")}</div>
                       )}
@@ -863,10 +943,19 @@ export default function Transactions() {
                   {t("tx.transfer")}
                 </button>
               )}
+              {!editing && (
+                <button
+                  type="button"
+                  className={form.type === "reclass" ? "active reclass" : ""}
+                  onClick={() => updateField("type", "reclass")}
+                >
+                  {t("tx.reclass")}
+                </button>
+              )}
             </div>
 
             <form className="fp-form-grid" onSubmit={handleSubmit}>
-              {multiCompany && !isTransfer && (
+              {multiCompany && !isTransfer && !isReclass && (
                 <label className="fp-span-2">
                   {t("tx.form.company")}
                   {editing ? (
@@ -925,6 +1014,52 @@ export default function Transactions() {
                       placeholder={t("tx.form.selectToAccount")}
                       required
                     />
+                  </label>
+                </>
+              ) : isReclass ? (
+                <>
+                  <label>
+                    {t("tx.form.account")} <span className="fp-muted">{t("tx.form.reclassAccountHint")}</span>
+                    <Combobox
+                      value={form.account_id}
+                      onChange={(val) => updateField("account_id", val)}
+                      options={selectableAccounts.map((a) => ({
+                        id: a.id,
+                        name: `${a.name} (${a.currency})${a.is_active === false ? t("tx.deactivatedSuffix") : ""}`
+                      }))}
+                      placeholder={t("tx.form.selectAccount")}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t("tx.form.fromCategory")}
+                    <Combobox
+                      value={form.from_category_id}
+                      onChange={(val) => updateField("from_category_id", val)}
+                      options={reclassFromCategoryOptions.map((c) => ({
+                        id: c.id,
+                        name: `${c.name}${c.is_active === false ? t("tx.deactivatedSuffixF") : ""}`
+                      }))}
+                      placeholder={t("tx.form.selectFromCategory")}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t("tx.form.toCategory")}
+                    <Combobox
+                      value={form.to_category_id}
+                      onChange={(val) => updateField("to_category_id", val)}
+                      options={reclassToCategoryOptions.map((c) => ({
+                        id: c.id,
+                        name: `${c.name}${c.is_active === false ? t("tx.deactivatedSuffixF") : ""}`
+                      }))}
+                      placeholder={t("tx.form.selectToCategory")}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t("tx.form.currency")}
+                    <input value={form.currency} onChange={(e) => updateField("currency", e.target.value.toUpperCase())} />
                   </label>
                 </>
               ) : (
@@ -1002,17 +1137,19 @@ export default function Transactions() {
                   onChange={(e) => updateField("amount", e.target.value)}
                 />
               </label>
-              <label>
-                {t("tx.form.commission")}
-                <input
-                  type="number"
-                  step="0.01"
-                  value={form.commission}
-                  onChange={(e) => updateField("commission", e.target.value)}
-                />
-              </label>
+              {!isReclass && (
+                <label>
+                  {t("tx.form.commission")}
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={form.commission}
+                    onChange={(e) => updateField("commission", e.target.value)}
+                  />
+                </label>
+              )}
 
-              {!isTransfer && (
+              {!isTransfer && !isReclass && (
                 <label className="fp-span-2">
                   {t("tx.form.bankPurpose")} {editing?.external_ref ? t("tx.form.fromBank") : t("tx.form.optional")}
                   <input
@@ -1031,6 +1168,29 @@ export default function Transactions() {
                   placeholder={t("tx.form.commentPlaceholder")}
                 />
               </label>
+
+              {!isReclass && (
+                <div className="fp-span-2" style={{ display: "flex", gap: 18 }}>
+                  <label className="fp-checkbox-row" style={{ margin: 0, padding: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={form.payment_confirmed}
+                      onChange={(e) => updateField("payment_confirmed", e.target.checked)}
+                    />
+                    {t("tx.form.confirmPayment")}
+                  </label>
+                  {!isTransfer && (
+                    <label className="fp-checkbox-row" style={{ margin: 0, padding: 0 }}>
+                      <input
+                        type="checkbox"
+                        checked={form.accrual_confirmed}
+                        onChange={(e) => updateField("accrual_confirmed", e.target.checked)}
+                      />
+                      {t("tx.form.confirmAccrual")}
+                    </label>
+                  )}
+                </div>
+              )}
 
               {formError && <div className="fp-form-error fp-span-2">{formError}</div>}
 

@@ -16,7 +16,6 @@ from app.models import (
     Counterparty,
     PayrollAccrual,
     PayrollPayment,
-    Planning,
     Project,
     RoleEnum,
     Transaction,
@@ -120,7 +119,12 @@ def _account_balance(db: Session, account: Account, as_of: date) -> Decimal:
                 )
             )
         )
-        .filter(Transaction.account_id == account.id, Transaction.date_odds <= as_of)
+        .filter(
+            Transaction.account_id == account.id,
+            Transaction.date_odds <= as_of,
+            Transaction.payment_confirmed.is_(True),
+            Transaction.reclass_pair_id.is_(None),
+        )
         .scalar()
     )
     return Decimal(str(account.opening_balance)) + (flow or Decimal("0"))
@@ -148,6 +152,7 @@ def _income_expense_for_range(
             Transaction.date_odds <= period_to,
             Category.is_financing.is_(False),
             Category.is_internal_transfer.is_(False),
+            Transaction.accrual_confirmed.is_(True),
         )
     )
     if forced_project:
@@ -320,48 +325,6 @@ def dashboard_summary(
     }
 
 
-def _expand_planning_occurrences(
-    entries: list[tuple], range_start: date, range_end: date
-) -> dict[date, Decimal]:
-    """entries — строки (Planning, Category.type) уже с джойном на категорию.
-    Раскрывает frequency (once/weekly/monthly) в конкретные даты внутри
-    [range_start, range_end], monthly — тот же день месяца, с обрезкой на
-    конец месяца короче (31 число в феврале -> 28/29)."""
-    by_day: dict[date, Decimal] = {}
-    for plan, category_type in entries:
-        signed = Decimal(str(plan.amount)) if category_type == TxTypeEnum.income else -Decimal(str(plan.amount))
-
-        if plan.frequency == "once":
-            if range_start <= plan.scheduled_date <= range_end:
-                by_day[plan.scheduled_date] = by_day.get(plan.scheduled_date, Decimal("0")) + signed
-            continue
-
-        if plan.frequency == "weekly":
-            occ = plan.scheduled_date
-            if occ < range_start:
-                occ = occ + timedelta(days=((range_start - occ).days // 7) * 7)
-                while occ < range_start:
-                    occ += timedelta(days=7)
-            while occ <= range_end:
-                by_day[occ] = by_day.get(occ, Decimal("0")) + signed
-                occ += timedelta(days=7)
-            continue
-
-        # monthly
-        year, month, day = plan.scheduled_date.year, plan.scheduled_date.month, plan.scheduled_date.day
-        occ = plan.scheduled_date
-        while occ <= range_end:
-            if occ >= range_start:
-                by_day[occ] = by_day.get(occ, Decimal("0")) + signed
-            month += 1
-            if month > 12:
-                month = 1
-                year += 1
-            occ = date(year, month, min(day, _month_end(year, month).day))
-
-    return by_day
-
-
 @router.get("/cashflow-forecast", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
 def cashflow_forecast(
     days: int = 30,
@@ -369,10 +332,11 @@ def cashflow_forecast(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Прогноз остатка на N дней вперёд по данным Планирования (аналог
-    короткого прогноза Xero, но на своих плановых записях, а не на датах
-    оплаты счетов — тех у нас в модели нет). Текущий факт-остаток + разворот
-    plan.frequency (once/weekly/monthly) по дням до сегодня+days."""
+    """Прогноз остатка на N дней вперёд — текущий факт-остаток + сумма ещё
+    не подтверждённых по оплате операций (payment_confirmed=False),
+    сгруппированная по дате оплаты. Источник плана — сами операции (см.
+    HANDOVER.md, "План/факт (ПланФакт-стиль)"), не отдельная сущность
+    Планирования (та заменена этим механизмом)."""
     days = max(1, min(days, 90))
     today = date.today()
     horizon_end = today + timedelta(days=days)
@@ -387,15 +351,24 @@ def cashflow_forecast(
             current_balance_rub += balance_rub
 
     forced_project = scope_project_filter(user)
-    plan_query = (
-        db.query(Planning, Category.type)
-        .join(Category, Planning.category_id == Category.id)
-        .filter(Planning.company_id.in_(company_ids), Planning.is_active.is_(True))
+    plan_query = db.query(
+        Transaction.date_odds,
+        func.sum(
+            case(
+                (Transaction.type == TxTypeEnum.income, Transaction.amount_rub),
+                else_=-Transaction.amount_rub,
+            )
+        ),
+    ).filter(
+        Transaction.company_id.in_(company_ids),
+        Transaction.payment_confirmed.is_(False),
+        Transaction.reclass_pair_id.is_(None),
+        Transaction.date_odds > today,
+        Transaction.date_odds <= horizon_end,
     )
     if forced_project:
-        plan_query = plan_query.filter(Planning.project_id == forced_project)
-
-    by_day = _expand_planning_occurrences(plan_query.all(), today + timedelta(days=1), horizon_end)
+        plan_query = plan_query.filter(Transaction.project_id == forced_project)
+    by_day = dict(plan_query.group_by(Transaction.date_odds).all())
 
     running = current_balance_rub
     series = [{"date": today.isoformat(), "planned_flow_rub": 0.0, "projected_balance_rub": float(running)}]
@@ -433,6 +406,7 @@ def cashflow_report(
             Transaction.company_id.in_(company_ids),
             Category.is_financing.is_(False),
             Category.is_internal_transfer.is_(False),
+            Transaction.payment_confirmed.is_(True),
         )
     )
     forced_project = scope_project_filter(user)
@@ -491,7 +465,10 @@ def pnl_report(
 
     company_ids = resolve_company_ids(db, user, company_id)
     query = db.query(Transaction).filter(
-        Transaction.company_id.in_(company_ids), Transaction.date_odds >= start, Transaction.date_odds <= end
+        Transaction.company_id.in_(company_ids),
+        Transaction.date_odds >= start,
+        Transaction.date_odds <= end,
+        Transaction.accrual_confirmed.is_(True),
     )
     forced_project = scope_project_filter(user)
     if forced_project:
@@ -583,8 +560,13 @@ def debt_report(
     # счетов/инвойсов, поэтому считаем чистый оборот по контрагенту
     # (income − expense в amount_rub) как показатель задолженности.
     company_ids = resolve_company_ids(db, user, company_id)
+    # accrual_confirmed (не payment_confirmed!) — долг создаётся самим фактом
+    # неоплаты, фильтровать по оплате означало бы прятать саму задолженность
+    # из отчёта. См. HANDOVER.md, "План/факт (ПланФакт-стиль)".
     query = db.query(Transaction).filter(
-        Transaction.company_id.in_(company_ids), Transaction.counterparty_id.isnot(None)
+        Transaction.company_id.in_(company_ids),
+        Transaction.counterparty_id.isnot(None),
+        Transaction.accrual_confirmed.is_(True),
     )
     forced_project = scope_project_filter(user)
     if forced_project:
@@ -622,7 +604,9 @@ def profitability_report(
 ):
     company_ids = resolve_company_ids(db, user, company_id)
     query = db.query(Transaction).filter(
-        Transaction.company_id.in_(company_ids), Transaction.project_id.isnot(None)
+        Transaction.company_id.in_(company_ids),
+        Transaction.project_id.isnot(None),
+        Transaction.accrual_confirmed.is_(True),
     )
 
     forced_project = scope_project_filter(user)
@@ -662,7 +646,11 @@ def profitability_report(
     if not forced_project:
         unalloc_rows = (
             db.query(Transaction)
-            .filter(Transaction.company_id.in_(company_ids), Transaction.project_id.is_(None))
+            .filter(
+                Transaction.company_id.in_(company_ids),
+                Transaction.project_id.is_(None),
+                Transaction.accrual_confirmed.is_(True),
+            )
             .with_entities(Transaction.type, func.sum(Transaction.amount_rub))
             .group_by(Transaction.type)
             .all()
@@ -708,14 +696,25 @@ def payment_calendar(
     forced_project = scope_project_filter(user)
     year_start, year_end = date(year, 1, 1), date(year, 12, 31)
 
-    plan_query = db.query(Planning).filter(
-        Planning.company_id.in_(company_ids), Planning.scheduled_date >= year_start, Planning.scheduled_date <= year_end
+    # "План" и "факт" — теперь одна и та же таблица Transaction, различаются
+    # только флагом accrual_confirmed (см. HANDOVER.md, "План/факт
+    # (ПланФакт-стиль)") — раньше план брался из отдельной сущности
+    # Планирования, та этим механизмом заменена.
+    plan_query = db.query(Transaction).filter(
+        Transaction.company_id.in_(company_ids),
+        Transaction.date_odds >= year_start,
+        Transaction.date_odds <= year_end,
+        Transaction.accrual_confirmed.is_(False),
+        Transaction.reclass_pair_id.is_(None),
     )
     fact_query = db.query(Transaction).filter(
-        Transaction.company_id.in_(company_ids), Transaction.date_odds >= year_start, Transaction.date_odds <= year_end
+        Transaction.company_id.in_(company_ids),
+        Transaction.date_odds >= year_start,
+        Transaction.date_odds <= year_end,
+        Transaction.accrual_confirmed.is_(True),
     )
     if forced_project:
-        plan_query = plan_query.filter(Planning.project_id == forced_project)
+        plan_query = plan_query.filter(Transaction.project_id == forced_project)
         fact_query = fact_query.filter(Transaction.project_id == forced_project)
 
     def _empty_quarters():
@@ -723,9 +722,10 @@ def payment_calendar(
 
     by_category: dict = {}
 
-    for plan in plan_query.all():
-        row = by_category.setdefault(plan.category_id, _empty_quarters())
-        row[_quarter_of(plan.scheduled_date)]["plan"] += float(plan.amount)
+    for tx in plan_query.all():
+        row = by_category.setdefault(tx.category_id, _empty_quarters())
+        signed = float(tx.amount_rub) if tx.type == TxTypeEnum.income else -float(tx.amount_rub)
+        row[_quarter_of(tx.date_odds)]["plan"] += signed
 
     for tx in fact_query.all():
         row = by_category.setdefault(tx.category_id, _empty_quarters())

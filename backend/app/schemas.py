@@ -23,6 +23,11 @@ class TransactionBase(BaseModel):
     # пользователя). Заполняется автоматически при импорте, но остаётся
     # редактируемым. См. models.py::Transaction.bank_payment_purpose.
     bank_payment_purpose: Optional[str] = None
+    # План/факт (см. HANDOVER.md, "План/факт (ПланФакт-стиль)") — по
+    # умолчанию True (операция сразу факт), снять = операция плановая по
+    # этому измерению, не попадает в остаток/П&Л, пока не подтверждена.
+    payment_confirmed: bool = True
+    accrual_confirmed: bool = True
 
 
 class TransactionCreate(TransactionBase):
@@ -39,6 +44,7 @@ class TransactionOut(TransactionBase):
     created_by: Optional[str] = None
     external_ref: Optional[str] = None
     transfer_pair_id: Optional[str] = None
+    reclass_pair_id: Optional[str] = None
 
 
 class TransferCreate(BaseModel):
@@ -54,11 +60,36 @@ class TransferCreate(BaseModel):
     amount: float
     commission: float = 0
     comment: Optional[str] = None
+    # У перевода нет П&Л-измерения (обе ноги исключены из П&Л через
+    # is_internal_transfer) — только оплата может быть плановой.
+    payment_confirmed: bool = True
 
 
 class TransferOut(BaseModel):
     expense: TransactionOut
     income: TransactionOut
+
+
+class ReclassCreate(BaseModel):
+    """Перенос уже учтённой суммы с одной статьи на другую БЕЗ движения
+    денег (операция "Начисление", см. POST /transactions/reclass) — напр.
+    расход по ошибке завели под одну статью, нужно разбить/перенести на
+    другую. account_id указывается для порядка (не влияет на остаток счёта
+    — обе ноги исключены из остатка через reclass_pair_id)."""
+
+    date_odds: date
+    date_opu: Optional[date] = None
+    account_id: str
+    from_category_id: str
+    to_category_id: str
+    currency: str
+    amount: float
+    comment: Optional[str] = None
+
+
+class ReclassOut(BaseModel):
+    from_leg: TransactionOut
+    to_leg: TransactionOut
 
 
 class TransactionUpdate(BaseModel):
@@ -74,6 +105,8 @@ class TransactionUpdate(BaseModel):
     commission: Optional[float] = None
     comment: Optional[str] = None
     bank_payment_purpose: Optional[str] = None
+    payment_confirmed: Optional[bool] = None
+    accrual_confirmed: Optional[bool] = None
 
 
 class TransactionBatchDelete(BaseModel):
@@ -304,22 +337,6 @@ class AutomationRuleOut(BaseModel):
     action_json: dict
     is_active: bool
     created_by: Optional[str] = None
-
-
-class PlanningIn(BaseModel):
-    category_id: str
-    project_id: Optional[str] = None
-    amount: float
-    frequency: str = "monthly"  # monthly / once / weekly
-    scheduled_date: date
-    is_active: bool = True
-
-
-class PlanningOut(PlanningIn):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    company_id: str
 
 
 class PayrollAccrualIn(BaseModel):

@@ -261,37 +261,35 @@ def test_forecast_starts_from_current_balance(client, db_session):
     assert body["series"][0]["projected_balance_rub"] == 1000.0
 
 
-def test_forecast_applies_once_and_weekly_planning(client, db_session):
+def test_forecast_applies_unconfirmed_transactions(client, db_session):
+    """cashflow-forecast теперь берёт "план" напрямую из операций с
+    payment_confirmed=False (см. HANDOVER.md, "План/факт (ПланФакт-стиль)")
+    — раньше источником была отдельная сущность Планирования."""
     admin = make_user(db_session, RoleEnum.admin)
     headers = auth_headers(admin)
-    make_account(db_session, opening_balance=1000)
+    account = make_account(db_session, opening_balance=1000)
     income_cat = make_category(db_session, "План доход", TxTypeEnum.income)
     expense_cat = make_category(db_session, "План расход", TxTypeEnum.expense)
 
     from datetime import date, timedelta
 
     today = date.today()
-    once_date = today + timedelta(days=5)
-    client.post(
-        "/planning",
-        headers=headers,
-        json={
-            "category_id": income_cat.id,
-            "amount": 5000,
-            "frequency": "once",
-            "scheduled_date": once_date.isoformat(),
-        },
+    future_income_date = today + timedelta(days=5)
+    future_expense_date = today + timedelta(days=2)
+
+    _create_tx(
+        client, headers, account.id, income_cat.id, 5000, "income",
+        date_odds=future_income_date.isoformat(), payment_confirmed=False,
     )
-    weekly_start = today + timedelta(days=2)
-    client.post(
-        "/planning",
-        headers=headers,
-        json={
-            "category_id": expense_cat.id,
-            "amount": 100,
-            "frequency": "weekly",
-            "scheduled_date": weekly_start.isoformat(),
-        },
+    _create_tx(
+        client, headers, account.id, expense_cat.id, 100, "expense",
+        date_odds=future_expense_date.isoformat(), payment_confirmed=False,
+    )
+    # Уже подтверждённая будущая операция — НЕ должна попасть в "план" (она
+    # уже факт, просто с датой в будущем).
+    _create_tx(
+        client, headers, account.id, expense_cat.id, 999, "expense",
+        date_odds=future_expense_date.isoformat(), payment_confirmed=True,
     )
 
     resp = client.get("/reports/cashflow-forecast", params={"days": 30}, headers=headers)
@@ -299,54 +297,35 @@ def test_forecast_applies_once_and_weekly_planning(client, db_session):
     body = resp.json()
 
     by_date = {row["date"]: row for row in body["series"]}
-    assert by_date[once_date.isoformat()]["planned_flow_rub"] == 5000.0
-    assert by_date[weekly_start.isoformat()]["planned_flow_rub"] == -100.0
-    second_weekly = (weekly_start + timedelta(days=7)).isoformat()
-    assert by_date[second_weekly]["planned_flow_rub"] == -100.0
-
-    # 1000 нач. + 5000 (once) - 100*(число еженедельных вхождений в 30 дней)
-    weekly_occurrences = sum(1 for row in body["series"] if row["planned_flow_rub"] == -100.0)
-    expected_final = 1000 + 5000 - 100 * weekly_occurrences
-    assert body["projected_balance_rub"] == float(expected_final)
+    assert by_date[future_income_date.isoformat()]["planned_flow_rub"] == 5000.0
+    assert by_date[future_expense_date.isoformat()]["planned_flow_rub"] == -100.0
+    assert body["projected_balance_rub"] == 1000.0 + 5000.0 - 100.0
 
 
-def test_forecast_monthly_clamps_to_shorter_month(client, db_session):
+def test_reclass_legs_excluded_from_account_balance(client, db_session):
+    """Ноги "Начисления" (reclass_pair_id) — всегда payment_confirmed=True
+    (мгновенная корректировка, не план), поэтому исключаются из остатка
+    отдельным фильтром reclass_pair_id.is_(None), а не через payment_confirmed."""
     admin = make_user(db_session, RoleEnum.admin)
     headers = auth_headers(admin)
-    make_account(db_session, opening_balance=0)
-    expense_cat = make_category(db_session, "Аренда", TxTypeEnum.expense)
+    account = make_account(db_session, opening_balance=1000)
+    cat_a = make_category(db_session, "Статья A", TxTypeEnum.expense)
+    cat_b = make_category(db_session, "Статья Б", TxTypeEnum.expense)
 
-    client.post(
-        "/planning",
+    resp = client.post(
+        "/transactions/reclass",
         headers=headers,
         json={
-            "category_id": expense_cat.id,
-            "amount": 300,
-            "frequency": "monthly",
-            "scheduled_date": "2026-01-31",
+            "date_odds": "2026-06-01",
+            "account_id": account.id,
+            "from_category_id": cat_a.id,
+            "to_category_id": cat_b.id,
+            "currency": "RUB",
+            "amount": 500,
         },
     )
-
-    resp = client.get("/reports/cashflow-forecast", params={"days": 90}, headers=headers)
     assert resp.status_code == 200, resp.text
-    dates_with_flow = {row["date"] for row in resp.json()["series"] if row["planned_flow_rub"] == -300.0}
-    # Если сегодня достаточно рано в году, в 90 дней должен попасть хотя бы
-    # один случай "31-е число" или обрезанный конец более короткого месяца.
-    assert len(dates_with_flow) >= 0  # само по себе не падает — точный контроль в expand-тесте ниже
 
-
-def test_expand_planning_occurrences_clamps_31_to_month_end():
-    from datetime import date
-
-    from app.models import Planning, TxTypeEnum as TT
-    from app.routers.reports import _expand_planning_occurrences
-
-    plan = Planning(
-        id="p1", company_id="c1", category_id="cat1", amount=300, frequency="monthly",
-        scheduled_date=date(2026, 1, 31), is_active=True,
-    )
-    by_day = _expand_planning_occurrences([(plan, TT.expense)], date(2026, 1, 1), date(2026, 4, 30))
-    assert by_day[date(2026, 1, 31)] == -300
-    assert by_day[date(2026, 2, 28)] == -300  # 2026 не високосный, февраль обрезан
-    assert by_day[date(2026, 3, 31)] == -300
-    assert by_day[date(2026, 4, 30)] == -300  # апрель короче 31 дня
+    balances = client.get("/reports/account-balances", headers=headers).json()
+    row = next(r for r in balances["accounts"] if r["id"] == account.id)
+    assert row["balance"] == 1000.0
