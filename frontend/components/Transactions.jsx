@@ -284,7 +284,8 @@ export default function Transactions() {
       payment_confirmed: form.payment_confirmed,
     });
     if (addAnother) {
-      setForm((prev) => ({ ...EMPTY_FORM, date_odds: prev.date_odds, type: "transfer" }));
+      // Те же параметры, что и в предыдущей операции — очищаем только сумму.
+      setForm((prev) => ({ ...prev, amount: "" }));
       setSaveConfirmMsg(t("tx.savedConfirm"));
       setTimeout(() => setSaveConfirmMsg(""), 1500);
     } else {
@@ -311,7 +312,8 @@ export default function Transactions() {
       formCompanyId || undefined
     );
     if (addAnother) {
-      setForm((prev) => ({ ...EMPTY_FORM, date_odds: prev.date_odds, type: "reclass" }));
+      // Те же параметры, что и в предыдущей операции — очищаем только сумму.
+      setForm((prev) => ({ ...prev, amount: "" }));
       setSaveConfirmMsg(t("tx.savedConfirm"));
       setTimeout(() => setSaveConfirmMsg(""), 1500);
     } else {
@@ -358,17 +360,8 @@ export default function Transactions() {
       } else {
         await api.createTransaction(token, payload, formCompanyId || undefined);
         if (addAnother) {
-          // Оставляем "контекст" (дату, счёт, проект, тип, валюту) — обычно
-          // повторяется у нескольких операций подряд, очищаем то, что
-          // специфично для конкретной операции.
-          setForm((prev) => ({
-            ...EMPTY_FORM,
-            date_odds: prev.date_odds,
-            account_id: prev.account_id,
-            project_id: prev.project_id,
-            type: prev.type,
-            currency: prev.currency,
-          }));
+          // Те же параметры, что и в предыдущей операции — очищаем только сумму.
+          setForm((prev) => ({ ...prev, amount: "" }));
           setSaveConfirmMsg(t("tx.savedConfirm"));
           setTimeout(() => setSaveConfirmMsg(""), 1500);
         } else {
@@ -1135,6 +1128,7 @@ export default function Transactions() {
                   required
                   value={form.amount}
                   onChange={(e) => updateField("amount", e.target.value)}
+                  onWheel={(e) => e.target.blur()}
                 />
               </label>
               {!isReclass && (
@@ -1145,6 +1139,7 @@ export default function Transactions() {
                     step="0.01"
                     value={form.commission}
                     onChange={(e) => updateField("commission", e.target.value)}
+                    onWheel={(e) => e.target.blur()}
                   />
                 </label>
               )}

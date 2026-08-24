@@ -264,6 +264,13 @@ html, body {
   padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
   width: 100%; min-width: 0;
 }
+/* Убраны стрелки-степпер у числовых полей (Сумма и т.п.) — колесо мыши над
+   ними при обычной прокрутке страницы незаметно меняло введённое число. */
+.fp-form-grid input[type="number"] { -moz-appearance: textfield; }
+.fp-form-grid input[type="number"]::-webkit-outer-spin-button,
+.fp-form-grid input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none; margin: 0;
+}
 
 /* Единый стиль фокуса вместо браузерного синего кольца. */
 input:focus-visible,
