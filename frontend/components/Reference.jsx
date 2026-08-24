@@ -173,6 +173,16 @@ export default function Reference() {
   const [companyPopoverOpen, setCompanyPopoverOpen] = useState(false);
   const companyPopoverRef = useRef(null);
 
+  // Клик по названию группы во вкладке "Группы проектов" переключает на
+  // вкладку "Проекты", отфильтрованную этой группой — НЕ открывает
+  // редактирование самой группы (для этого отдельная кнопка-карандаш).
+  // Сбрасывается при ручном переключении вкладок через switchTab().
+  const [groupFilter, setGroupFilter] = useState("");
+  function openProjectsForGroup(group) {
+    setGroupFilter(group.id);
+    setTab("projects");
+  }
+
   useEffect(() => {
     function handleClickOutside(e) {
       if (companyPopoverRef.current && !companyPopoverRef.current.contains(e.target)) {
@@ -204,6 +214,11 @@ export default function Reference() {
   // а не только когда открыта сама вкладка "Группы проектов".
   const { data: projectGroups } = useResource(() => api.listProjectGroups(token, {}), [token]);
   const dynamicOptions = { projectGroups: projectGroups || [] };
+
+  // Список проектов, отфильтрованный кликом по группе (см. openProjectsForGroup) —
+  // фильтрация на клиенте, без отдельного запроса к бэкенду.
+  const activeGroupName = groupFilter ? (projectGroups || []).find((g) => g.id === groupFilter)?.name : null;
+  const displayedItems = tab === "projects" && groupFilter ? (items || []).filter((p) => p.group_id === groupFilter) : items;
 
   // Автосинк банковских интеграций — только на вкладке Счетов, только для тех,
   // кто вообще может ими управлять. Бэкенд сам решает, не рано ли реально идти
@@ -390,7 +405,7 @@ export default function Reference() {
   }
 
   function toggleSelectAll() {
-    const selectableIds = (items || [])
+    const selectableIds = (displayedItems || [])
       .filter((i) => canEditReference(roleForCompany(i.company_id)))
       .map((i) => i.id);
     setSelectedIds((prev) => (prev.size === selectableIds.length ? new Set() : new Set(selectableIds)));
@@ -468,6 +483,7 @@ export default function Reference() {
   }
 
   function switchTab(key) {
+    setGroupFilter("");
     setTab(key);
   }
 
@@ -696,10 +712,19 @@ export default function Reference() {
       )}
       {error && <div className="fp-error-banner">{error}</div>}
 
+      {tab === "projects" && groupFilter && (
+        <div className="fp-panel" style={{ padding: "10px 14px", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+          {t("reference.projects.filteredByGroup", { name: activeGroupName || "" })}
+          <button type="button" className="fp-btn-tiny" onClick={() => setGroupFilter("")}>
+            <X size={12} /> {t("reference.projects.clearGroupFilter")}
+          </button>
+        </div>
+      )}
+
       <div className="fp-panel fp-table-panel">
         {loading ? (
           <div className="fp-loading">{t("common.loading")}</div>
-        ) : (items || []).length === 0 ? (
+        ) : (displayedItems || []).length === 0 ? (
           <div className="fp-empty">{t("reference.listEmpty")}</div>
         ) : (
           <table className="fp-table">
@@ -712,7 +737,7 @@ export default function Reference() {
                       checked={
                         selectedIds.size > 0 &&
                         selectedIds.size ===
-                          (items || []).filter((i) => canEditReference(roleForCompany(i.company_id))).length
+                          (displayedItems || []).filter((i) => canEditReference(roleForCompany(i.company_id))).length
                       }
                       onChange={toggleSelectAll}
                     />
@@ -726,7 +751,7 @@ export default function Reference() {
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => {
+              {displayedItems.map((item) => {
                 const canEditRow = canEditReference(roleForCompany(item.company_id));
                 return (
                   <tr key={item.id}>
@@ -757,9 +782,22 @@ export default function Reference() {
                         )}
                       </td>
                     )}
-                    {config.columns.map((c) => (
-                      <td key={c.key}>{c.render ? c.render(item[c.key], item, t) : item[c.key] || "—"}</td>
-                    ))}
+                    {config.columns.map((c) =>
+                      tab === "projectGroups" && c.key === "name" ? (
+                        <td key={c.key}>
+                          <button
+                            type="button"
+                            className="fp-link-button"
+                            onClick={() => openProjectsForGroup(item)}
+                            title={t("reference.projectGroups.openProjects")}
+                          >
+                            {item.name}
+                          </button>
+                        </td>
+                      ) : (
+                        <td key={c.key}>{c.render ? c.render(item[c.key], item, t) : item[c.key] || "—"}</td>
+                      )
+                    )}
                     <td className="fp-table-actions-col">
                       {canEditRow && (
                         <span className="fp-row-actions">
