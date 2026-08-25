@@ -662,6 +662,14 @@ class IntegrationSyncResult(BaseModel):
     skipped_unparseable: int = 0
 
 
+class IntegrationSyncErrorOut(BaseModel):
+    integration_id: str
+    provider: str
+    account_id: Optional[str] = None
+    account_name: Optional[str] = None
+    detail: str
+
+
 class IntegrationSyncAllResult(BaseModel):
     total_integrations: int
     processed: int
@@ -669,6 +677,9 @@ class IntegrationSyncAllResult(BaseModel):
     skipped_rate_limited: int
     errors: int
     results: list[IntegrationSyncResult]
+    # Что именно упало и почему — без этого "с ошибкой: N" при десятках
+    # счетов означает искать иголку в стоге сена (см. HANDOVER.md).
+    errors_detail: list[IntegrationSyncErrorOut] = []
     message: str
 
 

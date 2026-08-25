@@ -25,6 +25,15 @@ import { useTranslation } from "../lib/i18n";
 
 const RANGE_KEYS = ["today", "week", "month", "quarter", "year"];
 
+// Тот же провайдер, что Automation.jsx::PROVIDER_LABELS — для баннера
+// ошибок синка здесь, отдельно от справочника интеграций.
+const SYNC_PROVIDER_LABELS = {
+  tinkoff: "Т-Банк",
+  alfa: "Альфа-Банк",
+  amocrm: "amoCRM",
+  jump: "Jump.Finance",
+};
+
 function formatPeriodLabel(from, to) {
   if (!from || !to) return "";
   if (from === to) return fmtDate(from);
@@ -119,14 +128,19 @@ export default function Dashboard() {
   // рано ли реально идти в банк (integration.autosync_interval_minutes).
   const canEditAny = companies.some((m) => canEditReference(m.role));
   const [syncBanner, setSyncBanner] = useState("");
+  const [syncErrors, setSyncErrors] = useState([]);
   const [syncing, setSyncing] = useState(false);
 
   async function runIntegrationSync(force) {
     setSyncing(true);
-    if (force) setSyncBanner("");
+    if (force) {
+      setSyncBanner("");
+      setSyncErrors([]);
+    }
     try {
       const r = await api.syncAllIntegrations(token, companyFilter || undefined, force);
       if (force || r.processed > 0) setSyncBanner(r.message);
+      setSyncErrors(r.errors_detail || []);
       if (r.processed > 0) {
         reloadSummary();
         reloadCashflow();
@@ -195,6 +209,16 @@ export default function Dashboard() {
       {syncBanner && (
         <div className="fp-panel" style={{ padding: "10px 14px", fontSize: 13, marginBottom: 4 }}>
           {syncBanner}
+          {syncErrors.length > 0 && (
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: "var(--rust, #a8503f)" }}>
+              {syncErrors.map((e, i) => (
+                <li key={i}>
+                  {SYNC_PROVIDER_LABELS[e.provider] || e.provider}
+                  {e.account_name ? ` — ${t("tx.col.account")} «${e.account_name}»` : ""}: {e.detail}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 

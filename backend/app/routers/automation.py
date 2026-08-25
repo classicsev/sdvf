@@ -52,6 +52,7 @@ from app.schemas import (
     IntegrationConnectIn,
     IntegrationOut,
     IntegrationSyncAllResult,
+    IntegrationSyncErrorOut,
     IntegrationSyncIn,
     IntegrationSyncResult,
     JumpMatchResult,
@@ -474,6 +475,7 @@ def sync_all_integrations(
     skipped_rate_limited = 0
     errors = 0
     results: list[IntegrationSyncResult] = []
+    errors_detail: list[IntegrationSyncErrorOut] = []
     now = datetime.utcnow()
 
     for integration in integrations:
@@ -502,8 +504,17 @@ def sync_all_integrations(
             result = _sync_bank_integration(db, user, integration, account, date_from, None)
             results.append(result)
             processed += 1
-        except HTTPException:
+        except HTTPException as exc:
             errors += 1
+            errors_detail.append(
+                IntegrationSyncErrorOut(
+                    integration_id=integration.id,
+                    provider=integration.provider,
+                    account_id=account.id,
+                    account_name=account.name,
+                    detail=exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+                )
+            )
 
     total = len(integrations)
     message = (
@@ -518,6 +529,7 @@ def sync_all_integrations(
         skipped_rate_limited=skipped_rate_limited,
         errors=errors,
         results=results,
+        errors_detail=errors_detail,
         message=message,
     )
 

@@ -1,8 +1,11 @@
 from datetime import date, timedelta
 from decimal import Decimal
+from io import BytesIO
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import Query as SAQuery
@@ -803,6 +806,55 @@ def profitability_report(
                 }
             )
     return result
+
+
+_PROJECT_STATUS_LABELS_RU = {"planned": "Плановый", "in_progress": "В работе", "closed": "Завершён"}
+
+
+@router.get(
+    "/profitability/export.xlsx", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE]
+)
+def export_profitability_xlsx(
+    project: Optional[str] = None,
+    company_id: Optional[str] = None,
+    method: str = "accrual",
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Экспорт списка проектов с показателями (см. HANDOVER.md — пробел
+    из сравнения с ПланФактом) — та же логика, что profitability_report,
+    вызвана напрямую как функция, не дублируем SQL."""
+    rows = profitability_report(
+        project=project, company_id=company_id, method=method, date_from=date_from, date_to=date_to, db=db, user=user
+    )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Рентабельность"
+    ws.append(["Проект", "Статус", "Доходы", "Расходы", "Прибыль", "Рентабельность, %"])
+    for row in rows:
+        ws.append(
+            [
+                row["project"],
+                _PROJECT_STATUS_LABELS_RU.get(row["status"], "") if row["status"] else "",
+                row["revenue"],
+                row["expense"],
+                row["profit"],
+                round(row["margin"] * 100, 1) if row["margin"] is not None else None,
+            ]
+        )
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=profitability.xlsx"},
+    )
 
 
 @router.get("/projects/{project_id}/detail", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])

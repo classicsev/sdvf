@@ -454,6 +454,8 @@ export const api = {
     request(`/orders/${id}/generate-utd`, { method: "POST", token, body: payload }),
   openSdvfPdf: (token, id, doc) => openPdf(`/orders/${id}/sdvf-pdf`, { token, query: { doc } }),
 
+  exportProfitability: (token, query) => download("/reports/profitability/export.xlsx", { token, query }),
+
   listFixedAssets: (token, query) => request("/fixed-assets", { token, query }),
   createFixedAsset: (token, payload, companyId) =>
     request("/fixed-assets", { method: "POST", token, body: payload, query: { company_id: companyId } }),

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Plus, X, Pencil, Trash2, Tag, LayoutDashboard, Building2, Contact, Ban, RotateCcw, RefreshCw, Upload, ChevronDown, Archive } from "lucide-react";
+import { Plus, X, Pencil, Trash2, Tag, LayoutDashboard, Building2, Contact, Ban, RotateCcw, RefreshCw, Upload, Download, ChevronDown, Archive } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
@@ -39,6 +39,15 @@ const BANK_LABELS = {
   alfabank_business: "Альфа-Бизнес",
   vtb: "ВТБ",
   client_bank_1c: "1С:Клиент-Банк",
+};
+
+// Тот же провайдер, что Automation.jsx::PROVIDER_LABELS — для баннера
+// ошибок синка здесь, отдельно от справочника интеграций.
+const SYNC_PROVIDER_LABELS = {
+  tinkoff: "Т-Банк",
+  alfa: "Альфа-Банк",
+  amocrm: "amoCRM",
+  jump: "Jump.Finance",
 };
 
 const TABS = {
@@ -299,14 +308,19 @@ export default function Reference({ initialTab = "categories" }) {
   // в банк (integration.autosync_interval_minutes) — большинство таких вызовов
   // при обычной навигации мгновенно возвращают "пропущено по таймеру".
   const [syncBanner, setSyncBanner] = useState("");
+  const [syncErrors, setSyncErrors] = useState([]);
   const [syncing, setSyncing] = useState(false);
 
   async function runIntegrationSync(force) {
     setSyncing(true);
-    if (force) setSyncBanner("");
+    if (force) {
+      setSyncBanner("");
+      setSyncErrors([]);
+    }
     try {
       const r = await api.syncAllIntegrations(token, companyFilter || undefined, force);
       if (force || r.processed > 0) setSyncBanner(r.message);
+      setSyncErrors(r.errors_detail || []);
       if (r.processed > 0) reload();
     } catch (err) {
       if (force) setSyncBanner(err.message);
@@ -472,6 +486,22 @@ export default function Reference({ initialTab = "categories" }) {
   const [bulkGroupTargetId, setBulkGroupTargetId] = useState("");
   const [bulkGroupSaving, setBulkGroupSaving] = useState(false);
   const [bulkGroupError, setBulkGroupError] = useState("");
+
+  // Экспорт списка проектов в Excel (см. HANDOVER.md — пробел из сравнения
+  // с ПланФактом) — переиспользует текущий фильтр по группе/компаниям.
+  const [exportingProjects, setExportingProjects] = useState(false);
+  async function handleExportProjects() {
+    setExportingProjects(true);
+    try {
+      await api.exportProfitability(token, {
+        company_id: companyFilterIds.length === 1 ? companyFilterIds[0] : undefined,
+      });
+    } catch (err) {
+      window.alert(err.message);
+    } finally {
+      setExportingProjects(false);
+    }
+  }
 
   useEffect(() => {
     setSelectedIds(new Set());
@@ -827,6 +857,12 @@ export default function Reference({ initialTab = "categories" }) {
             <LayoutDashboard size={13} /> {t("reference.moveToGroup", { count: selectedIds.size })}
           </button>
         )}
+        {tab === "projects" && (
+          <button type="button" className="fp-btn-tiny" onClick={handleExportProjects} disabled={exportingProjects}>
+            <Download size={13} />{" "}
+            {exportingProjects ? t("reference.exporting") : t("reference.exportProjects")}
+          </button>
+        )}
         {supportsSelection && canEditAny && selectedIds.size > 0 && (
           <button type="button" className="fp-btn-tiny" onClick={handleBulkDelete} disabled={bulkDeleting}>
             <Trash2 size={13} />{" "}
@@ -843,6 +879,16 @@ export default function Reference({ initialTab = "categories" }) {
       {tab === "accounts" && syncBanner && (
         <div className="fp-panel" style={{ padding: "10px 14px", fontSize: 13 }}>
           {syncBanner}
+          {syncErrors.length > 0 && (
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: "var(--rust, #a8503f)" }}>
+              {syncErrors.map((e, i) => (
+                <li key={i}>
+                  {SYNC_PROVIDER_LABELS[e.provider] || e.provider}
+                  {e.account_name ? ` — ${t("tx.col.account")} «${e.account_name}»` : ""}: {e.detail}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
       {error && <div className="fp-error-banner">{error}</div>}
