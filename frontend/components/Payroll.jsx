@@ -9,6 +9,7 @@ import { fmt, fmtDate } from "../lib/format";
 import { canEditPayroll } from "../lib/roles";
 import { backdropClickProps } from "../lib/modalBackdrop";
 import { useTranslation } from "../lib/i18n";
+import AmountInput from "./AmountInput";
 
 function KpiCard({ label, value, tone, icon }) {
   return (
@@ -430,30 +431,15 @@ function AccrualsPanel({ token, employees, projects, accruals, reload, companyFi
               </label>
               <label>
                 {t("payroll.col.salary")}
-                <input
-                  type="number"
-                  step="0.01"
-                  value={form.salary}
-                  onChange={(e) => setForm((p) => ({ ...p, salary: e.target.value }))}
-                />
+                <AmountInput value={form.salary} onChange={(v) => setForm((p) => ({ ...p, salary: v }))} />
               </label>
               <label>
                 {t("payroll.col.bonus")}
-                <input
-                  type="number"
-                  step="0.01"
-                  value={form.bonus}
-                  onChange={(e) => setForm((p) => ({ ...p, bonus: e.target.value }))}
-                />
+                <AmountInput value={form.bonus} onChange={(v) => setForm((p) => ({ ...p, bonus: v }))} />
               </label>
               <label>
                 {t("payroll.col.deductions")}
-                <input
-                  type="number"
-                  step="0.01"
-                  value={form.deductions}
-                  onChange={(e) => setForm((p) => ({ ...p, deductions: e.target.value }))}
-                />
+                <AmountInput value={form.deductions} onChange={(v) => setForm((p) => ({ ...p, deductions: v }))} />
               </label>
               {error && <div className="fp-form-error fp-span-2">{error}</div>}
               <div className="fp-modal-foot fp-span-2">
@@ -657,13 +643,7 @@ function PaymentsPanel({ token, employees, accounts, accruals, payments, reload,
               </label>
               <label>
                 {t("payroll.col.amount")}
-                <input
-                  type="number"
-                  step="0.01"
-                  required
-                  value={form.amount}
-                  onChange={(e) => setForm((p) => ({ ...p, amount: e.target.value }))}
-                />
+                <AmountInput required value={form.amount} onChange={(v) => setForm((p) => ({ ...p, amount: v }))} />
               </label>
               {error && <div className="fp-form-error fp-span-2">{error}</div>}
               <div className="fp-modal-foot fp-span-2">

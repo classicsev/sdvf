@@ -8,6 +8,7 @@ import { useResource } from "../lib/useResource";
 import { fmt, fmtDate } from "../lib/format";
 import { canEditTransactions } from "../lib/roles";
 import { Combobox } from "./Combobox";
+import AmountInput from "./AmountInput";
 import { backdropClickProps } from "../lib/modalBackdrop";
 import { useTranslation } from "../lib/i18n";
 
@@ -1122,25 +1123,12 @@ export default function Transactions() {
 
               <label>
                 {t("tx.form.amount")}
-                <input
-                  type="number"
-                  step="0.01"
-                  required
-                  value={form.amount}
-                  onChange={(e) => updateField("amount", e.target.value)}
-                  onWheel={(e) => e.target.blur()}
-                />
+                <AmountInput required value={form.amount} onChange={(v) => updateField("amount", v)} />
               </label>
               {!isReclass && (
                 <label>
                   {t("tx.form.commission")}
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={form.commission}
-                    onChange={(e) => updateField("commission", e.target.value)}
-                    onWheel={(e) => e.target.blur()}
-                  />
+                  <AmountInput value={form.commission} onChange={(v) => updateField("commission", v)} />
                 </label>
               )}
 

@@ -15,6 +15,7 @@ import {
   ToggleLeft,
   UserCircle,
   Languages,
+  Briefcase,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
@@ -39,6 +40,7 @@ const NAV_ITEMS = [
   { key: "payroll", icon: Users },
   { key: "reports", icon: Landmark },
   { key: "automation", icon: Zap },
+  { key: "projects", icon: Briefcase },
   { key: "reference", icon: Settings },
   { key: "audit", icon: History },
   { key: "users", icon: Users },
@@ -47,12 +49,21 @@ const NAV_ITEMS = [
   { key: "modules", icon: ToggleLeft },
 ];
 
+// Тот же компонент, что вкладка "Проекты" в Справочниках — отдельная точка
+// входа слева продублирует её (см. решение пользователя 2026-08-25: не
+// убирать из Справочников, просто добавить второй вход), не отдельная
+// реализация.
+function ProjectsView() {
+  return <Reference initialTab="projects" />;
+}
+
 const VIEW_COMPONENTS = {
   dashboard: Dashboard,
   transactions: Transactions,
   payroll: Payroll,
   reports: Reports,
   automation: Automation,
+  projects: ProjectsView,
   reference: Reference,
   audit: Audit,
   users: UsersView,

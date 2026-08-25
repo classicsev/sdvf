@@ -17,6 +17,7 @@ import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
 import { fmt, fmtDate } from "../lib/format";
 import { Combobox } from "./Combobox";
+import AmountInput from "./AmountInput";
 import { useTranslation } from "../lib/i18n";
 
 // Карточка проекта — см. HANDOVER.md "Карточка проекта" (сделано по образцу
@@ -297,13 +298,10 @@ export default function ProjectCard({ token, projectId, onBack, canEdit }) {
                       placeholder={t("tx.form.selectCategory")}
                     />
                   </div>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <AmountInput
                     style={{ width: 120 }}
                     value={row.amount}
-                    onChange={(e) => updateBudgetRow(i, "amount", e.target.value)}
-                    onWheel={(ev) => ev.target.blur()}
+                    onChange={(v) => updateBudgetRow(i, "amount", v)}
                   />
                   {canEdit && (
                     <button type="button" className="fp-icon-btn" onClick={() => removeBudgetRow(i)}>

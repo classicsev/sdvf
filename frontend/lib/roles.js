@@ -45,16 +45,17 @@ export const ROLE_NAV = {
     "payroll",
     "reports",
     "automation",
+    "projects",
     "reference",
     "audit",
     "users",
     "api-keys",
     "warehouse",
   ],
-  operator: ["dashboard", "transactions", "reports", "reference"],
+  operator: ["dashboard", "transactions", "reports", "projects", "reference"],
   payroll_operator: ["payroll", "audit"],
   project_manager: ["dashboard", "transactions", "reports"],
-  viewer: ["dashboard", "transactions", "payroll", "reports", "reference", "warehouse"],
+  viewer: ["dashboard", "transactions", "payroll", "reports", "projects", "reference", "warehouse"],
   warehouse_operator: ["warehouse"],
 };
 
@@ -67,6 +68,7 @@ export const NAV_MODULE = {
   payroll: "finance",
   reports: "finance",
   automation: "finance",
+  projects: "finance",
   reference: "finance",
   warehouse: "warehouse",
   // audit, users, api-keys, modules — без модуль-гейта, доступны независимо от тарифа

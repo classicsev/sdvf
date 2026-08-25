@@ -10,6 +10,7 @@ import { canEditReference } from "../lib/roles";
 import { backdropClickProps } from "../lib/modalBackdrop";
 import Counterparties from "./Counterparties";
 import ProjectCard from "./ProjectCard";
+import AmountInput from "./AmountInput";
 import { useTranslation } from "../lib/i18n";
 
 // Вычисляемый статус проекта (planned/in_progress/closed — см.
@@ -167,7 +168,7 @@ function defaultFormFor(fields) {
   return form;
 }
 
-export default function Reference() {
+export default function Reference({ initialTab = "categories" }) {
   const { token, user } = useAuth();
   const { t } = useTranslation();
   const companies = user.companies || [];
@@ -175,7 +176,7 @@ export default function Reference() {
   const roleForCompany = (companyId) => companies.find((m) => m.company.id === companyId)?.role;
   const canEditAny = companies.some((m) => canEditReference(m.role));
 
-  const [tab, setTab] = useState("categories");
+  const [tab, setTab] = useState(initialTab);
   // Для вкладки контрагентов generic-конфига нет — она рендерится отдельным
   // компонентом ниже; TABS.categories тут только чтобы хуки ниже не падали.
   const config = TABS[tab] || TABS.categories;
@@ -443,6 +444,14 @@ export default function Reference() {
   const [bulkError, setBulkError] = useState("");
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
+  // Массовый перенос выбранных проектов в другую группу (или без группы) —
+  // тот же паттерн выбора строк, что и распределение по компаниям выше,
+  // просто целевое поле не company_id, а group_id.
+  const [bulkGroupModalOpen, setBulkGroupModalOpen] = useState(false);
+  const [bulkGroupTargetId, setBulkGroupTargetId] = useState("");
+  const [bulkGroupSaving, setBulkGroupSaving] = useState(false);
+  const [bulkGroupError, setBulkGroupError] = useState("");
+
   useEffect(() => {
     setSelectedIds(new Set());
   }, [tab, companyFilter, companyFilterIds.join(","), ownOnly, matchMode]);
@@ -492,6 +501,39 @@ export default function Reference() {
       setBulkError(err.message);
     } finally {
       setBulkSaving(false);
+    }
+  }
+
+  function openBulkGroupModal() {
+    setBulkGroupTargetId("");
+    setBulkGroupError("");
+    setBulkGroupModalOpen(true);
+  }
+
+  async function handleBulkGroupApply() {
+    setBulkGroupSaving(true);
+    setBulkGroupError("");
+    try {
+      const ids = Array.from(selectedIds);
+      const results = await Promise.allSettled(
+        ids.map((id) => {
+          const item = items.find((i) => i.id === id);
+          const payload = Object.fromEntries(config.fields.map((f) => [f.key, item[f.key]]));
+          payload.group_id = bulkGroupTargetId || "";
+          return config.update(token, id, payload);
+        })
+      );
+      const failed = results.filter((r) => r.status === "rejected").length;
+      setBulkGroupModalOpen(false);
+      setSelectedIds(new Set());
+      reload();
+      if (failed > 0) {
+        window.alert(t("reference.bulkGroupFailedPart", { count: failed }));
+      }
+    } catch (err) {
+      setBulkGroupError(err.message);
+    } finally {
+      setBulkGroupSaving(false);
     }
   }
 
@@ -759,6 +801,11 @@ export default function Reference() {
             <Building2 size={13} /> {t("reference.distributeByCompanies", { count: selectedIds.size })}
           </button>
         )}
+        {tab === "projects" && canEditAny && selectedIds.size > 0 && (
+          <button type="button" className="fp-btn-tiny" onClick={openBulkGroupModal}>
+            <LayoutDashboard size={13} /> {t("reference.moveToGroup", { count: selectedIds.size })}
+          </button>
+        )}
         {supportsSelection && canEditAny && selectedIds.size > 0 && (
           <button type="button" className="fp-btn-tiny" onClick={handleBulkDelete} disabled={bulkDeleting}>
             <Trash2 size={13} />{" "}
@@ -983,16 +1030,21 @@ export default function Reference() {
                         </option>
                       ))}
                     </select>
-                  ) : (
-                    <input
-                      type={f.type === "number" ? "number" : "text"}
-                      step={f.type === "number" ? "0.01" : undefined}
+                  ) : f.type === "number" ? (
+                    <AmountInput
                       required={f.required}
                       value={form[f.key]}
-                      onChange={(e) => {
-                        setForm((p) => ({ ...p, [f.key]: e.target.value }));
+                      onChange={(v) => {
+                        setForm((p) => ({ ...p, [f.key]: v }));
                         if (f.key === "opening_balance") setStatementResult(null);
                       }}
+                    />
+                  ) : (
+                    <input
+                      type="text"
+                      required={f.required}
+                      value={form[f.key]}
+                      onChange={(e) => setForm((p) => ({ ...p, [f.key]: e.target.value }))}
                     />
                   )}
                   {f.key === "opening_balance" && statementResult?.account_opening_balance != null && (
@@ -1057,14 +1109,12 @@ export default function Reference() {
                     {t("reference.balanceMismatchNote")}
                   </p>
                   <div style={{ display: "flex", gap: 6 }}>
-                    <input
-                      type="number"
-                      step="0.01"
+                    <AmountInput
                       placeholder={t("reference.balanceToday")}
                       value={currentBalanceInput}
-                      onChange={(e) => {
+                      onChange={(v) => {
                         setBalanceMessage("");
-                        setCurrentBalanceInput(e.target.value);
+                        setCurrentBalanceInput(v);
                       }}
                       style={{ flex: 1, minWidth: 0 }}
                     />
@@ -1236,6 +1286,39 @@ export default function Reference() {
                 disabled={bulkSaving || (!bulkIsGlobal && bulkCompanyIds.length === 0)}
               >
                 {bulkSaving ? t("reference.applying") : t("reference.apply")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bulkGroupModalOpen && (
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setBulkGroupModalOpen(false))}>
+          <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="fp-modal-head">
+              <h3>{t("reference.moveToGroupTitle", { count: selectedIds.size })}</h3>
+              <button className="fp-icon-btn" onClick={() => setBulkGroupModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <label>
+              {t("reference.projects.group")}
+              <select value={bulkGroupTargetId} onChange={(e) => setBulkGroupTargetId(e.target.value)}>
+                <option value="">{t("reference.noGroup")}</option>
+                {(dynamicOptions.projectGroups || []).map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {bulkGroupError && <div className="fp-form-error" style={{ marginTop: 10 }}>{bulkGroupError}</div>}
+            <div className="fp-modal-foot">
+              <button type="button" className="fp-btn-ghost" onClick={() => setBulkGroupModalOpen(false)}>
+                {t("common.cancel")}
+              </button>
+              <button type="button" className="fp-btn-primary" onClick={handleBulkGroupApply} disabled={bulkGroupSaving}>
+                {bulkGroupSaving ? t("reference.applying") : t("reference.apply")}
               </button>
             </div>
           </div>

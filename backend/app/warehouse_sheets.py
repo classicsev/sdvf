@@ -524,9 +524,19 @@ def export_counterparties(db: Session, connection: WarehouseSheetConnection, spr
     sh = gc.open_by_key(spreadsheet_id)
     ws = _get_or_create_base_tab(sh)
 
+    # Только реально привязанные к СДВФ (sdvf_buyer_id) — весь остальной
+    # справочник компании тянется откуда попало (банковские выписки,
+    # amoCRM) и содержит контрагентов, которые продукцию не покупают
+    # (напр. АЗС из банковской выписки на топливо) — им в выпадающем
+    # списке "Кому отгрузили" делать нечего. Запрошено пользователем
+    # 2026-08-25.
     counterparties = (
         db.query(Counterparty)
-        .filter(Counterparty.company_id == company_id, Counterparty.is_active.is_(True))
+        .filter(
+            Counterparty.company_id == company_id,
+            Counterparty.is_active.is_(True),
+            Counterparty.sdvf_buyer_id.isnot(None),
+        )
         .order_by(Counterparty.name)
         .all()
     )
