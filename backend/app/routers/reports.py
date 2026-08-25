@@ -517,16 +517,9 @@ def pnl_report(
     }
 
 
-@router.get("/balance", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
-def balance_report(
-    as_of: Optional[date] = None,
-    company_id: Optional[str] = None,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    as_of = as_of or date.today()
-    company_ids = resolve_company_ids(db, user, company_id)
-
+def _compute_balance(db: Session, company_ids: list[str], as_of: date) -> dict:
+    """Баланс на дату as_of — переиспользуется и /reports/balance, и
+    /reports/balance-analysis (показатели PRO), чтобы не дублировать SQL."""
     cash_rub = Decimal("0")
     for account in db.query(Account).filter(Account.company_id.in_(company_ids)).all():
         balance = _account_balance(db, account, as_of)
@@ -548,6 +541,30 @@ def balance_report(
         .scalar()
     )
     payable_to_staff = Decimal(str(total_accrued)) - Decimal(str(total_paid))
+
+    # Остаток по займам/кредитным линиям (Category.is_financing=True) —
+    # куммулятивно к as_of, тот же паттерн, что _account_balance, но по
+    # категории, а не по счёту: получили заём (income) увеличивает долг,
+    # погасили (expense) уменьшает.
+    loans_flow = (
+        db.query(
+            func.sum(
+                case(
+                    (Transaction.type == TxTypeEnum.income, Transaction.amount_rub),
+                    else_=-Transaction.amount_rub,
+                )
+            )
+        )
+        .join(Category, Transaction.category_id == Category.id)
+        .filter(
+            Transaction.company_id.in_(company_ids),
+            Transaction.date_odds <= as_of,
+            Transaction.payment_confirmed.is_(True),
+            Category.is_financing.is_(True),
+        )
+        .scalar()
+    )
+    loans_rub = Decimal(str(loans_flow)) if loans_flow is not None else Decimal("0")
 
     # Себестоимость склада (см. ProductVariant.avg_cost_rub) — остаток на
     # as_of, умноженный на текущую среднюю себестоимость варианта. Варианты
@@ -581,7 +598,8 @@ def balance_report(
         fixed_assets_rub += max(book_value, Decimal("0"))
 
     total_assets = cash_rub + inventory_rub + fixed_assets_rub
-    retained_earnings = total_assets - payable_to_staff
+    total_liabilities = payable_to_staff + loans_rub
+    retained_earnings = total_assets - total_liabilities
 
     return {
         "as_of": as_of.isoformat(),
@@ -593,9 +611,87 @@ def balance_report(
         },
         "liabilities": {
             "payable_to_staff_rub": float(payable_to_staff),
-            "total_rub": float(payable_to_staff),
+            "loans_rub": float(loans_rub),
+            "total_rub": float(total_liabilities),
         },
         "retained_earnings_rub": float(retained_earnings),
+    }
+
+
+@router.get("/balance", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
+def balance_report(
+    as_of: Optional[date] = None,
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    as_of = as_of or date.today()
+    company_ids = resolve_company_ids(db, user, company_id)
+    return _compute_balance(db, company_ids, as_of)
+
+
+def _vertical_breakdown(balance: dict) -> dict:
+    total = balance["assets"]["total_rub"] or 1  # избегаем деления на 0 на пустых данных
+    return {
+        "assets": {k: round(v / total * 100, 1) for k, v in balance["assets"].items() if k != "total_rub"},
+        "liabilities_and_equity": {
+            **{k: round(v / total * 100, 1) for k, v in balance["liabilities"].items() if k != "total_rub"},
+            "equity_rub": round(balance["retained_earnings_rub"] / total * 100, 1),
+        },
+    }
+
+
+@router.get("/balance-analysis", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
+def balance_analysis_report(
+    as_of: Optional[date] = None,
+    compare_to: Optional[date] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """"Показатели PRO" — вертикальный/горизонтальный анализ баланса, ROE,
+    оборотный капитал. Считается поверх _compute_balance, без новых таблиц."""
+    as_of = as_of or date.today()
+    compare_to = compare_to or _month_end(
+        as_of.year - 1 if as_of.month == 1 else as_of.year, as_of.month - 1 or 12
+    )
+    company_ids = resolve_company_ids(db, user, company_id)
+    forced_project = scope_project_filter(user)
+
+    current = _compute_balance(db, company_ids, as_of)
+    previous = _compute_balance(db, company_ids, compare_to)
+
+    if not date_from or not date_to:
+        date_from, date_to = _current_month_bounds()
+    income, expense, _, _ = _income_expense_for_range(db, company_ids, date_from, date_to, forced_project)
+    net_profit = income - expense
+
+    # Оборотный капитал — упрощение: у нас нет срока погашения пассивов,
+    # весь пассив трактуется как текущий (см. план/HANDOVER, известное допущение).
+    working_capital_rub = (
+        Decimal(str(current["assets"]["cash_rub"])) + Decimal(str(current["assets"]["inventory_rub"]))
+        - Decimal(str(current["liabilities"]["total_rub"]))
+    )
+
+    equity = Decimal(str(current["retained_earnings_rub"]))
+    roe_pct = float(net_profit / equity * 100) if equity else None
+
+    return {
+        "as_of": current["as_of"],
+        "compare_to": previous["as_of"],
+        "period_from": date_from.isoformat(),
+        "period_to": date_to.isoformat(),
+        "vertical": _vertical_breakdown(current),
+        "horizontal": {
+            "assets_total_delta_rub": current["assets"]["total_rub"] - previous["assets"]["total_rub"],
+            "liabilities_total_delta_rub": current["liabilities"]["total_rub"] - previous["liabilities"]["total_rub"],
+            "equity_delta_rub": current["retained_earnings_rub"] - previous["retained_earnings_rub"],
+        },
+        "working_capital_rub": float(working_capital_rub),
+        "roe_pct": roe_pct,
+        "net_profit_rub": float(net_profit),
     }
 
 
@@ -643,11 +739,11 @@ def debt_report(
 
 
 def _method_confirmed_column(method: str):
-    """"accrual" (по умолчанию, П&Л) | "cash" (кассовый — для отдельного
-    проекта без активов/пассивов совпадает с денежным потоком, поэтому
-    отдельного 3-го варианта, в отличие от ПланФакта, нет — см. HANDOVER.md,
-    "Карточка проекта")."""
-    return Transaction.payment_confirmed if method == "cash" else Transaction.accrual_confirmed
+    """"accrual" (по умолчанию, П&Л) | "cash" (кассовый) | "net_cash_flow"
+    (чистый денежный поток) — все три читают payment_confirmed, кроме
+    accrual; разница cash/net_cash_flow не в дате, а в том, исключается ли
+    финансовая деятельность (см. _project_transactions_query)."""
+    return Transaction.payment_confirmed if method in ("cash", "net_cash_flow") else Transaction.accrual_confirmed
 
 
 def _project_transactions_query(
@@ -659,13 +755,24 @@ def _project_transactions_query(
 ) -> SAQuery:
     """Базовый запрос по операциям С проектом (project_id задан) — общий для
     profitability_report (список) и project_detail (карточка одного
-    проекта), не дублировать SQL дважды."""
+    проекта), не дублировать SQL дважды.
+
+    3 режима: "accrual"/"cash" — версии прибыли, обе исключают финансовую
+    деятельность (is_financing/is_internal_transfer) — тем же паттерном,
+    что company-уровневые отчёты (dashboard_summary/pnl_report); "net_cash_flow"
+    — казначейский взгляд, буквальный приход минус расход денег ПО ПРОЕКТУ,
+    включая финансовую деятельность, если она к проекту привязана (иначе не
+    было бы отличия от "cash" вообще)."""
     confirmed_col = _method_confirmed_column(method)
     query = db.query(Transaction).filter(
         Transaction.company_id.in_(company_ids),
         Transaction.project_id.isnot(None),
         confirmed_col.is_(True),
     )
+    if method != "net_cash_flow":
+        query = query.join(Category, Transaction.category_id == Category.id).filter(
+            Category.is_financing.is_(False), Category.is_internal_transfer.is_(False)
+        )
     if date_from:
         query = query.filter(Transaction.date_odds >= date_from)
     if date_to:
@@ -778,6 +885,10 @@ def profitability_report(
             Transaction.project_id.is_(None),
             confirmed_col.is_(True),
         )
+        if method != "net_cash_flow":
+            unalloc_query = unalloc_query.join(Category, Transaction.category_id == Category.id).filter(
+                Category.is_financing.is_(False), Category.is_internal_transfer.is_(False)
+            )
         if date_from:
             unalloc_query = unalloc_query.filter(Transaction.date_odds >= date_from)
         if date_to:
@@ -927,10 +1038,14 @@ def project_detail(
     by_month = list(by_month_map.values())
 
     group_expr = func.coalesce(Category.group_name, Category.name)
+    category_query = query.filter(Transaction.type == TxTypeEnum.expense)
+    # query уже джойнит Category для accrual/cash (см. _project_transactions_query,
+    # где это нужно для фильтра is_financing/is_internal_transfer) — повторный
+    # join уронил бы SQL с "table name specified more than once".
+    if method == "net_cash_flow":
+        category_query = category_query.join(Category, Transaction.category_id == Category.id)
     category_rows = (
-        query.filter(Transaction.type == TxTypeEnum.expense)
-        .join(Category, Transaction.category_id == Category.id)
-        .with_entities(group_expr.label("category"), func.sum(Transaction.amount_rub))
+        category_query.with_entities(group_expr.label("category"), func.sum(Transaction.amount_rub))
         .group_by(group_expr)
         .order_by(func.sum(Transaction.amount_rub).desc())
         .all()

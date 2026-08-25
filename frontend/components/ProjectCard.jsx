@@ -161,6 +161,7 @@ export default function ProjectCard({ token, projectId, onBack, canEdit }) {
             <select value={method} onChange={(e) => setMethod(e.target.value)}>
               <option value="accrual">{t("reference.projects.method.accrual")}</option>
               <option value="cash">{t("reference.projects.method.cash")}</option>
+              <option value="net_cash_flow">{t("reference.projects.method.netCashFlow")}</option>
             </select>
           </label>
           <label>

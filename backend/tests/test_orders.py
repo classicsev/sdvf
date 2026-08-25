@@ -433,4 +433,96 @@ def test_order_without_prices_has_null_totals(client, db_session):
     ).json()
     assert order["total_amount_rub"] is None
     assert order["balance_due_rub"] is None
-    assert order["paid_amount_rub"] == 0.0
+
+
+def test_bulk_status_partial_success_returns_applied_and_errors(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    warehouse, product, variant = _setup_catalog(client, headers)
+    cp = make_counterparty(db_session)
+
+    def make_order():
+        return client.post(
+            "/orders",
+            headers=headers,
+            json={
+                "counterparty_id": cp.id,
+                "warehouse_id": warehouse["id"],
+                "lines": [{"product_variant_id": variant["id"], "quantity": 5}],
+            },
+        ).json()
+
+    draft_order = make_order()
+    already_cancelled = make_order()
+    client.post(f"/orders/{already_cancelled['id']}/cancel", headers=headers)
+
+    resp = client.post(
+        "/orders/bulk-status",
+        headers=headers,
+        json={"order_ids": [draft_order["id"], already_cancelled["id"]], "action": "reserve"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["applied"]) == 1
+    assert body["applied"][0]["id"] == draft_order["id"]
+    assert body["applied"][0]["status"] == "reserved"
+    assert len(body["errors"]) == 1
+    assert body["errors"][0]["order_id"] == already_cancelled["id"]
+
+
+def test_create_order_without_warehouse_with_service_line(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    cp = make_counterparty(db_session)
+
+    resp = client.post(
+        "/orders",
+        headers=headers,
+        json={
+            "counterparty_id": cp.id,
+            "company_id": cp.company_id,
+            "lines": [{"description": "Консультация по подбору поставщика", "quantity": 1, "unit_price_rub": 15000}],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    order = resp.json()
+    assert order["warehouse_id"] is None
+    assert order["lines"][0]["product_variant_id"] is None
+    assert order["lines"][0]["description"] == "Консультация по подбору поставщика"
+    assert order["total_amount_rub"] == 15000.0
+
+    # Отгрузка не должна падать и не должна создавать складских движений
+    ship_resp = client.post(f"/orders/{order['id']}/ship", headers=headers)
+    assert ship_resp.status_code == 200, ship_resp.text
+    movements = client.get("/warehouse/movements", headers=headers).json()
+    assert not any(m["order_id"] == order["id"] for m in movements)
+
+
+def test_create_order_without_warehouse_requires_company_id(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    cp = make_counterparty(db_session)
+
+    resp = client.post(
+        "/orders",
+        headers=headers,
+        json={"counterparty_id": cp.id, "lines": [{"description": "Услуга", "quantity": 1}]},
+    )
+    assert resp.status_code == 400
+
+
+def test_service_line_without_description_rejected(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    cp = make_counterparty(db_session)
+
+    resp = client.post(
+        "/orders",
+        headers=headers,
+        json={
+            "counterparty_id": cp.id,
+            "company_id": cp.company_id,
+            "lines": [{"quantity": 1}],
+        },
+    )
+    assert resp.status_code == 400

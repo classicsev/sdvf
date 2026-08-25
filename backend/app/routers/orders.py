@@ -31,7 +31,17 @@ from app.models import (
     User,
     Warehouse,
 )
-from app.schemas import OrderCreateIn, OrderLineIn, OrderOut, OrderUpdateIn, SdvfDocumentRefOut, SdvfGenerateDocumentIn
+from app.schemas import (
+    OrderBulkStatusErrorOut,
+    OrderBulkStatusIn,
+    OrderBulkStatusResult,
+    OrderCreateIn,
+    OrderLineIn,
+    OrderOut,
+    OrderUpdateIn,
+    SdvfDocumentRefOut,
+    SdvfGenerateDocumentIn,
+)
 from app.utils import get_or_404_accessible
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -102,27 +112,44 @@ def list_orders(
 
 @router.post("", response_model=OrderOut, dependencies=[WAREHOUSE_MODULE])
 def create_order(payload: OrderCreateIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    # Компания заказа определяется по складу — контрагент и товары должны
-    # принадлежать той же компании.
     accessible = get_accessible_company_ids(db, user)
-    warehouse = get_or_404_accessible(db, Warehouse, payload.warehouse_id, accessible, "Склад не найден")
-    check_company_role(db, user, warehouse.company_id, WAREHOUSE_EDITORS)
+    # Компания резолвится из склада, если он указан (как раньше); для
+    # заказа-услуги без склада — из явного payload.company_id (см.
+    # models.py::Order.warehouse_id, "сделка без товара").
+    warehouse = None
+    if payload.warehouse_id:
+        warehouse = get_or_404_accessible(db, Warehouse, payload.warehouse_id, accessible, "Склад не найден")
+        company_id = warehouse.company_id
+    else:
+        if not payload.company_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Укажите склад или компанию заказа"
+            )
+        if payload.company_id not in accessible:
+            raise HTTPException(status_code=404, detail="Компания не найдена")
+        company_id = payload.company_id
+    check_company_role(db, user, company_id, WAREHOUSE_EDITORS)
     counterparty = get_or_404_accessible(db, Counterparty, payload.counterparty_id, accessible, "Контрагент не найден")
-    if counterparty.company_id != warehouse.company_id:
+    if counterparty.company_id != company_id:
         raise HTTPException(status_code=400, detail="Контрагент принадлежит другой компании")
     if not payload.lines:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нужна хотя бы одна позиция")
     for line in payload.lines:
-        variant = get_or_404_accessible(
-            db, ProductVariant, line.product_variant_id, accessible, "Вариант товара не найден"
-        )
-        if variant.company_id != warehouse.company_id:
-            raise HTTPException(status_code=400, detail="Вариант товара принадлежит другой компании")
+        if line.product_variant_id:
+            variant = get_or_404_accessible(
+                db, ProductVariant, line.product_variant_id, accessible, "Вариант товара не найден"
+            )
+            if variant.company_id != company_id:
+                raise HTTPException(status_code=400, detail="Вариант товара принадлежит другой компании")
+        elif not (line.description and line.description.strip()):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Для позиции без товара нужно описание услуги"
+            )
         if line.quantity <= 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Количество должно быть больше нуля")
 
     order = Order(
-        company_id=warehouse.company_id,
+        company_id=company_id,
         counterparty_id=payload.counterparty_id,
         warehouse_id=payload.warehouse_id,
         status=OrderStatusEnum.draft,
@@ -136,8 +163,9 @@ def create_order(payload: OrderCreateIn, db: Session = Depends(get_db), user: Us
     )
     order.lines = [
         OrderLine(
-            company_id=warehouse.company_id,
+            company_id=company_id,
             product_variant_id=l.product_variant_id,
+            description=l.description,
             quantity=l.quantity,
             unit_price_rub=l.unit_price_rub,
             package_count=l.package_count,
@@ -151,7 +179,7 @@ def create_order(payload: OrderCreateIn, db: Session = Depends(get_db), user: Us
     db.add(order)
     db.commit()
     db.refresh(order)
-    log_action(db, user, action="create", entity_type="order", entity_id=order.id, company_id=warehouse.company_id)
+    log_action(db, user, action="create", entity_type="order", entity_id=order.id, company_id=company_id)
     return _attach_payment_fields(db, order)
 
 
@@ -165,7 +193,9 @@ def update_order(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Заказ закрыт, изменения недоступны")
     accessible = get_accessible_company_ids(db, user)
     changes = payload.model_dump(exclude_unset=True, exclude={"lines"})
-    if changes.get("warehouse_id"):
+    # "warehouse_id" in changes (не .get) — иначе нельзя явно очистить склад:
+    # None falsy, .get(...) его бы проигнорировал (см. "сделка без товара").
+    if "warehouse_id" in changes and changes["warehouse_id"]:
         warehouse = get_or_404_accessible(db, Warehouse, changes["warehouse_id"], accessible, "Склад не найден")
         if warehouse.company_id != order.company_id:
             raise HTTPException(status_code=400, detail="Склад принадлежит другой компании")
@@ -182,11 +212,16 @@ def update_order(
         if not payload.lines:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нужна хотя бы одна позиция")
         for line in payload.lines:
-            variant = get_or_404_accessible(
-                db, ProductVariant, line.product_variant_id, accessible, "Вариант товара не найден"
-            )
-            if variant.company_id != order.company_id:
-                raise HTTPException(status_code=400, detail="Вариант товара принадлежит другой компании")
+            if line.product_variant_id:
+                variant = get_or_404_accessible(
+                    db, ProductVariant, line.product_variant_id, accessible, "Вариант товара не найден"
+                )
+                if variant.company_id != order.company_id:
+                    raise HTTPException(status_code=400, detail="Вариант товара принадлежит другой компании")
+            elif not (line.description and line.description.strip()):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="Для позиции без товара нужно описание услуги"
+                )
             if line.quantity <= 0:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Количество должно быть больше нуля")
         for old_line in list(order.lines):
@@ -196,6 +231,7 @@ def update_order(
             OrderLine(
                 company_id=order.company_id,
                 product_variant_id=l.product_variant_id,
+                description=l.description,
                 quantity=l.quantity,
                 unit_price_rub=l.unit_price_rub,
                 package_count=l.package_count,
@@ -234,11 +270,14 @@ def add_order_line(
     check_company_role(db, user, order.company_id, WAREHOUSE_EDITORS)
     if order.status != OrderStatusEnum.draft:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Менять состав можно только в черновике")
-    variant = get_or_404_accessible(
-        db, ProductVariant, payload.product_variant_id, get_accessible_company_ids(db, user), "Вариант товара не найден"
-    )
-    if variant.company_id != order.company_id:
-        raise HTTPException(status_code=400, detail="Вариант товара принадлежит другой компании")
+    if payload.product_variant_id:
+        variant = get_or_404_accessible(
+            db, ProductVariant, payload.product_variant_id, get_accessible_company_ids(db, user), "Вариант товара не найден"
+        )
+        if variant.company_id != order.company_id:
+            raise HTTPException(status_code=400, detail="Вариант товара принадлежит другой компании")
+    elif not (payload.description and payload.description.strip()):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Для позиции без товара нужно описание услуги")
     if payload.quantity <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Количество должно быть больше нуля")
 
@@ -247,6 +286,7 @@ def add_order_line(
             company_id=order.company_id,
             order_id=order.id,
             product_variant_id=payload.product_variant_id,
+            description=payload.description,
             quantity=payload.quantity,
             unit_price_rub=payload.unit_price_rub,
         )
@@ -320,6 +360,8 @@ def ship_order(order_id: str, db: Session = Depends(get_db), user: User = Depend
     today = datetime.utcnow().date()
     shipped_movements = []
     for line in order.lines:
+        if line.product_variant_id is None:
+            continue  # строка-услуга — нет товара, нет складского движения
         movement = StockMovement(
             company_id=order.company_id,
             date=today,
@@ -351,6 +393,42 @@ def ship_order(order_id: str, db: Session = Depends(get_db), user: User = Depend
         pass
 
     return _attach_payment_fields(db, order)
+
+
+_BULK_ACTIONS = {
+    "reserve": reserve_order,
+    "unreserve": unreserve_order,
+    "cancel": cancel_order,
+    "ship": ship_order,
+}
+
+
+@router.post("/bulk-status", response_model=OrderBulkStatusResult, dependencies=[WAREHOUSE_MODULE])
+def bulk_order_status(
+    payload: OrderBulkStatusIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    """Групповая смена статуса — переиспользует ОДИНОЧНЫЕ эндпоинты
+    (reserve/unreserve/cancel/ship) как обычные функции, чтобы не дублировать
+    правила переходов. Один заказ с недопустимым переходом не должен рушить
+    остальные в пачке — ошибки собираются отдельно (см. errors_detail,
+    automation.py::sync_all_integrations)."""
+    action_fn = _BULK_ACTIONS.get(payload.action)
+    if action_fn is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неизвестное действие")
+
+    applied = []
+    errors = []
+    for order_id in payload.order_ids:
+        try:
+            applied.append(action_fn(order_id=order_id, db=db, user=user))
+        except HTTPException as exc:
+            db.rollback()
+            errors.append(
+                OrderBulkStatusErrorOut(
+                    order_id=order_id, detail=exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+                )
+            )
+    return OrderBulkStatusResult(applied=applied, errors=errors)
 
 
 # ---------------------------------------------------------------------------
@@ -427,19 +505,22 @@ def _build_sdvf_lines(db: Session, order: Order, payload: SdvfGenerateDocumentIn
         )
 
     lines_by_id = {line.id: line for line in order.lines}
-    variant_ids = [line.product_variant_id for line in order.lines]
+    variant_ids = [line.product_variant_id for line in order.lines if line.product_variant_id]
     variants_by_id = {v.id: v for v in db.query(ProductVariant).filter(ProductVariant.id.in_(variant_ids))}
 
     result = []
     for price_line in payload.lines:
         order_line = lines_by_id[price_line.order_line_id]
-        variant = variants_by_id[order_line.product_variant_id]
-        name = f"{variant.product.name} {variant.name}".strip()
+        # Строка-услуга (без товара) — название/единица берутся из description,
+        # а не из каталога, см. models.py::OrderLine ("сделка без товара").
+        variant = variants_by_id.get(order_line.product_variant_id)
+        name = f"{variant.product.name} {variant.name}".strip() if variant else (order_line.description or "Услуга")
+        unit = variant.product.unit if variant else "усл."
         amount = round(float(order_line.quantity) * price_line.price, 2)
         result.append(
             {
                 "name": name,
-                "unit_of_measurement": variant.product.unit,
+                "unit_of_measurement": unit,
                 "quantity": order_line.quantity,
                 "price": price_line.price,
                 "amount": amount,

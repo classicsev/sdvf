@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     # В проде указать реальный домен(ы), напр. "https://finance.example.ru".
     cors_origins: str = "http://localhost:3000"
     env: str = "development"
+    # Регистрировать APScheduler (recurring-операции) — по умолчанию только
+    # когда env=production, но можно форсировать флагом и в dev (см. main.py) —
+    # чтобы uvicorn --reload не плодил джоб на каждый релоуд.
+    run_scheduler: bool = False
 
     # Почта (self-hosted через Postfix на проде) — используется для писем
     # подтверждения email. В dev SMTP_HOST не поднят — отправка просто не

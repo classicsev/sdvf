@@ -265,6 +265,42 @@ class CompanyBudgetLine(Base):
     )
 
 
+class RecurringFrequencyEnum(str, enum.Enum):
+    weekly = "weekly"
+    monthly = "monthly"
+
+
+class RecurringTemplate(Base):
+    """Шаблон повторяющейся плановой операции — раз в сутки (см.
+    app/scheduler.py) создаёт обычную Transaction с payment_confirmed=False,
+    accrual_confirmed=False, дальше она ничем не отличается от вручную
+    заведённой плановой операции: платёжный календарь и прогноз остатка уже
+    читают неподтверждённые операции, доп. код для них не нужен."""
+
+    __tablename__ = "recurring_templates"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
+    type: Mapped[TxTypeEnum] = mapped_column(Enum(TxTypeEnum))
+    amount_rub: Mapped[float] = mapped_column(Numeric(14, 2))
+    category_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("categories.id"))
+    account_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("accounts.id"))
+    project_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("projects.id"), nullable=True)
+    counterparty_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("counterparties.id"), nullable=True)
+    comment: Mapped[str] = mapped_column(Text, nullable=True)
+    frequency: Mapped[RecurringFrequencyEnum] = mapped_column(
+        Enum(RecurringFrequencyEnum, values_callable=lambda enum_cls: [e.value for e in enum_cls])
+    )
+    # weekly: 0=понедельник..6=воскресенье; monthly: 1..28 (не берём 29-31 —
+    # не в каждом месяце есть, проще ограничить, чем разбирать edge-кейсы).
+    day_of_week: Mapped[int] = mapped_column(Integer, nullable=True)
+    day_of_month: Mapped[int] = mapped_column(Integer, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    next_run_date: Mapped[date] = mapped_column(Date)
+    created_by: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class FixedAsset(Base):
     """Основное средство — простая линейная амортизация без групп ОС и
     переоценки (не запрошено). Балансовая стоимость считается на лету в
@@ -810,7 +846,11 @@ class Order(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
     company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
     counterparty_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("counterparties.id"))
-    warehouse_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("warehouses.id"))
+    # Nullable — заказ без склада ("сделка без товара", например услуга):
+    # склад в проекте опциональный модуль (module_warehouse_enabled), не
+    # обязан существовать для всех клиентов сервиса. company_id при этом
+    # приходит явно в payload, а не резолвится из склада (см. orders.py).
+    warehouse_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("warehouses.id"), nullable=True)
     status: Mapped[OrderStatusEnum] = mapped_column(
         Enum(OrderStatusEnum, values_callable=lambda enum_cls: [e.value for e in enum_cls]),
         default=OrderStatusEnum.draft,
@@ -844,7 +884,11 @@ class OrderLine(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
     company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
     order_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("orders.id"))
-    product_variant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("product_variants.id"))
+    # Nullable — строка-услуга (без товара). Когда None, description
+    # обязателен (валидация в orders.py) — свободный текст вместо позиции
+    # каталога, например "Консультация по подбору поставщика".
+    product_variant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("product_variants.id"), nullable=True)
+    description: Mapped[str] = mapped_column(Text, nullable=True)
     quantity: Mapped[float] = mapped_column(Numeric(12, 3))
     # Цена за единицу (руб.) для этой строки заказа — опциональная (старые
     # заказы без цены просто не участвуют в total_amount/"оплачено из Y",

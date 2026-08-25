@@ -19,6 +19,7 @@ from app.routers import (
     orders,
     payroll,
     production,
+    recurring,
     reference,
     reports,
     sdvf_login,
@@ -75,6 +76,7 @@ app.include_router(statements.router)
 app.include_router(fixed_assets.router)
 app.include_router(company_budget.router)
 app.include_router(attachments.router)
+app.include_router(recurring.router)
 
 MEDIA_DIR = Path(__file__).resolve().parent.parent / "media"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
@@ -84,3 +86,11 @@ app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.on_event("startup")
+def _maybe_start_scheduler():
+    if settings.env == "production" or settings.run_scheduler:
+        from app.scheduler import start_scheduler
+
+        start_scheduler()

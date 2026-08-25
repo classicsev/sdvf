@@ -110,7 +110,18 @@ const TABS = {
         labelKey: "reports.margin",
         render: (v) => (v === null || v === undefined ? "—" : `${(v * 100).toFixed(1)}%`),
       },
-      STATUS_COLUMN,
+      {
+        key: "is_active",
+        labelKey: "reference.status",
+        render: (v, row, t) => (
+          <span
+            className={`fp-status-badge ${v === false ? "warn" : "ok"}`}
+            title={v === false ? t("reference.projects.archivedHint") : undefined}
+          >
+            {v === false ? t("reference.status.inactive") : t("reference.status.active")}
+          </span>
+        ),
+      },
     ],
   },
   projectGroups: {

@@ -4,7 +4,14 @@ from typing import Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models import OrderStatusEnum, RoleEnum, StockDirectionEnum, TxTypeEnum, WarehouseSheetTabFormat
+from app.models import (
+    OrderStatusEnum,
+    RecurringFrequencyEnum,
+    RoleEnum,
+    StockDirectionEnum,
+    TxTypeEnum,
+    WarehouseSheetTabFormat,
+)
 
 
 class TransactionBase(BaseModel):
@@ -200,6 +207,27 @@ class CompanyBudgetLineOut(CompanyBudgetLineIn):
 
     id: str
     period: str
+
+
+class RecurringTemplateIn(BaseModel):
+    type: TxTypeEnum
+    amount_rub: float
+    category_id: str
+    account_id: str
+    project_id: Optional[str] = None
+    counterparty_id: Optional[str] = None
+    comment: Optional[str] = None
+    frequency: RecurringFrequencyEnum
+    day_of_week: Optional[int] = None
+    day_of_month: Optional[int] = None
+    is_active: bool = True
+    next_run_date: date
+
+
+class RecurringTemplateOut(RecurringTemplateIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
 
 
 class FixedAssetIn(BaseModel):
@@ -957,8 +985,11 @@ class StockBalanceOut(BaseModel):
 
 
 class OrderLineIn(BaseModel):
-    product_variant_id: str
-    quantity: float
+    # Nullable — строка-услуга без товара, тогда description обязателен
+    # (валидация в orders.py). quantity по умолчанию 1 для услуги.
+    product_variant_id: Optional[str] = None
+    description: Optional[str] = None
+    quantity: float = 1
     # Цена за единицу (руб.) — опциональна, см. models.py::OrderLine.unit_price_rub.
     unit_price_rub: Optional[float] = None
     # Для будущего 装箱单 (Packing List) — см. models.py::OrderLine, опциональны.
@@ -973,7 +1004,8 @@ class OrderLineOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    product_variant_id: str
+    product_variant_id: Optional[str] = None
+    description: Optional[str] = None
     quantity: float
     unit_price_rub: Optional[float] = None
     package_count: Optional[int] = None
@@ -985,7 +1017,11 @@ class OrderLineOut(BaseModel):
 
 class OrderCreateIn(BaseModel):
     counterparty_id: str
-    warehouse_id: str
+    # warehouse_id опционален — заказ без склада ("сделка без товара",
+    # например услуга). Когда его нет, company_id обязателен явно (иначе
+    # компания резолвится из склада, см. orders.py::create_order).
+    warehouse_id: Optional[str] = None
+    company_id: Optional[str] = None
     requested_date: Optional[date] = None
     courier: Optional[str] = None
     note: Optional[str] = None
@@ -1016,7 +1052,7 @@ class OrderOut(BaseModel):
     id: str
     company_id: str
     counterparty_id: str
-    warehouse_id: str
+    warehouse_id: Optional[str] = None
     status: OrderStatusEnum
     requested_date: Optional[date] = None
     courier: Optional[str] = None
@@ -1036,6 +1072,21 @@ class OrderOut(BaseModel):
     total_amount_rub: Optional[float] = None
     paid_amount_rub: Optional[float] = None
     balance_due_rub: Optional[float] = None
+
+
+class OrderBulkStatusIn(BaseModel):
+    order_ids: list[str]
+    action: str  # "reserve" | "unreserve" | "cancel" | "ship"
+
+
+class OrderBulkStatusErrorOut(BaseModel):
+    order_id: str
+    detail: str
+
+
+class OrderBulkStatusResult(BaseModel):
+    applied: list[OrderOut] = []
+    errors: list[OrderBulkStatusErrorOut] = []
 
 
 class SdvfDocumentLineIn(BaseModel):

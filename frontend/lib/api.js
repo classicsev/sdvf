@@ -221,6 +221,7 @@ export const api = {
   cashflowForecast: (token, query) => request("/reports/cashflow-forecast", { token, query }),
   pnlReport: (token, query) => request("/reports/pnl", { token, query }),
   balanceReport: (token, query) => request("/reports/balance", { token, query }),
+  balanceAnalysis: (token, query) => request("/reports/balance-analysis", { token, query }),
   debtReport: (token, query) => request("/reports/debt", { token, query }),
   profitabilityReport: (token, query) => request("/reports/profitability", { token, query }),
   projectDetail: (token, projectId, query) =>
@@ -448,6 +449,8 @@ export const api = {
   unreserveOrder: (token, id) => request(`/orders/${id}/unreserve`, { method: "POST", token }),
   cancelOrder: (token, id) => request(`/orders/${id}/cancel`, { method: "POST", token }),
   shipOrder: (token, id) => request(`/orders/${id}/ship`, { method: "POST", token }),
+  bulkOrderStatus: (token, orderIds, action) =>
+    request("/orders/bulk-status", { method: "POST", token, body: { order_ids: orderIds, action } }),
   generateInvoice: (token, id, payload) =>
     request(`/orders/${id}/generate-invoice`, { method: "POST", token, body: payload }),
   generateUtd: (token, id, payload) =>

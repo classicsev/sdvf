@@ -161,6 +161,10 @@ function BalanceTab({ token }) {
     () => api.balanceReport(token, { as_of: asOf || undefined, company_id: companyId || undefined }),
     [token, asOf, companyId]
   );
+  const { data: analysis } = useResource(
+    () => api.balanceAnalysis(token, { as_of: asOf || undefined, company_id: companyId || undefined }),
+    [token, asOf, companyId]
+  );
 
   return (
     <div>
@@ -211,6 +215,11 @@ function BalanceTab({ token }) {
                   <span className="fill" />
                   <span className="value">{fmt(data.liabilities.payable_to_staff_rub, "RUB")}</span>
                 </div>
+                <div className="ledger-row">
+                  <span className="label">{t("reports.loans")}</span>
+                  <span className="fill" />
+                  <span className="value">{fmt(data.liabilities.loans_rub, "RUB")}</span>
+                </div>
                 <div className="ledger-row fp-ledger-total">
                   <span className="label">{t("reports.totalLiabilities")}</span>
                   <span className="fill" />
@@ -225,6 +234,61 @@ function BalanceTab({ token }) {
             </div>
           </div>
         )
+      )}
+      {analysis && (
+        <div className="fp-panel" style={{ marginTop: 18 }}>
+          <div className="fp-panel-head">
+            <h3>{t("reports.proMetrics")}</h3>
+          </div>
+          <div className="fp-kpi-row" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+            <div className="fp-kpi">
+              <div className="fp-kpi-label">{t("reports.roe")}</div>
+              <div className="fp-kpi-value">{analysis.roe_pct == null ? "—" : `${analysis.roe_pct.toFixed(1)}%`}</div>
+            </div>
+            <div className="fp-kpi">
+              <div className="fp-kpi-label">{t("reports.workingCapital")}</div>
+              <div className="fp-kpi-value">{fmt(analysis.working_capital_rub, "RUB")}</div>
+            </div>
+            <div className="fp-kpi">
+              <div className="fp-kpi-label">{t("reports.netProfitPeriod")}</div>
+              <div className="fp-kpi-value">{fmt(analysis.net_profit_rub, "RUB")}</div>
+            </div>
+            <div className="fp-kpi">
+              <div className="fp-kpi-label">
+                {t("reports.horizontalVsDate", { date: analysis.compare_to })}
+              </div>
+              <div className="fp-kpi-value">{fmt(analysis.horizontal.assets_total_delta_rub, "RUB")}</div>
+            </div>
+          </div>
+          <div className="fp-ledger" style={{ marginTop: 14 }}>
+            <div className="ledger-row">
+              <span className="label">{t("reports.cash")}</span>
+              <span className="fill" />
+              <span className="value">{analysis.vertical.assets.cash_rub}%</span>
+            </div>
+            <div className="ledger-row">
+              <span className="label">{t("reports.inventory")}</span>
+              <span className="fill" />
+              <span className="value">{analysis.vertical.assets.inventory_rub}%</span>
+            </div>
+            <div className="ledger-row">
+              <span className="label">{t("reports.fixedAssets")}</span>
+              <span className="fill" />
+              <span className="value">{analysis.vertical.assets.fixed_assets_rub}%</span>
+            </div>
+            <div className="ledger-row">
+              <span className="label">{t("reports.loans")}</span>
+              <span className="fill" />
+              <span className="value">{analysis.vertical.liabilities_and_equity.loans_rub}%</span>
+            </div>
+            <div className="ledger-row">
+              <span className="label">{t("reports.retainedEarnings")}</span>
+              <span className="fill" />
+              <span className="value">{analysis.vertical.liabilities_and_equity.equity_rub}%</span>
+            </div>
+          </div>
+          <p className="fp-note">{t("reports.proMetricsNote")}</p>
+        </div>
       )}
       <p className="fp-note">{t("reports.balanceNote")}</p>
     </div>

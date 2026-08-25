@@ -57,8 +57,8 @@ const SECTIONS = [
 ];
 
 const ORDER_STATUS_BADGE = {
-  draft: "warn",
-  reserved: "ok",
+  draft: "neutral",
+  reserved: "warn",
   shipped: "ok",
   cancelled: "danger",
 };
@@ -766,13 +766,14 @@ function MovementsPanel({
 const ORDER_FORM_EMPTY = {
   counterparty_id: "",
   warehouse_id: "",
+  company_id: "",
   requested_date: "",
   courier: "",
   note: "",
   incoterms: "",
   incoterms_place: "",
   payment_terms: "",
-  lines: [{ product_variant_id: "", quantity: "", unit_price_rub: "" }],
+  lines: [{ product_variant_id: "", description: "", quantity: "", unit_price_rub: "", isService: false }],
 };
 
 // "Отгрузки календарь" в реальной таблице пользователя — план по дням
@@ -834,16 +835,47 @@ function OrdersPanel({
   const [saving, setSaving] = useState(false);
 
   const orderWarehouseCompany = warehousesById[form.warehouse_id]?.company_id;
+  // Без склада ("сделка без товара") компания приходит из явного выбора,
+  // а не из склада — см. models.py::Order.warehouse_id.
+  const orderCompanyId = orderWarehouseCompany || form.company_id;
   const orderCounterparties = (counterparties || []).filter(
-    (c) => !multiCompany || !form.warehouse_id || c.company_id === orderWarehouseCompany
+    (c) => !multiCompany || !orderCompanyId || c.company_id === orderCompanyId
   );
   const orderVariants = (activeVariants || []).filter(
-    (v) => !multiCompany || !form.warehouse_id || v.company_id === orderWarehouseCompany
+    (v) => !multiCompany || !orderCompanyId || v.company_id === orderCompanyId
   );
   const orderGroups = useMemo(() => groupOrdersByDate(orders), [orders]);
 
+  const [selectedOrderIds, setSelectedOrderIds] = useState(new Set());
+  const [bulkApplying, setBulkApplying] = useState(false);
+
+  function toggleSelectOrder(id) {
+    setSelectedOrderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleBulkStatus(action) {
+    setBulkApplying(true);
+    try {
+      const result = await api.bulkOrderStatus(token, Array.from(selectedOrderIds), action);
+      setSelectedOrderIds(new Set());
+      reload();
+      if (result.errors?.length > 0) {
+        window.alert(t("wh.bulkStatusErrors", { count: result.errors.length }));
+      }
+    } catch (err) {
+      window.alert(err.message);
+    } finally {
+      setBulkApplying(false);
+    }
+  }
+
   async function handleCreateCounterparty(name) {
-    const created = await api.createCounterparty(token, { name }, orderWarehouseCompany || undefined);
+    const created = await api.createCounterparty(token, { name }, orderCompanyId || undefined);
     reloadCounterparties();
     return created;
   }
@@ -900,7 +932,8 @@ function OrdersPanel({
     setEditingOrder(order);
     setForm({
       counterparty_id: order.counterparty_id,
-      warehouse_id: order.warehouse_id,
+      warehouse_id: order.warehouse_id || "",
+      company_id: order.company_id || "",
       requested_date: order.requested_date || "",
       courier: order.courier || "",
       note: order.note || "",
@@ -908,9 +941,11 @@ function OrdersPanel({
       incoterms_place: order.incoterms_place || "",
       payment_terms: order.payment_terms || "",
       lines: order.lines.map((l) => ({
-        product_variant_id: l.product_variant_id,
+        product_variant_id: l.product_variant_id || "",
+        description: l.description || "",
         quantity: String(l.quantity),
         unit_price_rub: l.unit_price_rub != null ? String(l.unit_price_rub) : "",
+        isService: !l.product_variant_id,
       })),
     });
     setFormError("");
@@ -918,7 +953,10 @@ function OrdersPanel({
   }
 
   function addLine() {
-    setForm((p) => ({ ...p, lines: [...p.lines, { product_variant_id: "", quantity: "", unit_price_rub: "" }] }));
+    setForm((p) => ({
+      ...p,
+      lines: [...p.lines, { product_variant_id: "", description: "", quantity: "", unit_price_rub: "", isService: false }],
+    }));
   }
 
   function removeLine(idx) {
@@ -935,7 +973,8 @@ function OrdersPanel({
     setFormError("");
     const payload = {
       counterparty_id: form.counterparty_id,
-      warehouse_id: form.warehouse_id,
+      warehouse_id: form.warehouse_id || null,
+      company_id: form.warehouse_id ? undefined : form.company_id || undefined,
       requested_date: form.requested_date || null,
       courier: form.courier || null,
       note: form.note || null,
@@ -943,8 +982,9 @@ function OrdersPanel({
       incoterms_place: form.incoterms_place || null,
       payment_terms: form.payment_terms || null,
       lines: form.lines.map((l) => ({
-        product_variant_id: l.product_variant_id,
-        quantity: Number(l.quantity),
+        product_variant_id: l.product_variant_id || null,
+        description: l.description || null,
+        quantity: Number(l.quantity) || 1,
         unit_price_rub: l.unit_price_rub ? Number(l.unit_price_rub) : null,
       })),
     };
@@ -1015,6 +1055,19 @@ function OrdersPanel({
     <>
       <div className="fp-tabs-row">
         <div />
+        {canEdit && selectedOrderIds.size > 0 && (
+          <>
+            <button type="button" className="fp-btn-tiny" onClick={() => handleBulkStatus("reserve")} disabled={bulkApplying}>
+              {t("wh.reserveBtn")} ({selectedOrderIds.size})
+            </button>
+            <button type="button" className="fp-btn-tiny" onClick={() => handleBulkStatus("ship")} disabled={bulkApplying}>
+              <Send size={13} /> ({selectedOrderIds.size})
+            </button>
+            <button type="button" className="fp-btn-tiny" onClick={() => handleBulkStatus("cancel")} disabled={bulkApplying}>
+              <Ban size={13} /> ({selectedOrderIds.size})
+            </button>
+          </>
+        )}
         {canEdit && (
           <button type="button" className="fp-btn-tiny" onClick={openAdd}>
             <Plus size={13} /> {t("wh.newOrder")}
@@ -1029,6 +1082,7 @@ function OrdersPanel({
           <table className="fp-table">
             <thead>
               <tr>
+                {canEdit && <th style={{ width: 32 }}></th>}
                 {showCompanyColumn && <th>{t("dashboard.table.company")}</th>}
                 <th>{t("wh.col.client")}</th>
                 <th>{t("wh.col.warehouse")}</th>
@@ -1043,7 +1097,7 @@ function OrdersPanel({
               {orderGroups.map((group) => (
                 <Fragment key={group.date || "no-date"}>
                   <tr className="fp-table-group-row">
-                    <td colSpan={(showCompanyColumn ? 1 : 0) + 7} className="fp-table-group-label">
+                    <td colSpan={(canEdit ? 1 : 0) + (showCompanyColumn ? 1 : 0) + 7} className="fp-table-group-label">
                       {group.date ? weekdayLabel(group.date) : t("wh.noDateGroup")}
                     </td>
                   </tr>
@@ -1051,21 +1105,32 @@ function OrdersPanel({
                 const canEditRow = canEditWarehouse(roleForCompany(o.company_id));
                 return (
                 <tr key={o.id}>
+                  {canEdit && (
+                    <td>
+                      {canEditRow && (
+                        <input
+                          type="checkbox"
+                          checked={selectedOrderIds.has(o.id)}
+                          onChange={() => toggleSelectOrder(o.id)}
+                        />
+                      )}
+                    </td>
+                  )}
                   {showCompanyColumn && (
                     <td>{companies.find((c) => c.company.id === o.company_id)?.company.name || "—"}</td>
                   )}
                   <td>{counterpartiesById[o.counterparty_id]?.name || "—"}</td>
-                  <td className="fp-muted">{warehousesById[o.warehouse_id]?.name || "—"}</td>
+                  <td className="fp-muted">{o.warehouse_id ? warehousesById[o.warehouse_id]?.name || "—" : t("wh.noWarehouseService")}</td>
                   <td className="fp-muted fp-table-comment-col" title={o.lines
                       .map((l) => {
                         const v = variantsById[l.product_variant_id];
-                        return v ? `${v.productName} ${v.name} × ${l.quantity}` : `${l.quantity}`;
+                        return v ? `${v.productName} ${v.name} × ${l.quantity}` : l.description || `${l.quantity}`;
                       })
                       .join(", ")}>
                     {o.lines
                       .map((l) => {
                         const v = variantsById[l.product_variant_id];
-                        return v ? `${v.productName} ${v.name} × ${l.quantity}` : `${l.quantity}`;
+                        return v ? `${v.productName} ${v.name} × ${l.quantity}` : l.description || `${l.quantity}`;
                       })
                       .join(", ")}
                   </td>
@@ -1182,20 +1247,17 @@ function OrdersPanel({
               <label>
                 {t("wh.col.warehouse")}
                 <select
-                  required
                   value={form.warehouse_id}
                   onChange={(e) =>
                     setForm((p) => ({
                       ...p,
                       warehouse_id: e.target.value,
                       counterparty_id: "",
-                      lines: [{ product_variant_id: "", quantity: "" }],
+                      lines: [{ product_variant_id: "", description: "", quantity: "", unit_price_rub: "", isService: false }],
                     }))
                   }
                 >
-                  <option value="" disabled>
-                    {t("wh.selectWarehouse")}
-                  </option>
+                  <option value="">{t("wh.noWarehouseService")}</option>
                   {(warehouses || []).map((w) => (
                     <option key={w.id} value={w.id}>
                       {w.name}
@@ -1203,6 +1265,25 @@ function OrdersPanel({
                   ))}
                 </select>
               </label>
+              {!form.warehouse_id && multiCompany && (
+                <label>
+                  {t("dashboard.table.company")}
+                  <select
+                    required
+                    value={form.company_id}
+                    onChange={(e) => setForm((p) => ({ ...p, company_id: e.target.value, counterparty_id: "" }))}
+                  >
+                    <option value="" disabled>
+                      {t("wh.selectCompany")}
+                    </option>
+                    {(companies || []).map((c) => (
+                      <option key={c.company.id} value={c.company.id}>
+                        {c.company.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <label>
                 {t("wh.col.client")}
                 <Combobox
@@ -1263,13 +1344,36 @@ function OrdersPanel({
                   <div key={idx} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "flex-end" }}>
                     <label style={{ flex: 2 }}>
                       {idx === 0 && t("wh.col.productVariant")}
-                      <Combobox
-                        value={line.product_variant_id}
-                        onChange={(val) => updateLine(idx, { product_variant_id: val })}
-                        options={orderVariants.map((v) => ({ id: v.id, name: `${v.productName} · ${v.name}` }))}
-                        placeholder={t("wh.selectVariant")}
-                        required
-                      />
+                      {line.isService ? (
+                        <input
+                          required
+                          value={line.description}
+                          placeholder={t("wh.serviceDescriptionPlaceholder")}
+                          onChange={(e) => updateLine(idx, { description: e.target.value })}
+                        />
+                      ) : (
+                        <Combobox
+                          value={line.product_variant_id}
+                          onChange={(val) => updateLine(idx, { product_variant_id: val })}
+                          options={orderVariants.map((v) => ({ id: v.id, name: `${v.productName} · ${v.name}` }))}
+                          placeholder={t("wh.selectVariant")}
+                          required
+                        />
+                      )}
+                      <button
+                        type="button"
+                        className="fp-btn-tiny"
+                        style={{ marginTop: 4 }}
+                        onClick={() =>
+                          updateLine(idx, {
+                            isService: !line.isService,
+                            product_variant_id: "",
+                            description: "",
+                          })
+                        }
+                      >
+                        {line.isService ? t("wh.switchToProduct") : t("wh.switchToService")}
+                      </button>
                     </label>
                     <label style={{ flex: 1 }}>
                       {idx === 0 && t("wh.col.quantity")}
@@ -1344,7 +1448,7 @@ function OrdersPanel({
                   return (
                     <div key={line.id} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "flex-end" }}>
                       <label style={{ flex: 2 }}>
-                        {v ? `${v.productName} · ${v.name}` : "—"}{t("wh.qtyLabel", { qty: line.quantity })}
+                        {v ? `${v.productName} · ${v.name}` : line.description || "—"}{t("wh.qtyLabel", { qty: line.quantity })}
                         <input
                           required
                           type="number"

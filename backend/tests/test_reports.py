@@ -113,6 +113,26 @@ def test_profitability_report_computes_margin(client, db_session):
     assert row["margin"] == 0.6
 
 
+def test_profitability_net_cash_flow_includes_financing_accrual_cash_exclude_it(client, db_session):
+    from tests.conftest import make_project
+
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    project = make_project(db_session)
+    income_cat = make_category(db_session, "Приход", TxTypeEnum.income)
+    loan_cat = make_category(db_session, "Кредитная линия: пополнение", TxTypeEnum.income, is_financing=True)
+
+    _create_tx(client, headers, account.id, income_cat.id, 1000, "income", project_id=project.id)
+    _create_tx(client, headers, account.id, loan_cat.id, 500, "income", project_id=project.id)
+
+    for method, expected_revenue in (("accrual", 1000.0), ("cash", 1000.0), ("net_cash_flow", 1500.0)):
+        resp = client.get("/reports/profitability", headers=headers, params={"method": method})
+        assert resp.status_code == 200, resp.text
+        row = next(r for r in resp.json() if r["project_id"] == project.id)
+        assert row["revenue"] == expected_revenue, f"method={method}"
+
+
 def test_project_manager_scoped_out_of_profitability_for_other_projects(client, db_session):
     from tests.conftest import make_project
 
@@ -394,3 +414,45 @@ def test_fixed_asset_book_value_decreases_linearly(client, db_session):
     assert resp.status_code == 200, resp.text
     # 6 месяцев прошло из 12 -> 6/12 * 60000 = 30000 амортизировано, осталось 30000
     assert resp.json()["assets"]["fixed_assets_rub"] == 30000.0
+
+
+def test_balance_report_loans_rub_nets_draws_and_repayments(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session, opening_balance=0)
+    loan_draw_cat = make_category(db_session, "Кредитная линия: пополнение", TxTypeEnum.income, is_financing=True)
+    loan_repay_cat = make_category(db_session, "Кредитная линия: погашение", TxTypeEnum.expense, is_financing=True)
+
+    _create_tx(client, headers, account.id, loan_draw_cat.id, 200000, "income", date_odds="2026-08-01")
+    _create_tx(client, headers, account.id, loan_draw_cat.id, 50000, "income", date_odds="2026-08-10")
+    _create_tx(client, headers, account.id, loan_repay_cat.id, 30000, "expense", date_odds="2026-08-15")
+
+    resp = client.get("/reports/balance", headers=headers, params={"as_of": "2026-08-25"})
+    assert resp.status_code == 200, resp.text
+    liabilities = resp.json()["liabilities"]
+    assert liabilities["loans_rub"] == 220000.0
+    assert liabilities["total_rub"] == 220000.0
+
+    # На дату до второго транша долг должен быть меньше — куммулятивно к as_of
+    resp2 = client.get("/reports/balance", headers=headers, params={"as_of": "2026-08-05"})
+    assert resp2.json()["liabilities"]["loans_rub"] == 200000.0
+
+
+def test_balance_analysis_vertical_and_roe(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session, opening_balance=1000)
+    revenue_cat = make_category(db_session, "Выручка", TxTypeEnum.income)
+
+    _create_tx(client, headers, account.id, revenue_cat.id, 5000, "income", date_odds="2026-08-10")
+
+    resp = client.get("/reports/balance-analysis", headers=headers, params={"as_of": "2026-08-25"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    vertical = body["vertical"]["assets"]
+    # Единственный актив — деньги, значит 100% на кассу
+    assert vertical["cash_rub"] == 100.0
+    assert vertical["inventory_rub"] == 0.0
+    assert body["net_profit_rub"] == 5000.0
+    assert body["roe_pct"] is not None
+    assert body["working_capital_rub"] == 6000.0  # cash 1000+5000, пассивов нет
