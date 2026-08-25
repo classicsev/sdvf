@@ -245,6 +245,64 @@ class ProjectBudgetLine(Base):
     )
 
 
+class CompanyBudgetLine(Base):
+    """БДДС/БДР — плановая сумма по статье НА КОМПАНИЮ (не на проект), с
+    обязательной привязкой к месяцу. Тот же плоский шаблон, что
+    ProjectBudgetLine, но с period вместо project_id — компанийный бюджет по
+    определению помесячный (план на квартал/год просто заводится построчно
+    на каждый месяц), в отличие от бессрочного бюджета проекта."""
+
+    __tablename__ = "company_budget_lines"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
+    category_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("categories.id"))
+    period: Mapped[str] = mapped_column(String(7))  # "YYYY-MM"
+    amount: Mapped[float] = mapped_column(Numeric(14, 2))
+
+    __table_args__ = (
+        UniqueConstraint("company_id", "category_id", "period", name="uq_company_budget_lines_company_category_period"),
+    )
+
+
+class FixedAsset(Base):
+    """Основное средство — простая линейная амортизация без групп ОС и
+    переоценки (не запрошено). Балансовая стоимость считается на лету в
+    balance_report (см. book_value_rub в схеме), не хранится пересчитанным
+    полем — чтобы не рассинхронизироваться с текущей датой."""
+
+    __tablename__ = "fixed_assets"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
+    name: Mapped[str] = mapped_column(String(300))
+    purchase_date: Mapped[date] = mapped_column(Date)
+    purchase_cost_rub: Mapped[float] = mapped_column(Numeric(14, 2))
+    useful_life_months: Mapped[int] = mapped_column(Integer)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Attachment(Base):
+    """Универсальное вложение файла к любой сущности (заказ/операция/
+    контрагент) — одна таблица с полиморфной парой entity_type+entity_id,
+    а не три отдельные таблицы под каждую сущность. Хранение — локальный
+    диск (тот же паттерн, что avatar_url у User, см. routers/users.py) —
+    в проекте нет объектного хранилища, заводить его ради вложений
+    избыточно на текущем масштабе."""
+
+    __tablename__ = "attachments"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    company_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("companies.id"))
+    entity_type: Mapped[str] = mapped_column(String(30))  # "order" | "transaction" | "counterparty"
+    entity_id: Mapped[str] = mapped_column(UUID(as_uuid=False))
+    filename: Mapped[str] = mapped_column(String(300))
+    url: Mapped[str] = mapped_column(String(500))
+    uploaded_by: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Counterparty(Base):
     """Карточка контрагента-организации. Первична именно организация, контакты
     (физлица) подвязываются к ней — см. CounterpartyContact. Источник истины по
@@ -513,6 +571,11 @@ class Transaction(Base):
     # подтверждения.
     payment_confirmed: Mapped[bool] = mapped_column(Boolean, default=True)
     accrual_confirmed: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Необязательная связь со Складским заказом — чтобы увидеть "оплачено X
+    # из Y" по заказу (см. Order/OrderLine.unit_price_rub). Ручная, ставится
+    # так же, как project_id — при отгрузке заказа транзакция НЕ создаётся
+    # автоматически (см. HANDOVER.md).
+    order_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("orders.id", ondelete="SET NULL"), nullable=True)
 
     created_by: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -618,6 +681,12 @@ class ProductVariant(Base):
     # Калибр/модификация товара, напр. "40/60" — аналог размера/цвета в обычном складском учёте
     name: Mapped[str] = mapped_column(String(100))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Средневзвешенная себестоимость единицы (руб.) — пересчитывается при
+    # каждом Приходе с указанной unit_cost_rub (см. StockMovement.unit_cost_rub,
+    # build_movement()). Расход её не меняет, только списывает по текущей
+    # цене. NULL/0 у уже существующих вариантов до первого прихода с ценой —
+    # не ретроактивно, историю без цены не пересчитываем.
+    avg_cost_rub: Mapped[float] = mapped_column(Numeric(14, 2), nullable=True)
 
     product = relationship("Product")
 
@@ -639,6 +708,12 @@ class StockMovement(Base):
     )
     quantity: Mapped[float] = mapped_column(Numeric(12, 3))
     note: Mapped[str] = mapped_column(Text, nullable=True)
+    # Закупочная/учётная цена ЭТОГО прихода (руб/ед.) — опциональная. Если
+    # заполнена и direction — приход (in_/production_yield), пересчитывает
+    # ProductVariant.avg_cost_rub средневзвешенно (см. build_movement()).
+    # На Расход не влияет (списание идёт по уже текущей avg_cost_rub, это
+    # поле там просто не используется/не заполняется).
+    unit_cost_rub: Mapped[float] = mapped_column(Numeric(14, 2), nullable=True)
     # Мост с зарплатой: если заполнены оба поля, при создании движения автоматически
     # создаётся PayrollAccrual на executor_id (quantity * payroll_rate) — аналог
     # "ЗП = вес улова * ставка" из ручного складского учёта, но через модуль "Зарплата"
@@ -771,6 +846,10 @@ class OrderLine(Base):
     order_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("orders.id"))
     product_variant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("product_variants.id"))
     quantity: Mapped[float] = mapped_column(Numeric(12, 3))
+    # Цена за единицу (руб.) для этой строки заказа — опциональная (старые
+    # заказы без цены просто не участвуют в total_amount/"оплачено из Y",
+    # деградация мягкая, см. orders.py).
+    unit_price_rub: Mapped[float] = mapped_column(Numeric(14, 2), nullable=True)
     # Для будущего 装箱单 (Packing List) — Склад сейчас не различает физическую
     # упаковку (только абстрактное количество в единице товара), эти поля
     # заполняются отдельно, обычно уже на этапе подготовки к отгрузке, а не

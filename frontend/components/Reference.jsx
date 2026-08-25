@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Plus, X, Pencil, Trash2, Tag, LayoutDashboard, Building2, Contact, Ban, RotateCcw, RefreshCw, Upload, ChevronDown } from "lucide-react";
+import { Plus, X, Pencil, Trash2, Tag, LayoutDashboard, Building2, Contact, Ban, RotateCcw, RefreshCw, Upload, ChevronDown, Archive } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
@@ -147,6 +147,27 @@ const TABS = {
       { key: "currency", labelKey: "tx.form.currency" },
       { key: "opening_balance", labelKey: "reference.accounts.openingBalance", render: (v, row) => fmt(v, row.currency) },
       { key: "account_number", labelKey: "reference.col.accountNumber", render: (v) => v || "—" },
+      STATUS_COLUMN,
+    ],
+  },
+  fixedAssets: {
+    labelKey: "reference.tab.fixedAssets",
+    icon: Archive,
+    list: (token, companyId) => api.listFixedAssets(token, { company_id: companyId }),
+    create: (token, payload, companyId) => api.createFixedAsset(token, payload, companyId),
+    update: (token, id, payload) => api.updateFixedAsset(token, id, payload),
+    remove: (token, id) => api.deleteFixedAsset(token, id),
+    fields: [
+      { key: "name", labelKey: "reference.fixedAssets.name", type: "text", required: true },
+      { key: "purchase_date", labelKey: "reference.fixedAssets.purchaseDate", type: "date", required: true },
+      { key: "purchase_cost_rub", labelKey: "reference.fixedAssets.purchaseCost", type: "number", required: true },
+      { key: "useful_life_months", labelKey: "reference.fixedAssets.usefulLife", type: "number", required: true },
+    ],
+    columns: [
+      { key: "name", labelKey: "reference.fixedAssets.name" },
+      { key: "purchase_date", labelKey: "reference.fixedAssets.purchaseDate", render: (v) => fmtDate(v) },
+      { key: "purchase_cost_rub", labelKey: "reference.fixedAssets.purchaseCost", render: (v) => fmt(v, "RUB") },
+      { key: "book_value_rub", labelKey: "reference.fixedAssets.bookValue", render: (v) => fmt(v, "RUB") },
       STATUS_COLUMN,
     ],
   },
@@ -1038,6 +1059,13 @@ export default function Reference({ initialTab = "categories" }) {
                         setForm((p) => ({ ...p, [f.key]: v }));
                         if (f.key === "opening_balance") setStatementResult(null);
                       }}
+                    />
+                  ) : f.type === "date" ? (
+                    <input
+                      type="date"
+                      required={f.required}
+                      value={form[f.key]}
+                      onChange={(e) => setForm((p) => ({ ...p, [f.key]: e.target.value }))}
                     />
                   ) : (
                     <input

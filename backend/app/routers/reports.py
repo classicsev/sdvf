@@ -14,9 +14,13 @@ from app.models import (
     Account,
     Category,
     Company,
+    CompanyBudgetLine,
     Counterparty,
+    FixedAsset,
     PayrollAccrual,
     PayrollPayment,
+    Product,
+    ProductVariant,
     Project,
     ProjectBudgetLine,
     RoleEnum,
@@ -24,6 +28,7 @@ from app.models import (
     TxTypeEnum,
     User,
 )
+from app.routers.warehouse import compute_balances
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -541,11 +546,48 @@ def balance_report(
     )
     payable_to_staff = Decimal(str(total_accrued)) - Decimal(str(total_paid))
 
-    retained_earnings = cash_rub - payable_to_staff
+    # Себестоимость склада (см. ProductVariant.avg_cost_rub) — остаток на
+    # as_of, умноженный на текущую среднюю себестоимость варианта. Варианты
+    # без единой закупки с ценой (avg_cost_rub is None) не участвуют — их
+    # стоимость просто неизвестна, не считаем как 0 (не занижаем актив
+    # молча) и не считаем как ошибку (это ожидаемо для старых движений).
+    inventory_rub = Decimal("0")
+    balances = compute_balances(db, company_ids, as_of_date=as_of)
+    variant_ids = {b.product_variant_id for b in balances if b.quantity}
+    cost_by_variant = {}
+    if variant_ids:
+        cost_by_variant = {
+            v.id: v.avg_cost_rub
+            for v in db.query(ProductVariant).filter(ProductVariant.id.in_(variant_ids)).all()
+            if v.avg_cost_rub is not None
+        }
+    for b in balances:
+        cost = cost_by_variant.get(b.product_variant_id)
+        if cost is not None and b.quantity:
+            inventory_rub += Decimal(str(b.quantity)) * Decimal(str(cost))
+
+    # Основные средства — линейная амортизация на лету (см. models.py::FixedAsset).
+    fixed_assets_rub = Decimal("0")
+    for asset in db.query(FixedAsset).filter(FixedAsset.company_id.in_(company_ids), FixedAsset.is_active.is_(True)).all():
+        if asset.purchase_date > as_of:
+            continue
+        months_elapsed = (as_of.year - asset.purchase_date.year) * 12 + (as_of.month - asset.purchase_date.month)
+        cost = Decimal(str(asset.purchase_cost_rub))
+        monthly = cost / Decimal(asset.useful_life_months) if asset.useful_life_months else Decimal("0")
+        book_value = cost - monthly * Decimal(max(months_elapsed, 0))
+        fixed_assets_rub += max(book_value, Decimal("0"))
+
+    total_assets = cash_rub + inventory_rub + fixed_assets_rub
+    retained_earnings = total_assets - payable_to_staff
 
     return {
         "as_of": as_of.isoformat(),
-        "assets": {"cash_rub": float(cash_rub), "total_rub": float(cash_rub)},
+        "assets": {
+            "cash_rub": float(cash_rub),
+            "inventory_rub": float(inventory_rub),
+            "fixed_assets_rub": float(fixed_assets_rub),
+            "total_rub": float(total_assets),
+        },
         "liabilities": {
             "payable_to_staff_rub": float(payable_to_staff),
             "total_rub": float(payable_to_staff),

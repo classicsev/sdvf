@@ -3,6 +3,7 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.audit import log_action
@@ -26,6 +27,7 @@ from app.models import (
     RoleEnum,
     StockDirectionEnum,
     StockMovement,
+    Transaction,
     User,
     Warehouse,
 )
@@ -47,6 +49,37 @@ def _get_order_or_404(db: Session, user: User, order_id: str) -> Order:
     return get_or_404_accessible(db, Order, order_id, get_accessible_company_ids(db, user), "Заказ не найден")
 
 
+# Связь Заказа с оплатой (см. HANDOVER.md) — total/paid/balance_due не
+# хранятся, проставляются как обычные Python-атрибуты на уже загруженные
+# ORM-объекты прямо перед сериализацией (OrderOut читает их через
+# from_attributes=True). Один bulk-запрос по Transaction на весь список —
+# не N+1 на каждый заказ.
+def _attach_payment_fields(db: Session, orders):
+    single = isinstance(orders, Order)
+    order_list = [orders] if single else list(orders)
+    if order_list:
+        ids = [o.id for o in order_list]
+        paid_rows = (
+            db.query(Transaction.order_id, func.sum(Transaction.amount_rub))
+            .filter(Transaction.order_id.in_(ids), Transaction.payment_confirmed.is_(True))
+            .group_by(Transaction.order_id)
+            .all()
+        )
+        paid_by_order = {row[0]: float(row[1]) for row in paid_rows}
+        for o in order_list:
+            has_prices = any(l.unit_price_rub is not None for l in o.lines)
+            paid = round(paid_by_order.get(o.id, 0.0), 2)
+            o.paid_amount_rub = paid
+            if has_prices:
+                total = round(sum(float(l.quantity) * float(l.unit_price_rub or 0) for l in o.lines), 2)
+                o.total_amount_rub = total
+                o.balance_due_rub = round(total - paid, 2)
+            else:
+                o.total_amount_rub = None
+                o.balance_due_rub = None
+    return orders
+
+
 @router.get("", response_model=list[OrderOut], dependencies=[WAREHOUSE_MODULE])
 def list_orders(
     status_filter: str | None = None,
@@ -64,7 +97,7 @@ def list_orders(
         query = query.filter(Order.warehouse_id == warehouse_id)
     if counterparty_id:
         query = query.filter(Order.counterparty_id == counterparty_id)
-    return query.order_by(Order.created_at.desc()).all()
+    return _attach_payment_fields(db, query.order_by(Order.created_at.desc()).all())
 
 
 @router.post("", response_model=OrderOut, dependencies=[WAREHOUSE_MODULE])
@@ -106,6 +139,7 @@ def create_order(payload: OrderCreateIn, db: Session = Depends(get_db), user: Us
             company_id=warehouse.company_id,
             product_variant_id=l.product_variant_id,
             quantity=l.quantity,
+            unit_price_rub=l.unit_price_rub,
             package_count=l.package_count,
             package_type=l.package_type,
             gross_weight=l.gross_weight,
@@ -118,7 +152,7 @@ def create_order(payload: OrderCreateIn, db: Session = Depends(get_db), user: Us
     db.commit()
     db.refresh(order)
     log_action(db, user, action="create", entity_type="order", entity_id=order.id, company_id=warehouse.company_id)
-    return order
+    return _attach_payment_fields(db, order)
 
 
 @router.patch("/{order_id}", response_model=OrderOut, dependencies=[WAREHOUSE_MODULE])
@@ -163,6 +197,7 @@ def update_order(
                 company_id=order.company_id,
                 product_variant_id=l.product_variant_id,
                 quantity=l.quantity,
+                unit_price_rub=l.unit_price_rub,
                 package_count=l.package_count,
                 package_type=l.package_type,
                 gross_weight=l.gross_weight,
@@ -175,7 +210,7 @@ def update_order(
     db.commit()
     db.refresh(order)
     log_action(db, user, action="update", entity_type="order", entity_id=order.id, company_id=order.company_id)
-    return order
+    return _attach_payment_fields(db, order)
 
 
 @router.delete("/{order_id}", dependencies=[WAREHOUSE_MODULE])
@@ -213,11 +248,12 @@ def add_order_line(
             order_id=order.id,
             product_variant_id=payload.product_variant_id,
             quantity=payload.quantity,
+            unit_price_rub=payload.unit_price_rub,
         )
     )
     db.commit()
     db.refresh(order)
-    return order
+    return _attach_payment_fields(db, order)
 
 
 @router.delete("/{order_id}/lines/{line_id}", response_model=OrderOut, dependencies=[WAREHOUSE_MODULE])
@@ -235,7 +271,7 @@ def remove_order_line(
     db.delete(line)
     db.commit()
     db.refresh(order)
-    return order
+    return _attach_payment_fields(db, order)
 
 
 def _transition(db: Session, order: Order, allowed: tuple, new_status: OrderStatusEnum, user: User) -> Order:
@@ -248,7 +284,7 @@ def _transition(db: Session, order: Order, allowed: tuple, new_status: OrderStat
     db.commit()
     db.refresh(order)
     log_action(db, user, action=f"order_{new_status.value}", entity_type="order", entity_id=order.id, company_id=order.company_id)
-    return order
+    return _attach_payment_fields(db, order)
 
 
 @router.post("/{order_id}/reserve", response_model=OrderOut, dependencies=[WAREHOUSE_MODULE])
@@ -314,7 +350,7 @@ def ship_order(order_id: str, db: Session = Depends(get_db), user: User = Depend
     except Exception:
         pass
 
-    return order
+    return _attach_payment_fields(db, order)
 
 
 # ---------------------------------------------------------------------------

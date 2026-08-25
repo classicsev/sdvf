@@ -329,3 +329,68 @@ def test_reclass_legs_excluded_from_account_balance(client, db_session):
     balances = client.get("/reports/account-balances", headers=headers).json()
     row = next(r for r in balances["accounts"] if r["id"] == account.id)
     assert row["balance"] == 1000.0
+
+
+def test_balance_report_includes_inventory_and_fixed_assets(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    make_account(db_session, opening_balance=1000)
+
+    warehouse = client.post("/warehouse/warehouses", headers=headers, json={"name": "Артём"}).json()
+    product = client.post("/warehouse/products", headers=headers, json={"name": "Устрица", "unit": "кг"}).json()
+    variant = client.post(
+        "/warehouse/variants", headers=headers, json={"product_id": product["id"], "name": "40/60"}
+    ).json()
+    client.post(
+        "/warehouse/movements",
+        headers=headers,
+        json={
+            "date": "2026-08-01",
+            "warehouse_id": warehouse["id"],
+            "product_variant_id": variant["id"],
+            "direction": "in",
+            "quantity": 100,
+            "unit_cost_rub": 50,
+        },
+    )  # 100 * 50 = 5000 руб. на складе
+
+    asset_resp = client.post(
+        "/fixed-assets",
+        headers=headers,
+        json={
+            "name": "Холодильная камера",
+            "purchase_date": "2026-08-25",
+            "purchase_cost_rub": 120000,
+            "useful_life_months": 60,
+        },
+    )
+    assert asset_resp.status_code == 200, asset_resp.text
+
+    resp = client.get("/reports/balance", headers=headers, params={"as_of": "2026-08-25"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["assets"]["inventory_rub"] == 5000.0
+    # Куплено в тот же день, что as_of — 0 месяцев прошло, амортизация ещё не съела стоимость
+    assert body["assets"]["fixed_assets_rub"] == 120000.0
+    assert body["assets"]["total_rub"] == 1000.0 + 5000.0 + 120000.0
+
+
+def test_fixed_asset_book_value_decreases_linearly(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+
+    client.post(
+        "/fixed-assets",
+        headers=headers,
+        json={
+            "name": "Станок",
+            "purchase_date": "2026-02-25",
+            "purchase_cost_rub": 60000,
+            "useful_life_months": 12,
+        },
+    )
+
+    resp = client.get("/reports/balance", headers=headers, params={"as_of": "2026-08-25"})
+    assert resp.status_code == 200, resp.text
+    # 6 месяцев прошло из 12 -> 6/12 * 60000 = 30000 амортизировано, осталось 30000
+    assert resp.json()["assets"]["fixed_assets_rub"] == 30000.0

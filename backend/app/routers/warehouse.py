@@ -60,6 +60,12 @@ WAREHOUSE_EDITORS = [RoleEnum.admin, RoleEnum.warehouse_operator]
 ADMIN_ONLY = [RoleEnum.admin]
 
 POSITIVE_DIRECTIONS = {StockDirectionEnum.in_, StockDirectionEnum.production_yield, StockDirectionEnum.transfer_in}
+
+# Себестоимость (avg_cost_rub) пересчитывается ТОЛЬКО на реальном приобретении
+# товара — не на transfer_in (тот же уже свой товар просто переехал между
+# складами, стоимость не должна задваиваться/меняться) и не на adjustment
+# (ручная коррекция остатка, не покупка).
+COST_RECALC_DIRECTIONS = {StockDirectionEnum.in_, StockDirectionEnum.production_yield}
 # Через общий эндпоинт создания движения нельзя завести производственные/трансферные
 # записи напрямую — они создаются только парой через свои эндпоинты (перемещение —
 # здесь же transfer, производство — отдельный роутер в Склад-3), чтобы гарантировать
@@ -112,6 +118,16 @@ def build_movement(
     HTTP-валидации/коммита — переиспользуется и `create_movement` (эндпоинт),
     и `app/warehouse_sheets.py` (синк с Google Таблицами), чтобы не дублировать
     логику зарплатного моста в двух местах."""
+    # Себестоимость — средневзвешенная, считается ДО добавления нового
+    # движения (нужен остаток "как было"), см. COST_RECALC_DIRECTIONS выше.
+    old_qty = None
+    if payload.direction in COST_RECALC_DIRECTIONS and payload.unit_cost_rub is not None:
+        old_qty = (
+            db.query(func.sum(_signed_quantity_expr()))
+            .filter(StockMovement.product_variant_id == payload.product_variant_id)
+            .scalar()
+        ) or 0
+
     movement = StockMovement(
         company_id=company_id,
         date=payload.date,
@@ -122,11 +138,26 @@ def build_movement(
         note=payload.note,
         executor_id=payload.executor_id,
         payroll_rate=payload.payroll_rate,
+        unit_cost_rub=payload.unit_cost_rub,
         created_by=created_by,
     )
     db.add(movement)
     db.flush()
     _apply_payroll_bridge(db, movement, company_id)
+
+    if old_qty is not None:
+        variant = db.get(ProductVariant, payload.product_variant_id)
+        old_avg = float(variant.avg_cost_rub or 0)
+        old_qty = float(old_qty)
+        in_qty = float(payload.quantity)
+        total_qty = old_qty + in_qty
+        if total_qty > 0:
+            variant.avg_cost_rub = round(
+                (max(old_qty, 0) * old_avg + in_qty * float(payload.unit_cost_rub)) / total_qty, 2
+            )
+        else:
+            variant.avg_cost_rub = round(float(payload.unit_cost_rub), 2)
+
     return movement
 
 

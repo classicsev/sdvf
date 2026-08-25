@@ -22,7 +22,7 @@ from app.automation_engine import apply_rules
 from app.database import get_db
 from app.fx import convert_to_rub
 from app.holding_transfers import get_or_create_internal_transfer_category
-from app.models import Account, Category, Counterparty, Project, RoleEnum, Transaction, TxTypeEnum, User
+from app.models import Account, Category, Counterparty, Order, Project, RoleEnum, Transaction, TxTypeEnum, User
 from app.reference_scope import get_visible_or_404
 from app.schemas import (
     CloseMonthIn,
@@ -181,6 +181,8 @@ def create_transaction(
         get_visible_or_404(db, Project, payload.project_id, [target], "Проект не найден")
     if payload.counterparty_id:
         get_or_404_accessible(db, Counterparty, payload.counterparty_id, [target], "Контрагент не найден")
+    if payload.order_id:
+        get_or_404_accessible(db, Order, payload.order_id, [target], "Заказ не найден")
 
     amount_rub = _convert_to_rub(db, payload.currency, payload.amount, payload.date_odds)
 
@@ -387,6 +389,8 @@ def update_transaction(
         get_visible_or_404(db, Project, changes["project_id"], [tx.company_id], "Проект не найден")
     if changes.get("counterparty_id"):
         get_or_404_accessible(db, Counterparty, changes["counterparty_id"], [tx.company_id], "Контрагент не найден")
+    if changes.get("order_id"):
+        get_or_404_accessible(db, Order, changes["order_id"], [tx.company_id], "Заказ не найден")
 
     for field, value in changes.items():
         setattr(tx, field, value)

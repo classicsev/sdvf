@@ -454,6 +454,26 @@ export const api = {
     request(`/orders/${id}/generate-utd`, { method: "POST", token, body: payload }),
   openSdvfPdf: (token, id, doc) => openPdf(`/orders/${id}/sdvf-pdf`, { token, query: { doc } }),
 
+  listFixedAssets: (token, query) => request("/fixed-assets", { token, query }),
+  createFixedAsset: (token, payload, companyId) =>
+    request("/fixed-assets", { method: "POST", token, body: payload, query: { company_id: companyId } }),
+  updateFixedAsset: (token, id, payload) => request(`/fixed-assets/${id}`, { method: "PATCH", token, body: payload }),
+  deleteFixedAsset: (token, id) => request(`/fixed-assets/${id}`, { method: "DELETE", token }),
+
+  listCompanyBudgetLines: (token, period, companyId) =>
+    request("/company-budget-lines", { token, query: { period, company_id: companyId } }),
+  replaceCompanyBudgetLines: (token, period, lines, companyId) =>
+    request("/company-budget-lines", { method: "POST", token, body: lines, query: { period, company_id: companyId } }),
+  deleteCompanyBudgetLine: (token, id) => request(`/company-budget-lines/${id}`, { method: "DELETE", token }),
+  companyBudgetReport: (token, period, companyId) =>
+    request("/reports/company-budget", { token, query: { period, company_id: companyId } }),
+
+  listAttachments: (token, entityType, entityId) =>
+    request("/attachments", { token, query: { entity_type: entityType, entity_id: entityId } }),
+  uploadAttachment: (token, entityType, entityId, file) =>
+    uploadFile("/attachments", { token, file, query: { entity_type: entityType, entity_id: entityId } }),
+  deleteAttachment: (token, id) => request(`/attachments/${id}`, { method: "DELETE", token }),
+
   listRecipes: (token, query) => request("/production/recipes", { token, query }),
   createRecipe: (token, payload, companyId) =>
     request("/production/recipes", { method: "POST", token, body: payload, query: { company_id: companyId } }),

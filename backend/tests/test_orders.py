@@ -1,5 +1,5 @@
 from app.models import RoleEnum, StockMovement
-from tests.conftest import auth_headers, make_company, make_counterparty, make_user
+from tests.conftest import auth_headers, make_account, make_category, make_company, make_counterparty, make_user
 
 
 def _setup_catalog(client, headers):
@@ -356,3 +356,81 @@ def test_viewer_can_read_but_not_write_orders(client, db_session):
         json={"counterparty_id": cp.id, "warehouse_id": warehouse["id"], "lines": [{"product_variant_id": variant["id"], "quantity": 5}]},
     )
     assert resp.status_code == 403
+
+
+def test_order_paid_amount_from_linked_transactions(client, db_session):
+    """Связь Заказа с оплатой (order_id на Transaction) — "оплачено X из Y",
+    см. HANDOVER.md."""
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    warehouse, product, variant = _setup_catalog(client, headers)
+    cp = make_counterparty(db_session)
+    account = make_account(db_session)
+    category = make_category(db_session)
+
+    order = client.post(
+        "/orders",
+        headers=headers,
+        json={
+            "counterparty_id": cp.id,
+            "warehouse_id": warehouse["id"],
+            "lines": [{"product_variant_id": variant["id"], "quantity": 10, "unit_price_rub": 500}],
+        },
+    ).json()
+    assert order["total_amount_rub"] == 5000.0
+    assert order["paid_amount_rub"] == 0.0
+    assert order["balance_due_rub"] == 5000.0
+
+    client.post(
+        "/transactions",
+        headers=headers,
+        json={
+            "date_odds": "2026-08-25",
+            "account_id": account.id,
+            "category_id": category.id,
+            "type": "income",
+            "amount": 3000,
+            "currency": "RUB",
+            "order_id": order["id"],
+        },
+    )
+    # Неподтверждённая оплата не должна учитываться в paid_amount
+    client.post(
+        "/transactions",
+        headers=headers,
+        json={
+            "date_odds": "2026-08-25",
+            "account_id": account.id,
+            "category_id": category.id,
+            "type": "income",
+            "amount": 1000,
+            "currency": "RUB",
+            "order_id": order["id"],
+            "payment_confirmed": False,
+        },
+    )
+
+    resp = client.get(f"/orders", headers=headers, params={"counterparty_id": cp.id})
+    updated_order = next(o for o in resp.json() if o["id"] == order["id"])
+    assert updated_order["paid_amount_rub"] == 3000.0
+    assert updated_order["balance_due_rub"] == 2000.0
+
+
+def test_order_without_prices_has_null_totals(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    warehouse, product, variant = _setup_catalog(client, headers)
+    cp = make_counterparty(db_session)
+
+    order = client.post(
+        "/orders",
+        headers=headers,
+        json={
+            "counterparty_id": cp.id,
+            "warehouse_id": warehouse["id"],
+            "lines": [{"product_variant_id": variant["id"], "quantity": 10}],
+        },
+    ).json()
+    assert order["total_amount_rub"] is None
+    assert order["balance_due_rub"] is None
+    assert order["paid_amount_rub"] == 0.0

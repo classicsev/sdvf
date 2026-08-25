@@ -14,6 +14,9 @@ class TransactionBase(BaseModel):
     category_id: str
     project_id: Optional[str] = None
     counterparty_id: Optional[str] = None
+    # Необязательная связь со Складским заказом — "оплачено X из Y" (см.
+    # Order.total_amount/paid_amount в orders.py). Ручная, как project_id.
+    order_id: Optional[str] = None
     type: TxTypeEnum
     amount: float
     currency: str
@@ -99,6 +102,7 @@ class TransactionUpdate(BaseModel):
     category_id: Optional[str] = None
     project_id: Optional[str] = None
     counterparty_id: Optional[str] = None
+    order_id: Optional[str] = None
     type: Optional[TxTypeEnum] = None
     amount: Optional[float] = None
     currency: Optional[str] = None
@@ -182,7 +186,51 @@ class ProjectBudgetLineOut(ProjectBudgetLineIn):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    project_id: str
+
+
+class CompanyBudgetLineIn(BaseModel):
+    # period не входит сюда — приходит отдельным query-параметром на сам
+    # bulk-эндпоинт (тот же приём, что project_id из URL у ProjectBudgetLineIn).
+    category_id: str
+    amount: float
+
+
+class CompanyBudgetLineOut(CompanyBudgetLineIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    period: str
+
+
+class FixedAssetIn(BaseModel):
+    name: str
+    purchase_date: date
+    purchase_cost_rub: float
+    useful_life_months: int
+    is_active: bool = True
+
+
+class FixedAssetOut(FixedAssetIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    company_id: str
+    # Текущая балансовая стоимость (линейная амортизация на сегодня) — только
+    # для чтения, проставляется в роутере (fixed_assets.py), не хранится.
+    book_value_rub: Optional[float] = None
+
+
+class AttachmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    company_id: str
+    entity_type: str
+    entity_id: str
+    filename: str
+    url: str
+    uploaded_by: Optional[str] = None
+    created_at: datetime
 
 
 class AccountIn(BaseModel):
@@ -763,6 +811,9 @@ class ProductVariantOut(ProductVariantIn):
 
     id: str
     company_id: str
+    # Средневзвешенная себестоимость единицы (см. models.py::ProductVariant.avg_cost_rub) —
+    # только для чтения, пересчитывается сервером на приходе с ценой.
+    avg_cost_rub: Optional[float] = None
 
 
 class StockMovementIn(BaseModel):
@@ -774,6 +825,8 @@ class StockMovementIn(BaseModel):
     note: Optional[str] = None
     executor_id: Optional[str] = None
     payroll_rate: Optional[float] = None
+    # Закупочная цена этого прихода (руб/ед.) — см. models.py::StockMovement.unit_cost_rub.
+    unit_cost_rub: Optional[float] = None
 
 
 class StockMovementOut(BaseModel):
@@ -789,6 +842,7 @@ class StockMovementOut(BaseModel):
     note: Optional[str] = None
     executor_id: Optional[str] = None
     payroll_rate: Optional[float] = None
+    unit_cost_rub: Optional[float] = None
     payroll_accrual_id: Optional[str] = None
     order_id: Optional[str] = None
     production_run_id: Optional[str] = None
@@ -894,6 +948,8 @@ class StockBalanceOut(BaseModel):
 class OrderLineIn(BaseModel):
     product_variant_id: str
     quantity: float
+    # Цена за единицу (руб.) — опциональна, см. models.py::OrderLine.unit_price_rub.
+    unit_price_rub: Optional[float] = None
     # Для будущего 装箱单 (Packing List) — см. models.py::OrderLine, опциональны.
     package_count: Optional[int] = None
     package_type: Optional[str] = None
@@ -908,6 +964,7 @@ class OrderLineOut(BaseModel):
     id: str
     product_variant_id: str
     quantity: float
+    unit_price_rub: Optional[float] = None
     package_count: Optional[int] = None
     package_type: Optional[str] = None
     gross_weight: Optional[float] = None
@@ -961,6 +1018,13 @@ class OrderOut(BaseModel):
     lines: list[OrderLineOut] = []
     sdvf_invoice_ref: Optional[dict] = None
     sdvf_utd_ref: Optional[dict] = None
+    # Связь Заказа с оплатой (см. HANDOVER.md) — total_amount_rub считается
+    # ТОЛЬКО если хотя бы у одной позиции указана unit_price_rub, иначе None
+    # (заказ без цен просто не показывает "оплачено из Y", не 0/0 путаницы).
+    # Проставляются в роутере (orders.py::_attach_payment_fields), не хранятся.
+    total_amount_rub: Optional[float] = None
+    paid_amount_rub: Optional[float] = None
+    balance_due_rub: Optional[float] = None
 
 
 class SdvfDocumentLineIn(BaseModel):

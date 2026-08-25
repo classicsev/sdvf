@@ -27,10 +27,12 @@ import {
   Eye,
 } from "lucide-react";
 import { Combobox } from "./Combobox";
+import AmountInput from "./AmountInput";
+import AttachmentList from "./AttachmentList";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
-import { fmtDate } from "../lib/format";
+import { fmt, fmtDate } from "../lib/format";
 import { canEditWarehouse } from "../lib/roles";
 import { backdropClickProps } from "../lib/modalBackdrop";
 import { useTranslation } from "../lib/i18n";
@@ -770,7 +772,7 @@ const ORDER_FORM_EMPTY = {
   incoterms: "",
   incoterms_place: "",
   payment_terms: "",
-  lines: [{ product_variant_id: "", quantity: "" }],
+  lines: [{ product_variant_id: "", quantity: "", unit_price_rub: "" }],
 };
 
 // "Отгрузки календарь" в реальной таблице пользователя — план по дням
@@ -905,14 +907,18 @@ function OrdersPanel({
       incoterms: order.incoterms || "",
       incoterms_place: order.incoterms_place || "",
       payment_terms: order.payment_terms || "",
-      lines: order.lines.map((l) => ({ product_variant_id: l.product_variant_id, quantity: String(l.quantity) })),
+      lines: order.lines.map((l) => ({
+        product_variant_id: l.product_variant_id,
+        quantity: String(l.quantity),
+        unit_price_rub: l.unit_price_rub != null ? String(l.unit_price_rub) : "",
+      })),
     });
     setFormError("");
     setModalOpen(true);
   }
 
   function addLine() {
-    setForm((p) => ({ ...p, lines: [...p.lines, { product_variant_id: "", quantity: "" }] }));
+    setForm((p) => ({ ...p, lines: [...p.lines, { product_variant_id: "", quantity: "", unit_price_rub: "" }] }));
   }
 
   function removeLine(idx) {
@@ -936,7 +942,11 @@ function OrdersPanel({
       incoterms: form.incoterms || null,
       incoterms_place: form.incoterms_place || null,
       payment_terms: form.payment_terms || null,
-      lines: form.lines.map((l) => ({ product_variant_id: l.product_variant_id, quantity: Number(l.quantity) })),
+      lines: form.lines.map((l) => ({
+        product_variant_id: l.product_variant_id,
+        quantity: Number(l.quantity),
+        unit_price_rub: l.unit_price_rub ? Number(l.unit_price_rub) : null,
+      })),
     };
     try {
       if (editingOrder) {
@@ -1025,6 +1035,7 @@ function OrdersPanel({
                 <th>{t("wh.col.composition")}</th>
                 <th>{t("wh.col.courier")}</th>
                 <th className="center">{t("reference.status")}</th>
+                <th>{t("wh.col.paymentStatus")}</th>
                 <th className="fp-table-actions-col"></th>
               </tr>
             </thead>
@@ -1032,7 +1043,7 @@ function OrdersPanel({
               {orderGroups.map((group) => (
                 <Fragment key={group.date || "no-date"}>
                   <tr className="fp-table-group-row">
-                    <td colSpan={(showCompanyColumn ? 1 : 0) + 6} className="fp-table-group-label">
+                    <td colSpan={(showCompanyColumn ? 1 : 0) + 7} className="fp-table-group-label">
                       {group.date ? weekdayLabel(group.date) : t("wh.noDateGroup")}
                     </td>
                   </tr>
@@ -1063,6 +1074,20 @@ function OrdersPanel({
                     <span className={`fp-status-badge ${ORDER_STATUS_BADGE[o.status] || ""}`}>
                       {orderStatusLabel(t, o.status)}
                     </span>
+                  </td>
+                  <td className="fp-muted" style={{ fontSize: 12.5 }}>
+                    {o.total_amount_rub == null ? (
+                      "—"
+                    ) : (
+                      <>
+                        {fmt(o.paid_amount_rub, "RUB")} / {fmt(o.total_amount_rub, "RUB")}
+                        {o.balance_due_rub > 0 && (
+                          <div style={{ color: "var(--rust, #a8503f)" }}>
+                            {t("wh.balanceDue")}: {fmt(o.balance_due_rub, "RUB")}
+                          </div>
+                        )}
+                      </>
+                    )}
                   </td>
                   {canEditRow && (
                     <td className="fp-table-actions-col">
@@ -1256,6 +1281,14 @@ function OrdersPanel({
                         onChange={(e) => updateLine(idx, { quantity: e.target.value })}
                       />
                     </label>
+                    <label style={{ flex: 1 }}>
+                      {idx === 0 && t("wh.pricePerUnit")}
+                      <AmountInput
+                        placeholder={t("wh.unitPriceOptional")}
+                        value={line.unit_price_rub}
+                        onChange={(v) => updateLine(idx, { unit_price_rub: v })}
+                      />
+                    </label>
                     {form.lines.length > 1 && (
                       <button
                         type="button"
@@ -1272,6 +1305,10 @@ function OrdersPanel({
                   <Plus size={13} /> {t("wh.addLine")}
                 </button>
               </div>
+
+              {editingOrder && (
+                <AttachmentList token={token} entityType="order" entityId={editingOrder.id} canEdit={canEdit} />
+              )}
 
               {formError && <div className="fp-form-error fp-span-2">{formError}</div>}
               <div className="fp-modal-foot fp-span-2">

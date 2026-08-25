@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+import { Plus, Save, Trash2 } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
@@ -8,8 +9,10 @@ import { fmt } from "../lib/format";
 import { canEditReference } from "../lib/roles";
 import { useTranslation } from "../lib/i18n";
 import ProjectCard from "./ProjectCard";
+import { Combobox } from "./Combobox";
+import AmountInput from "./AmountInput";
 
-const TAB_KEYS = ["cashflow", "pnl", "balance", "debt", "profitability", "calendar"];
+const TAB_KEYS = ["cashflow", "pnl", "balance", "debt", "profitability", "companyBudget", "calendar"];
 
 // Селектор компании для отчётов — общий для всех вкладок (см. план "Мульти-компании").
 // Пусто по умолчанию = сводно по всем доступным компаниям.
@@ -181,6 +184,16 @@ function BalanceTab({ token }) {
                   <span className="fill" />
                   <span className="value">{fmt(data.assets.cash_rub, "RUB")}</span>
                 </div>
+                <div className="ledger-row">
+                  <span className="label">{t("reports.inventory")}</span>
+                  <span className="fill" />
+                  <span className="value">{fmt(data.assets.inventory_rub, "RUB")}</span>
+                </div>
+                <div className="ledger-row">
+                  <span className="label">{t("reports.fixedAssets")}</span>
+                  <span className="fill" />
+                  <span className="value">{fmt(data.assets.fixed_assets_rub, "RUB")}</span>
+                </div>
                 <div className="ledger-row fp-ledger-total">
                   <span className="label">{t("reports.totalAssets")}</span>
                   <span className="fill" />
@@ -214,6 +227,137 @@ function BalanceTab({ token }) {
         )
       )}
       <p className="fp-note">{t("reports.balanceNote")}</p>
+    </div>
+  );
+}
+
+// БДДС/БДР — компанийный (не проектный) план по статьям на месяц, тот же
+// "категория+сумма, добавить/удалить строку" UI-паттерн, что уже сделан для
+// бюджета проекта (см. ProjectCard.jsx) — переиспользуем его, не изобретаем
+// новый.
+function CompanyBudgetTab({ token }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const canEdit = (user.companies || []).some((m) => canEditReference(m.role));
+  const [companyId, setCompanyId] = useState("");
+  const [period, setPeriod] = useState(() => new Date().toISOString().slice(0, 7));
+
+  const { data: categories } = useResource(() => api.listCategories(token), [token]);
+  const { data, loading, error, reload } = useResource(
+    () => api.companyBudgetReport(token, period, companyId || undefined),
+    [token, period, companyId]
+  );
+
+  const [rows, setRows] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  useEffect(() => {
+    if (data) {
+      setRows(data.lines.filter((l) => l.plan_rub).map((l) => ({ category_id: l.category_id, amount: String(l.plan_rub) })));
+    }
+  }, [data]);
+
+  function addRow() {
+    setRows((prev) => [...prev, { category_id: "", amount: "" }]);
+  }
+  function updateRow(i, field, value) {
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
+  }
+  function removeRow(i) {
+    setRows((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setSaveError("");
+    try {
+      const payload = rows
+        .filter((r) => r.category_id && r.amount !== "")
+        .map((r) => ({ category_id: r.category_id, amount: Number(r.amount) }));
+      await api.replaceCompanyBudgetLines(token, period, payload, companyId || undefined);
+      reload();
+    } catch (err) {
+      setSaveError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: 14 }}>
+        <CompanyFilter companyId={companyId} onChange={setCompanyId} />
+        <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} />
+      </div>
+      {error && <div className="fp-error-banner">{error}</div>}
+      {loading ? (
+        <div className="fp-loading">{t("common.loading")}</div>
+      ) : (
+        data && (
+          <div className="fp-grid-2">
+            <div className="fp-panel">
+              <div className="fp-panel-head">
+                <h3>{t("reports.companyBudget.factByCategory")}</h3>
+              </div>
+              <div className="fp-ledger">
+                {data.lines.map((row) => (
+                  <div className="ledger-row" key={row.category_id}>
+                    <span className="label">{row.category_name}</span>
+                    <span className="fill" />
+                    <span className="value">
+                      {fmt(row.fact_rub, "RUB")} / {fmt(row.plan_rub, "RUB")}
+                    </span>
+                  </div>
+                ))}
+                {data.lines.length === 0 && <div className="fp-empty">{t("reports.noCalendarData", { year: period })}</div>}
+                <div className="ledger-row fp-ledger-total">
+                  <span className="label">{t("reports.companyBudget.total")}</span>
+                  <span className="fill" />
+                  <span className="value">
+                    {fmt(data.fact_total_rub, "RUB")} / {fmt(data.plan_total_rub, "RUB")}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="fp-panel">
+              <div className="fp-panel-head fp-panel-head-row">
+                <h3>{t("reference.projects.plan")}</h3>
+                {canEdit && (
+                  <button type="button" className="fp-btn-tiny" onClick={handleSave} disabled={saving}>
+                    <Save size={13} /> {saving ? t("common.saving") : t("common.save")}
+                  </button>
+                )}
+              </div>
+              {rows.map((row, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                  <div style={{ flex: 1 }}>
+                    <Combobox
+                      value={row.category_id}
+                      onChange={(val) => updateRow(i, "category_id", val)}
+                      options={(categories || []).map((c) => ({ id: c.id, name: c.name }))}
+                      placeholder={t("tx.form.selectCategory")}
+                    />
+                  </div>
+                  <AmountInput style={{ width: 120 }} value={row.amount} onChange={(v) => updateRow(i, "amount", v)} />
+                  {canEdit && (
+                    <button type="button" className="fp-icon-btn" onClick={() => removeRow(i)}>
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {canEdit && (
+                <button type="button" className="fp-btn-ghost" onClick={addRow} style={{ marginTop: 4 }}>
+                  <Plus size={13} /> {t("reference.projects.addBudgetLine")}
+                </button>
+              )}
+              {saveError && <div className="fp-form-error">{saveError}</div>}
+            </div>
+          </div>
+        )
+      )}
     </div>
   );
 }
@@ -415,6 +559,7 @@ const TAB_COMPONENTS = {
   balance: BalanceTab,
   debt: DebtTab,
   profitability: ProfitabilityTab,
+  companyBudget: CompanyBudgetTab,
   calendar: CalendarTab,
 };
 

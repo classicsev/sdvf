@@ -7,10 +7,13 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.routers import (
     api_keys,
+    attachments,
     audit,
     automation,
     companies,
+    company_budget,
     dadata,
+    fixed_assets,
     identity_provider,
     oauth,
     orders,
@@ -69,6 +72,9 @@ app.include_router(warehouse_sync.router)
 app.include_router(orders.router)
 app.include_router(production.router)
 app.include_router(statements.router)
+app.include_router(fixed_assets.router)
+app.include_router(company_budget.router)
+app.include_router(attachments.router)
 
 MEDIA_DIR = Path(__file__).resolve().parent.parent / "media"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)

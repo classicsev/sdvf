@@ -9,6 +9,7 @@ import { fmt, fmtDate } from "../lib/format";
 import { canEditTransactions } from "../lib/roles";
 import { Combobox } from "./Combobox";
 import AmountInput from "./AmountInput";
+import AttachmentList from "./AttachmentList";
 import { backdropClickProps } from "../lib/modalBackdrop";
 import { useTranslation } from "../lib/i18n";
 
@@ -33,6 +34,7 @@ const EMPTY_FORM = {
   category_id: "",
   project_id: "",
   counterparty_id: "",
+  order_id: "",
   type: "expense",
   amount: "",
   currency: "RUB",
@@ -98,6 +100,12 @@ export default function Transactions() {
   const { data: projects, reload: reloadProjects } = useResource(() => api.listProjects(token), [token]);
   const { data: counterparties, reload: reloadCounterparties } = useResource(
     () => api.listCounterparties(token),
+    [token]
+  );
+  // Заказы — необязательная связь (см. HANDOVER.md, "Связь Заказа с оплатой").
+  // Склад может быть выключен для компании — .catch(() => []) вместо падения формы.
+  const { data: orders } = useResource(
+    () => api.listOrders(token).catch(() => []),
     [token]
   );
 
@@ -204,6 +212,7 @@ export default function Transactions() {
       category_id: tx.category_id,
       project_id: tx.project_id || "",
       counterparty_id: tx.counterparty_id || "",
+      order_id: tx.order_id || "",
       type: tx.type,
       amount: String(tx.amount),
       currency: tx.currency,
@@ -346,6 +355,7 @@ export default function Transactions() {
         category_id: form.category_id,
         project_id: form.project_id || null,
         counterparty_id: form.counterparty_id || null,
+        order_id: form.order_id || null,
         type: form.type,
         amount: Number(form.amount),
         currency: form.currency,
@@ -515,6 +525,7 @@ export default function Transactions() {
   const selectableAccounts = selectable(accounts, form.account_id);
   const selectableProjects = selectable(projects, form.project_id);
   const selectableCounterparties = selectable(counterparties, form.counterparty_id);
+  const selectableOrders = selectable(orders, form.order_id);
   const editableCompanies = companies.filter((m) => canEditTransactions(m.role));
   const showCompanyColumn = multiCompany && !filters.company;
   // Перемещение — не привязано к одной выбранной в форме компании: счета
@@ -1115,6 +1126,21 @@ export default function Transactions() {
                   </label>
 
                   <label>
+                    {t("tx.form.order")}
+                    <Combobox
+                      value={form.order_id}
+                      onChange={(val) => updateField("order_id", val)}
+                      options={selectableOrders.map((o) => ({
+                        id: o.id,
+                        name: o.lines?.length
+                          ? `${o.requested_date || ""} · ${o.lines.length} поз.${o.balance_due_rub > 0 ? ` · остаток ${fmt(o.balance_due_rub, "RUB")}` : ""}`.trim()
+                          : o.id,
+                      }))}
+                      placeholder={t("tx.form.notSpecified")}
+                    />
+                  </label>
+
+                  <label>
                     {t("tx.form.currency")}
                     <input value={form.currency} onChange={(e) => updateField("currency", e.target.value.toUpperCase())} />
                   </label>
@@ -1174,6 +1200,8 @@ export default function Transactions() {
                   )}
                 </div>
               )}
+
+              {editing && <AttachmentList token={token} entityType="transaction" entityId={editing.id} />}
 
               {formError && <div className="fp-form-error fp-span-2">{formError}</div>}
 
