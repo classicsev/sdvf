@@ -62,6 +62,8 @@ def _filtered_query(
     category: Optional[str],
     date_from: Optional[date],
     date_to: Optional[date],
+    project_group_id: Optional[str] = None,
+    confirmed: Optional[str] = None,
 ) -> Query:
     # Без ?company_id= — сразу по всем компаниям пользователя (сводно, без
     # переключения контекста); с ?company_id= — только по одной.
@@ -75,6 +77,10 @@ def _filtered_query(
         query = query.filter(Transaction.project_id == forced_project)
     elif project:
         query = query.filter(Transaction.project_id == project)
+    elif project_group_id:
+        query = query.filter(
+            Transaction.project_id.in_(db.query(Project.id).filter(Project.group_id == project_group_id))
+        )
 
     if account:
         query = query.filter(Transaction.account_id == account)
@@ -84,6 +90,14 @@ def _filtered_query(
         query = query.filter(Transaction.date_odds >= date_from)
     if date_to:
         query = query.filter(Transaction.date_odds <= date_to)
+    if confirmed == "unconfirmed":
+        query = query.filter(
+            (Transaction.payment_confirmed.is_(False)) | (Transaction.accrual_confirmed.is_(False))
+        )
+    elif confirmed == "confirmed":
+        query = query.filter(
+            Transaction.payment_confirmed.is_(True), Transaction.accrual_confirmed.is_(True)
+        )
 
     # Тай-брейкер обязателен: при пагинации (.limit().offset()) Postgres не
     # гарантирует стабильный порядок строк с одинаковой date_odds между
@@ -118,6 +132,8 @@ def list_transactions(
     category: Optional[str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    project_group_id: Optional[str] = None,
+    confirmed: Optional[str] = None,
     limit: int = 50,
     skip: int = 0,
     all_records: bool = False,
@@ -129,9 +145,12 @@ def list_transactions(
     - limit: размер страницы (по умолчанию 50, максимум 1000)
     - skip: количество пропускаемых записей (по умолчанию 0)
     - all_records: вернуть все записи без пагинации (игнорирует limit и skip)
+    - project_group_id: все операции по проектам данной группы (игнорируется, если задан project)
+    - confirmed: "confirmed" | "unconfirmed" — по статусу подтверждения оплаты/начисления
     """
+    args = (db, user, company_id, project, account, category, date_from, date_to, project_group_id, confirmed)
     if all_records:
-        return _filtered_query(db, user, company_id, project, account, category, date_from, date_to).all()
+        return _filtered_query(*args).all()
 
     # Валидация limit
     if limit < 1 or limit > 1000:
@@ -139,7 +158,7 @@ def list_transactions(
     if skip < 0:
         skip = 0
 
-    return _filtered_query(db, user, company_id, project, account, category, date_from, date_to).limit(limit).offset(skip).all()
+    return _filtered_query(*args).limit(limit).offset(skip).all()
 
 
 @router.get("/count", response_model=int, dependencies=[Depends(require_module("finance"))])
@@ -150,11 +169,15 @@ def count_transactions(
     category: Optional[str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    project_group_id: Optional[str] = None,
+    confirmed: Optional[str] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     """Общее количество операций, подходящих под фильтры."""
-    return _filtered_query(db, user, company_id, project, account, category, date_from, date_to).count()
+    return _filtered_query(
+        db, user, company_id, project, account, category, date_from, date_to, project_group_id, confirmed
+    ).count()
 
 
 @router.post(
@@ -560,6 +583,8 @@ def batch_delete_transactions_by_filter(
     category: Optional[str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    project_group_id: Optional[str] = None,
+    confirmed: Optional[str] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -567,7 +592,9 @@ def batch_delete_transactions_by_filter(
     Пакетное удаление всех операций, соответствующих текущим фильтрам.
     Проверяет права для каждой операции отдельно.
     """
-    transactions = _filtered_query(db, user, company_id, project, account, category, date_from, date_to).all()
+    transactions = _filtered_query(
+        db, user, company_id, project, account, category, date_from, date_to, project_group_id, confirmed
+    ).all()
 
     deleted_count = 0
     failed_ids = []
@@ -603,10 +630,14 @@ def export_transactions_xlsx(
     category: Optional[str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    project_group_id: Optional[str] = None,
+    confirmed: Optional[str] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    rows = _filtered_query(db, user, company_id, project, account, category, date_from, date_to).all()
+    rows = _filtered_query(
+        db, user, company_id, project, account, category, date_from, date_to, project_group_id, confirmed
+    ).all()
     company_ids = resolve_company_ids(db, user, company_id)
 
     account_names = {a.id: a.name for a in db.query(Account).filter(Account.company_id.in_(company_ids)).all()}

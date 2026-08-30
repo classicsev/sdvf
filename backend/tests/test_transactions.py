@@ -3,7 +3,7 @@ import datetime
 import openpyxl
 
 from app.models import ExchangeRate, RoleEnum, TxTypeEnum
-from tests.conftest import auth_headers, make_account, make_category, make_project, make_user
+from tests.conftest import auth_headers, make_account, make_category, make_project, make_project_group, make_user
 
 
 def test_create_transaction_rub_no_conversion(client, db_session):
@@ -304,6 +304,92 @@ def test_count_transactions_respects_same_filters(client, db_session):
     resp = client.get(f"/transactions/count?account={account_a.id}&date_from=2026-06-20", headers=headers)
     assert resp.status_code == 200
     assert resp.json() == 1
+
+
+def test_list_filters_by_project_group(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.income)
+    group_a = make_project_group(db_session, "Группа А")
+    group_b = make_project_group(db_session, "Группа Б")
+    project_a1 = make_project(db_session, "Проект А1", group_id=group_a.id)
+    project_a2 = make_project(db_session, "Проект А2", group_id=group_a.id)
+    project_b1 = make_project(db_session, "Проект Б1", group_id=group_b.id)
+    project_none = make_project(db_session, "Без группы")
+
+    def _tx(project_id, amount):
+        return client.post(
+            "/transactions",
+            headers=headers,
+            json={
+                "date_odds": "2026-06-01",
+                "account_id": account.id,
+                "category_id": category.id,
+                "project_id": project_id,
+                "type": "income",
+                "amount": amount,
+                "currency": "RUB",
+            },
+        ).json()
+
+    _tx(project_a1.id, 100)
+    _tx(project_a2.id, 200)
+    _tx(project_b1.id, 300)
+    _tx(project_none.id, 400)
+
+    resp = client.get(f"/transactions?project_group_id={group_a.id}", headers=headers)
+    rows = resp.json()
+    assert {r["amount"] for r in rows} == {100.0, 200.0}
+
+    resp = client.get(f"/transactions/count?project_group_id={group_a.id}", headers=headers)
+    assert resp.json() == 2
+
+    # Явно выбранный project имеет приоритет над project_group_id.
+    resp = client.get(
+        f"/transactions?project_group_id={group_a.id}&project={project_b1.id}", headers=headers
+    )
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["amount"] == 300.0
+
+
+def test_list_filters_by_confirmed_status(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.income)
+
+    def _tx(amount, payment_confirmed, accrual_confirmed):
+        return client.post(
+            "/transactions",
+            headers=headers,
+            json={
+                "date_odds": "2026-06-01",
+                "account_id": account.id,
+                "category_id": category.id,
+                "type": "income",
+                "amount": amount,
+                "currency": "RUB",
+                "payment_confirmed": payment_confirmed,
+                "accrual_confirmed": accrual_confirmed,
+            },
+        ).json()
+
+    _tx(100, True, True)
+    _tx(200, False, True)
+    _tx(300, True, False)
+
+    resp = client.get("/transactions?confirmed=confirmed", headers=headers)
+    rows = resp.json()
+    assert {r["amount"] for r in rows} == {100.0}
+
+    resp = client.get("/transactions?confirmed=unconfirmed", headers=headers)
+    rows = resp.json()
+    assert {r["amount"] for r in rows} == {200.0, 300.0}
+
+    resp = client.get("/transactions/count?confirmed=unconfirmed", headers=headers)
+    assert resp.json() == 2
 
 
 def test_export_xlsx_returns_valid_workbook_with_readable_names(client, db_session, tmp_path):

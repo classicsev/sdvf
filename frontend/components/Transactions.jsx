@@ -38,7 +38,7 @@ function sourceBadge(externalRef, t) {
 
 const EMPTY_FORM = {
   date_odds: new Date().toISOString().slice(0, 10),
-  date_opu: "",
+  date_opu: new Date().toISOString().slice(0, 10),
   account_id: "",
   category_id: "",
   project_id: "",
@@ -76,13 +76,21 @@ export default function Transactions() {
   const [filters, setFilters] = useState({
     company: "",
     project: "",
+    project_group: "",
     account: "",
     category: "",
     date_from: "",
     date_to: "",
+    confirmed: "",
   });
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  // Превратить операцию (обычно "Импорт из банка") в Перемещение/Начисление —
+  // не редактируем на месте (см. isTransfer/isReclass = !editing — парные
+  // записи нельзя менять через форму одиночной операции), а открываем форму
+  // создания новой пары с предзаполненными данными; исходную запись удаляем
+  // только ПОСЛЕ успешного создания пары, чтобы не потерять данные при отмене.
+  const [convertingFromId, setConvertingFromId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [formCompanyId, setFormCompanyId] = useState("");
   const [formError, setFormError] = useState("");
@@ -107,6 +115,7 @@ export default function Transactions() {
   const { data: accounts } = useResource(() => api.listAccounts(token), [token]);
   const { data: categories, reload: reloadCategories } = useResource(() => api.listCategories(token), [token]);
   const { data: projects, reload: reloadProjects } = useResource(() => api.listProjects(token), [token]);
+  const { data: projectGroups } = useResource(() => api.listProjectGroups(token, {}), [token]);
   const { data: counterparties, reload: reloadCounterparties } = useResource(
     () => api.listCounterparties(token),
     [token]
@@ -121,10 +130,12 @@ export default function Transactions() {
   const query = {
     company_id: filters.company || undefined,
     project: filters.project || undefined,
+    project_group_id: filters.project ? undefined : filters.project_group || undefined,
     account: filters.account || undefined,
     category: filters.category || undefined,
     date_from: filters.date_from || undefined,
     date_to: filters.date_to || undefined,
+    confirmed: filters.confirmed || undefined,
     limit: useAllForDates ? undefined : pageSize,
     skip: useAllForDates ? undefined : currentPage * pageSize,
     all_records: useAllForDates || undefined,
@@ -139,10 +150,12 @@ export default function Transactions() {
   const countQuery = {
     company_id: filters.company || undefined,
     project: filters.project || undefined,
+    project_group_id: filters.project ? undefined : filters.project_group || undefined,
     account: filters.account || undefined,
     category: filters.category || undefined,
     date_from: filters.date_from || undefined,
     date_to: filters.date_to || undefined,
+    confirmed: filters.confirmed || undefined,
   };
   useEffect(() => {
     if (!token) return;
@@ -240,6 +253,42 @@ export default function Transactions() {
       payment_confirmed: tx.payment_confirmed !== false,
       accrual_confirmed: tx.accrual_confirmed !== false,
     });
+    setFormCompanyId(tx.company_id || "");
+    setFormError("");
+    setModalOpen(true);
+  }
+
+  // targetType: "transfer" | "reclass" — типичный случай: банк прислал приход
+  // на одном счёте и расход на другом (или в другой своей же компании) для
+  // одного и того же реального перевода денег между своими счетами — по
+  // отдельности это исказило бы Приход/Расход, а Перемещение корректно
+  // исключается из отчётов (см. is_internal_transfer). Начисление — тот же
+  // принцип, но перенос между статьями внутри одного счёта, без движения денег.
+  function openConvert(tx, targetType) {
+    setEditing(null);
+    setConvertingFromId(tx.id);
+    setAddAnother(false);
+    setSaveConfirmMsg("");
+    const base = {
+      ...EMPTY_FORM,
+      type: targetType,
+      date_odds: tx.date_odds,
+      date_opu: tx.date_opu || "",
+      amount: String(Math.abs(tx.amount)),
+      currency: tx.currency,
+      commission: String(tx.commission || 0),
+      comment: tx.comment || "",
+    };
+    if (targetType === "transfer") {
+      // Расход = деньги ушли с этого счёта → он "откуда"; приход = "куда".
+      // Вторую сторону (другой свой счёт) пользователь выбирает сам.
+      if (tx.type === "expense") base.from_account_id = tx.account_id;
+      else base.to_account_id = tx.account_id;
+    } else if (targetType === "reclass") {
+      base.account_id = tx.account_id;
+      base.from_category_id = tx.category_id;
+    }
+    setForm(base);
     setFormCompanyId(tx.company_id || "");
     setFormError("");
     setModalOpen(true);
@@ -352,12 +401,20 @@ export default function Transactions() {
     try {
       if (!editing && form.type === "transfer") {
         await handleTransferSubmit();
+        if (convertingFromId) {
+          await api.deleteTransaction(token, convertingFromId);
+          setConvertingFromId(null);
+        }
         reload();
         setSelectedTransactionIds(new Set());
         return;
       }
       if (!editing && form.type === "reclass") {
         await handleReclassSubmit();
+        if (convertingFromId) {
+          await api.deleteTransaction(token, convertingFromId);
+          setConvertingFromId(null);
+        }
         reload();
         setSelectedTransactionIds(new Set());
         return;
@@ -462,10 +519,12 @@ export default function Transactions() {
         result = await api.batchDeleteTransactionsByFilter(token, {
           company_id: filters.company || undefined,
           project: filters.project || undefined,
+          project_group_id: filters.project ? undefined : filters.project_group || undefined,
           account: filters.account || undefined,
           category: filters.category || undefined,
           date_from: filters.date_from || undefined,
           date_to: filters.date_to || undefined,
+          confirmed: filters.confirmed || undefined,
         });
       } else {
         result = await api.batchDeleteTransactions(token, Array.from(selectedTransactionIds));
@@ -594,12 +653,37 @@ export default function Transactions() {
           )}
           <div className="fp-filter-combobox">
             <Combobox
+              value={filters.project_group}
+              onChange={(val) =>
+                setFilters((f) => ({
+                  ...f,
+                  project_group: val,
+                  project: (projects || []).find((p) => p.id === f.project)?.group_id === val ? f.project : "",
+                }))
+              }
+              options={(projectGroups || []).map((g) => ({ id: g.id, name: g.name }))}
+              placeholder={t("tx.filter.allGroups")}
+            />
+          </div>
+          <div className="fp-filter-combobox">
+            <Combobox
               value={filters.project}
               onChange={(val) => setFilters((f) => ({ ...f, project: val }))}
-              options={(projects || []).map((p) => ({ id: p.id, name: p.name }))}
+              options={(filters.project_group
+                ? (projects || []).filter((p) => p.group_id === filters.project_group)
+                : projects || []
+              ).map((p) => ({ id: p.id, name: p.name }))}
               placeholder={t("tx.filter.allProjects")}
             />
           </div>
+          <select
+            value={filters.confirmed}
+            onChange={(e) => setFilters((f) => ({ ...f, confirmed: e.target.value }))}
+          >
+            <option value="">{t("tx.filter.allConfirmStatus")}</option>
+            <option value="confirmed">{t("tx.filter.confirmedOnly")}</option>
+            <option value="unconfirmed">{t("tx.filter.unconfirmedOnly")}</option>
+          </select>
           <div className="fp-filter-combobox">
             <Combobox
               value={filters.account}
@@ -844,20 +928,6 @@ export default function Transactions() {
                           ↔️
                         </span>
                       )}
-                      {(tx.payment_confirmed === false || tx.accrual_confirmed === false) && (
-                        <span
-                          className="fp-source-badge plan"
-                          style={{ marginLeft: 6 }}
-                          title={[
-                            tx.payment_confirmed === false ? t("tx.form.confirmPayment") : null,
-                            tx.accrual_confirmed === false ? t("tx.form.confirmAccrual") : null,
-                          ]
-                            .filter(Boolean)
-                            .join(" / ") + ` — ${t("tx.notConfirmedTitle")}`}
-                        >
-                          {t("tx.planBadge")}
-                        </span>
-                      )}
                     </td>
                     <td>{proj?.name || <span className="fp-muted">—</span>}</td>
                     <td>{cp?.name || <span className="fp-muted">—</span>}</td>
@@ -873,6 +943,21 @@ export default function Transactions() {
                       className={`right fp-mono fp-amount-${tx.type} fp-table-amount-col`}
                       style={{ right: canEdit ? 90 : 0 }}
                     >
+                      {(tx.payment_confirmed === false || tx.accrual_confirmed === false) && (
+                        <span
+                          title={[
+                            tx.payment_confirmed === false ? t("tx.form.confirmPayment") : null,
+                            tx.accrual_confirmed === false ? t("tx.form.confirmAccrual") : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" / ") + ` — ${t("tx.notConfirmedTitle")}`}
+                        >
+                          <span className={`fp-dk-badge ${tx.type === "income" ? "income" : "expense"}`}>
+                            {tx.type === "income" ? "Д" : "К"}
+                          </span>
+                          <span className="fp-unconfirmed-mark">!</span>
+                        </span>
+                      )}
                       {tx.reclass_pair_id ? "" : tx.type === "expense" ? "-" : ""}
                       {fmt(tx.reclass_pair_id ? Math.abs(tx.amount) : tx.amount, tx.currency)}
                       {tx.reclass_pair_id && tx.amount < 0 && " (−)"}
@@ -947,6 +1032,18 @@ export default function Transactions() {
                 <X size={18} />
               </button>
             </div>
+
+            {editing && !editing.transfer_pair_id && !editing.reclass_pair_id && (
+              <div className="fp-convert-row">
+                <span className="fp-muted">{t("tx.form.convertHint")}</span>
+                <button type="button" className="fp-btn-tiny" onClick={() => openConvert(editing, "transfer")}>
+                  {t("tx.convertToTransfer")}
+                </button>
+                <button type="button" className="fp-btn-tiny" onClick={() => openConvert(editing, "reclass")}>
+                  {t("tx.convertToReclass")}
+                </button>
+              </div>
+            )}
 
             <div className="fp-type-toggle">
               <button

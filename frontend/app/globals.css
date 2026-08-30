@@ -181,6 +181,19 @@ html, body {
 .fp-source-badge.alfabank { background: #FBE7E7; color: #A53A3A; }
 .fp-source-badge.plan { background: #FBF1D6; color: var(--gold); font-weight: 600; }
 
+.fp-dk-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 4px; font-size: 10px; font-weight: 700;
+  font-family: 'IBM Plex Mono', monospace; margin-right: 3px; vertical-align: middle;
+}
+.fp-dk-badge.income { background: #DCEEF0; color: #1F7A8C; }
+.fp-dk-badge.expense { background: #EDE1F2; color: #7A3FA0; }
+.fp-unconfirmed-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 3px; font-size: 11px; font-weight: 700;
+  background: #FBE7C6; color: #B4650A; margin-right: 5px; vertical-align: middle;
+}
+
 /* ---------- Table ---------- */
 .fp-table-panel { padding: 0; overflow-x: auto; }
 .fp-table-totals-row {
@@ -325,6 +338,7 @@ button:focus-visible,
 .fp-tabs-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 12px; flex-wrap: wrap; }
 .fp-tabs-row .fp-tabs { margin-bottom: 0; }
 .fp-panel-head-row { display: flex; align-items: center; justify-content: space-between; }
+.fp-convert-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; font-size: 12.5px; }
 .fp-row-actions { display: inline-flex; align-items: center; gap: 6px; }
 .fp-btn-danger { background: var(--expense-soft); color: var(--expense); border-color: var(--expense); }
 .fp-btn-danger:hover { background: var(--expense); color: #fff; }

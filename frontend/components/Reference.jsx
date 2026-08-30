@@ -773,6 +773,16 @@ export default function Reference({ initialTab = "categories" }) {
     <div className="fp-dash">
       <div className="fp-tabs-row">
         {tabsRow}
+        {tab === "projects" && (
+          <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
+            <option value="">{t("reference.projects.allGroups")}</option>
+            {(projectGroups || []).map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+          </select>
+        )}
         {multiCompany && !supportsCompanyScope && (
           <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>
             <option value="">{t("dashboard.allCompanies")}</option>
