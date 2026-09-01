@@ -448,9 +448,17 @@ def close_month(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Массово проставляет дату начисления (date_opu) = 1-е число месяца —
-    только там, где она ещё не задана вручную (не перезаписывает). Доступно
-    только admin — полу-необратимое действие уровня "закрытие периода"."""
+    """Массово проставляет дату начисления (date_opu) = 1-е число месяца и
+    подтверждает начисление — только там, где начисление ещё НЕ подтверждено
+    (accrual_confirmed=False), не перезаписывает уже подтверждённые вручную
+    даты. Доступно только admin — полу-необратимое действие уровня "закрытие
+    периода".
+
+    accrual_confirmed, а не date_opu.is_(None), — с тех пор как форма
+    операции стала сама подставлять сегодняшнюю дату начисления по
+    умолчанию (см. HANDOVER.md, 2026-08-30), date_opu у новых операций
+    почти никогда не бывает NULL, даже когда начисление по сути не
+    подтверждено — старое условие для них никогда не срабатывало бы."""
     check_company_role(db, user, payload.company_id, [RoleEnum.admin])
     month_start = payload.month.replace(day=1)
     next_month = date(month_start.year + (month_start.month == 12), (month_start.month % 12) + 1, 1)
@@ -460,9 +468,9 @@ def close_month(
             Transaction.company_id == payload.company_id,
             Transaction.date_odds >= month_start,
             Transaction.date_odds < next_month,
-            Transaction.date_opu.is_(None),
+            Transaction.accrual_confirmed.is_(False),
         )
-        .update({"date_opu": month_start}, synchronize_session=False)
+        .update({"date_opu": month_start, "accrual_confirmed": True}, synchronize_session=False)
     )
     db.commit()
     log_action(

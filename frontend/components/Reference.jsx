@@ -241,6 +241,17 @@ export default function Reference({ initialTab = "categories" }) {
   const [companyPopoverOpen, setCompanyPopoverOpen] = useState(false);
   const companyPopoverRef = useRef(null);
 
+  // Фильтр по статусу проекта (planned/in_progress/closed, см.
+  // renderProjectStatus) — только для вкладки "Проекты", по умолчанию все
+  // три статуса включены (не сужает список, пока пользователь сам не снимет
+  // галочку).
+  const [statusFilter, setStatusFilter] = useState(["planned", "in_progress", "closed"]);
+  const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
+  const statusPopoverRef = useRef(null);
+  function toggleStatusFilter(status) {
+    setStatusFilter((prev) => (prev.includes(status) ? prev.filter((x) => x !== status) : [...prev, status]));
+  }
+
   // Клик по названию группы во вкладке "Группы проектов" переключает на
   // вкладку "Проекты", отфильтрованную этой группой — НЕ открывает
   // редактирование самой группы (для этого отдельная кнопка-карандаш).
@@ -269,6 +280,18 @@ export default function Reference({ initialTab = "categories" }) {
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
   }, [companyPopoverOpen]);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (statusPopoverRef.current && !statusPopoverRef.current.contains(e.target)) {
+        setStatusPopoverOpen(false);
+      }
+    }
+    if (statusPopoverOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [statusPopoverOpen]);
 
   function toggleCompanyFilterId(id) {
     setCompanyFilterIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -311,7 +334,10 @@ export default function Reference({ initialTab = "categories" }) {
     tab === "projects" && groupFilter ? (items || []).filter((p) => p.group_id === groupFilter) : items;
   const displayedItems =
     tab === "projects"
-      ? (groupFilteredItems || []).map((p) => ({ ...p, ...profitabilityByProject[p.id] }))
+      ? (groupFilteredItems || [])
+          .map((p) => ({ ...p, ...profitabilityByProject[p.id] }))
+          .filter((p) => statusFilter.includes(p.status))
+          .sort((a, b) => a.name.localeCompare(b.name, "ru"))
       : groupFilteredItems;
 
   // Автосинк банковских интеграций — только на вкладке Счетов, только для тех,
@@ -782,6 +808,32 @@ export default function Reference({ initialTab = "categories" }) {
               </option>
             ))}
           </select>
+        )}
+        {tab === "projects" && (
+          <div style={{ position: "relative" }} ref={statusPopoverRef}>
+            <button type="button" className="fp-btn-tiny" onClick={() => setStatusPopoverOpen((v) => !v)}>
+              {statusFilter.length === 3
+                ? t("reference.projects.allStatuses")
+                : statusFilter.length === 0
+                ? t("reference.projects.noStatuses")
+                : statusFilter.map((s) => t(`reference.projects.status.${s}`)).join(", ")}
+              <ChevronDown size={13} className={`fp-combobox-chevron ${statusPopoverOpen ? "rotated" : ""}`} />
+            </button>
+            {statusPopoverOpen && (
+              <div className="fp-combobox-popup" style={{ width: 200, padding: "6px 0" }}>
+                {["planned", "in_progress", "closed"].map((s) => (
+                  <label key={s} className="fp-checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={statusFilter.includes(s)}
+                      onChange={() => toggleStatusFilter(s)}
+                    />
+                    {t(`reference.projects.status.${s}`)}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         {multiCompany && !supportsCompanyScope && (
           <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}>

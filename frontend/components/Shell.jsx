@@ -23,6 +23,7 @@ import { useTranslation } from "../lib/i18n";
 import { ROLE_NAV, NAV_MODULE, isModuleEnabled, roleLabel } from "../lib/roles";
 import ProfileModal from "./ProfileModal";
 import Dashboard from "./Dashboard";
+import Dashboard2 from "./Dashboard2";
 import Transactions from "./Transactions";
 import Payroll from "./Payroll";
 import Reports from "./Reports";
@@ -36,6 +37,7 @@ import CompanyModules from "./CompanyModules";
 
 const NAV_ITEMS = [
   { key: "dashboard", icon: LayoutDashboard },
+  { key: "dashboard2", icon: LayoutDashboard },
   { key: "transactions", icon: FileText },
   { key: "payroll", icon: Users },
   { key: "reports", icon: Landmark },
@@ -59,6 +61,7 @@ function ProjectsView() {
 
 const VIEW_COMPONENTS = {
   dashboard: Dashboard,
+  dashboard2: Dashboard2,
   transactions: Transactions,
   payroll: Payroll,
   reports: Reports,

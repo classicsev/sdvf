@@ -2,7 +2,7 @@ import datetime
 
 import openpyxl
 
-from app.models import ExchangeRate, RoleEnum, TxTypeEnum
+from app.models import ExchangeRate, RoleEnum, Transaction, TxTypeEnum
 from tests.conftest import auth_headers, make_account, make_category, make_project, make_project_group, make_user
 
 
@@ -390,6 +390,64 @@ def test_list_filters_by_confirmed_status(client, db_session):
 
     resp = client.get("/transactions/count?confirmed=unconfirmed", headers=headers)
     assert resp.json() == 2
+
+
+def test_close_month_uses_accrual_confirmed_not_date_opu_null(client, db_session):
+    """Регрессия: с тех пор как форма операции стала сама подставлять
+    сегодняшнюю дату начисления по умолчанию, date_opu у новых операций
+    почти никогда не NULL — закрытие месяца больше не может опираться на
+    date_opu.is_(None) и должно смотреть на accrual_confirmed."""
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.income)
+
+    def _tx(date_opu, accrual_confirmed):
+        return client.post(
+            "/transactions",
+            headers=headers,
+            json={
+                "date_odds": "2026-06-15",
+                "date_opu": date_opu,
+                "account_id": account.id,
+                "category_id": category.id,
+                "type": "income",
+                "amount": 100,
+                "currency": "RUB",
+                "accrual_confirmed": accrual_confirmed,
+            },
+        ).json()
+
+    # Как форма создаёт операции сейчас: date_opu всегда заполнена (сегодня
+    # или дата оплаты), но accrual_confirmed может быть False — именно это
+    # должно ловить закрытие месяца.
+    unconfirmed = _tx("2026-06-20", False)
+    confirmed = _tx("2026-06-25", True)
+    legacy_null = _tx(None, False)
+
+    resp = client.post(
+        "/transactions/close-month",
+        headers=headers,
+        json={"company_id": account.company_id, "month": "2026-06-01"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["updated"] == 2
+
+    db_session.expire_all()
+
+    def _get(tx_id):
+        return db_session.get(Transaction, tx_id)
+
+    got = _get(unconfirmed["id"])
+    assert got.date_opu.isoformat() == "2026-06-01"
+    assert got.accrual_confirmed is True
+
+    got = _get(confirmed["id"])
+    assert got.date_opu.isoformat() == "2026-06-25"  # подтверждённую дату не трогаем
+
+    got = _get(legacy_null["id"])
+    assert got.date_opu.isoformat() == "2026-06-01"
+    assert got.accrual_confirmed is True
 
 
 def test_export_xlsx_returns_valid_workbook_with_readable_names(client, db_session, tmp_path):

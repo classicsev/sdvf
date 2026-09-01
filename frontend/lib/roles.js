@@ -41,6 +41,7 @@ export function roleDescription(t, role) {
 export const ROLE_NAV = {
   admin: [
     "dashboard",
+    "dashboard2",
     "transactions",
     "payroll",
     "reports",
@@ -52,10 +53,10 @@ export const ROLE_NAV = {
     "api-keys",
     "warehouse",
   ],
-  operator: ["dashboard", "transactions", "reports", "projects", "reference"],
+  operator: ["dashboard", "dashboard2", "transactions", "reports", "projects", "reference"],
   payroll_operator: ["payroll", "audit"],
-  project_manager: ["dashboard", "transactions", "reports"],
-  viewer: ["dashboard", "transactions", "payroll", "reports", "projects", "reference", "warehouse"],
+  project_manager: ["dashboard", "dashboard2", "transactions", "reports"],
+  viewer: ["dashboard", "dashboard2", "transactions", "payroll", "reports", "projects", "reference", "warehouse"],
   warehouse_operator: ["warehouse"],
 };
 
@@ -64,6 +65,7 @@ export const ROLE_NAV = {
 // всегда на бэкенде (require_module в соответствующих роутерах).
 export const NAV_MODULE = {
   dashboard: "finance",
+  dashboard2: "finance",
   transactions: "finance",
   payroll: "finance",
   reports: "finance",

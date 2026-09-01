@@ -401,11 +401,16 @@ def cashflow_forecast(
 @router.get("/cashflow", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
 def cashflow_report(
     period: Optional[str] = None,
+    method: str = "cash",
     company_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """method: "cash" (по умолчанию, payment_confirmed — как раньше) |
+    "accrual" (accrual_confirmed) — см. _method_confirmed_column. Нужен
+    "Дашборду 2" для переключателя начисление/касса на графике прибыли."""
     company_ids = resolve_company_ids(db, user, company_id)
+    confirmed_col = _method_confirmed_column(method)
     # is_financing/is_internal_transfer исключены по той же причине, что и в
     # dashboard_summary/pnl_report — иначе кредитные линии и переводы между
     # своими же счетами раздувают "Приход/Расход" на графике по месяцам.
@@ -416,7 +421,7 @@ def cashflow_report(
             Transaction.company_id.in_(company_ids),
             Category.is_financing.is_(False),
             Category.is_internal_transfer.is_(False),
-            Transaction.payment_confirmed.is_(True),
+            confirmed_col.is_(True),
         )
     )
     forced_project = scope_project_filter(user)
@@ -736,6 +741,76 @@ def debt_report(
         {"counterparty_id": cp_id, "name": name, "type": cp_type, "net_amount_rub": float(net_amount)}
         for cp_id, name, cp_type, net_amount in rows
     ]
+
+
+@router.get("/top-clients", dependencies=[Depends(require_roles(REPORT_VIEWERS)), FINANCE_MODULE])
+def top_clients_report(
+    period: Optional[str] = None,
+    limit: int = 10,
+    company_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Топ контрагентов по выручке (кассовым методом, payment_confirmed) за
+    период — аналог "Топ прибыльных клиентов" в ПланФакт. В отличие от
+    debt_report — только доход (не сальдо), только период (не всё время),
+    с накопительным % от общей выручки (по нему в оригинале строится вторая
+    линия на графике)."""
+    limit = max(1, min(limit, 50))
+    start, end = _parse_period(period) if period else _current_month_bounds()
+    company_ids = resolve_company_ids(db, user, company_id)
+    query = db.query(Transaction).filter(
+        Transaction.company_id.in_(company_ids),
+        Transaction.counterparty_id.isnot(None),
+        Transaction.type == TxTypeEnum.income,
+        Transaction.payment_confirmed.is_(True),
+        Transaction.date_odds >= start,
+        Transaction.date_odds <= end,
+    )
+    forced_project = scope_project_filter(user)
+    if forced_project:
+        query = query.filter(Transaction.project_id == forced_project)
+
+    rows = (
+        query.join(Category, Transaction.category_id == Category.id)
+        .filter(Category.is_financing.is_(False), Category.is_internal_transfer.is_(False))
+        .join(Counterparty, Transaction.counterparty_id == Counterparty.id)
+        .with_entities(Counterparty.id, Counterparty.name, func.sum(Transaction.amount_rub))
+        .group_by(Counterparty.id, Counterparty.name)
+        .order_by(func.sum(Transaction.amount_rub).desc())
+        .limit(limit)
+        .all()
+    )
+
+    total_revenue = (
+        query.join(Category, Transaction.category_id == Category.id)
+        .filter(Category.is_financing.is_(False), Category.is_internal_transfer.is_(False))
+        .with_entities(func.coalesce(func.sum(Transaction.amount_rub), 0))
+        .scalar()
+    )
+    total_revenue = float(total_revenue)
+
+    items = []
+    running = 0.0
+    for cp_id, name, amount in rows:
+        amount = float(amount)
+        running += amount
+        items.append(
+            {
+                "counterparty_id": cp_id,
+                "name": name,
+                "revenue_rub": amount,
+                "share_pct": (amount / total_revenue * 100) if total_revenue else 0.0,
+                "cumulative_pct": (running / total_revenue * 100) if total_revenue else 0.0,
+            }
+        )
+
+    return {
+        "period_from": start.isoformat(),
+        "period_to": end.isoformat(),
+        "total_revenue_rub": total_revenue,
+        "items": items,
+    }
 
 
 def _method_confirmed_column(method: str):

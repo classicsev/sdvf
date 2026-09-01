@@ -1,5 +1,5 @@
 from app.models import RoleEnum, TxTypeEnum
-from tests.conftest import auth_headers, make_account, make_category, make_user
+from tests.conftest import auth_headers, make_account, make_category, make_counterparty, make_user
 
 
 def _create_tx(client, headers, account_id, category_id, amount, tx_type, date_odds="2026-06-15", **extra):
@@ -446,7 +446,14 @@ def test_balance_analysis_vertical_and_roe(client, db_session):
 
     _create_tx(client, headers, account.id, revenue_cat.id, 5000, "income", date_odds="2026-08-10")
 
-    resp = client.get("/reports/balance-analysis", headers=headers, params={"as_of": "2026-08-25"})
+    # date_from/date_to заданы явно, а не оставлены на умолчание ("текущий
+    # месяц" по date.today()) — иначе тест ломается сам по себе в любой день
+    # после августа 2026, никак не связанный с реальной регрессией.
+    resp = client.get(
+        "/reports/balance-analysis",
+        headers=headers,
+        params={"as_of": "2026-08-25", "date_from": "2026-08-01", "date_to": "2026-08-31"},
+    )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     vertical = body["vertical"]["assets"]
@@ -456,3 +463,78 @@ def test_balance_analysis_vertical_and_roe(client, db_session):
     assert body["net_profit_rub"] == 5000.0
     assert body["roe_pct"] is not None
     assert body["working_capital_rub"] == 6000.0  # cash 1000+5000, пассивов нет
+
+
+def test_cashflow_report_method_toggle_accrual_vs_cash(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    income_cat = make_category(db_session, "Выручка", TxTypeEnum.income)
+
+    # Начислено, но не оплачено — должно попасть в accrual, но не в cash.
+    _create_tx(
+        client, headers, account.id, income_cat.id, 1000, "income",
+        date_odds="2026-08-05", payment_confirmed=False, accrual_confirmed=True,
+    )
+    # Оплачено, но не начислено — наоборот.
+    _create_tx(
+        client, headers, account.id, income_cat.id, 700, "income",
+        date_odds="2026-08-06", payment_confirmed=True, accrual_confirmed=False,
+    )
+
+    resp = client.get("/reports/cashflow", headers=headers, params={"method": "accrual"})
+    assert resp.status_code == 200, resp.text
+    by_month = {row["period"]: row for row in resp.json()["by_month"]}
+    assert by_month["2026-08"]["income"] == 1000.0
+
+    resp = client.get("/reports/cashflow", headers=headers, params={"method": "cash"})
+    by_month = {row["period"]: row for row in resp.json()["by_month"]}
+    assert by_month["2026-08"]["income"] == 700.0
+
+    # method не задан вообще — как и раньше, ведёт себя как "cash".
+    resp = client.get("/reports/cashflow", headers=headers)
+    by_month = {row["period"]: row for row in resp.json()["by_month"]}
+    assert by_month["2026-08"]["income"] == 700.0
+
+
+def test_top_clients_report_ranks_by_revenue_with_cumulative_pct(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    income_cat = make_category(db_session, "Выручка", TxTypeEnum.income)
+    expense_cat = make_category(db_session, "Расход", TxTypeEnum.expense)
+    client_a = make_counterparty(db_session, "Клиент А")
+    client_b = make_counterparty(db_session, "Клиент Б")
+
+    _create_tx(
+        client, headers, account.id, income_cat.id, 6000, "income",
+        date_odds="2026-08-05", counterparty_id=client_a.id,
+    )
+    _create_tx(
+        client, headers, account.id, income_cat.id, 4000, "income",
+        date_odds="2026-08-06", counterparty_id=client_b.id,
+    )
+    # Расход тому же клиенту — не должен попасть в выручку.
+    _create_tx(
+        client, headers, account.id, expense_cat.id, 9999, "expense",
+        date_odds="2026-08-07", counterparty_id=client_a.id,
+    )
+    # За пределами периода — не должен учитываться.
+    _create_tx(
+        client, headers, account.id, income_cat.id, 100000, "income",
+        date_odds="2026-07-01", counterparty_id=client_a.id,
+    )
+
+    resp = client.get(
+        "/reports/top-clients", headers=headers, params={"period": "2026-08"}
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total_revenue_rub"] == 10000.0
+    items = body["items"]
+    assert items[0]["name"] == "Клиент А"
+    assert items[0]["revenue_rub"] == 6000.0
+    assert items[0]["share_pct"] == 60.0
+    assert items[0]["cumulative_pct"] == 60.0
+    assert items[1]["name"] == "Клиент Б"
+    assert items[1]["cumulative_pct"] == 100.0

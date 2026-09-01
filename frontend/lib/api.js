@@ -223,6 +223,7 @@ export const api = {
   balanceReport: (token, query) => request("/reports/balance", { token, query }),
   balanceAnalysis: (token, query) => request("/reports/balance-analysis", { token, query }),
   debtReport: (token, query) => request("/reports/debt", { token, query }),
+  topClientsReport: (token, query) => request("/reports/top-clients", { token, query }),
   profitabilityReport: (token, query) => request("/reports/profitability", { token, query }),
   projectDetail: (token, projectId, query) =>
     request(`/reports/projects/${projectId}/detail`, { token, query }),
