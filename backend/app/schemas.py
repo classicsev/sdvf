@@ -484,6 +484,8 @@ class CompanyOut(BaseModel):
     cn_org_registered_capital: Optional[float] = None
     cn_org_established_date: Optional[date] = None
     cn_org_business_scope_zh: Optional[str] = None
+    show_accrual_date_field: bool = True
+    locked_before_date: Optional[date] = None
 
 
 class CompanyMembershipOut(BaseModel):
@@ -543,6 +545,9 @@ class CompanyModulesIn(BaseModel):
     cn_org_registered_capital: Optional[float] = None
     cn_org_established_date: Optional[date] = None
     cn_org_business_scope_zh: Optional[str] = None
+    # Настройки операций (ПланФакт-стиль, см. HANDOVER.md).
+    show_accrual_date_field: Optional[bool] = None
+    locked_before_date: Optional[date] = None
 
 
 class DadataPartyOut(BaseModel):

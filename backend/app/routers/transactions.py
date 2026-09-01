@@ -22,7 +22,7 @@ from app.automation_engine import apply_rules
 from app.database import get_db
 from app.fx import convert_to_rub
 from app.holding_transfers import get_or_create_internal_transfer_category
-from app.models import Account, Category, Counterparty, Order, Project, RoleEnum, Transaction, TxTypeEnum, User
+from app.models import Account, Category, Company, Counterparty, Order, Project, RoleEnum, Transaction, TxTypeEnum, User
 from app.reference_scope import get_visible_or_404
 from app.schemas import (
     CloseMonthIn,
@@ -112,6 +112,25 @@ def _get_transaction_or_404(db: Session, user: User, transaction_id: str) -> Tra
     )
 
 
+def _check_not_locked(db: Session, company_id: str, date_odds, date_opu=None) -> None:
+    """Закрытие периода (ПланФакт-стиль, см. HANDOVER.md) — если у компании
+    задан Company.locked_before_date, создание/правка/удаление операций с
+    датой оплаты ИЛИ датой начисления на эту дату или раньше запрещены для
+    ВСЕХ ролей, включая admin (снять блокировку можно только явно подвинув
+    или убрав саму настройку в "Модулях"). Импорт из банка и другие
+    интеграции создают Transaction напрямую, минуя этот роутер, — они
+    сознательно не подпадают под блокировку (как и в оригинале)."""
+    company = db.get(Company, company_id)
+    if not company or not company.locked_before_date:
+        return
+    cutoff = company.locked_before_date
+    if (date_odds and date_odds <= cutoff) or (date_opu and date_opu <= cutoff):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Период до {cutoff.isoformat()} закрыт для редактирования — снимите блокировку в настройках компании",
+        )
+
+
 def _check_can_edit(user: User, tx: Transaction, role: RoleEnum) -> None:
     # operator может редактировать только созданные им операции; admin — любые
     # (см. матрицу прав в README). Роль проверяется для компании самой
@@ -192,6 +211,7 @@ def create_transaction(
     user: User = Depends(get_current_user),
 ):
     target = resolve_write_company_id(db, user, company_id, EDITORS)
+    _check_not_locked(db, target, payload.date_odds, payload.date_opu)
 
     # Счёт/статья/проект/контрагент обязаны принадлежать той же компании, что и
     # сама операция — иначе можно было бы создать операцию в одной компании,
@@ -418,6 +438,11 @@ def update_transaction(
     for field, value in changes.items():
         setattr(tx, field, value)
 
+    # После применения изменений — ловит и правку уже стоящей в закрытом
+    # периоде операции (если date_odds/date_opu не менялись, в tx остались
+    # старые значения), и попытку перенести операцию В закрытый период.
+    _check_not_locked(db, tx.company_id, tx.date_odds, tx.date_opu)
+
     # Пересчитываем amount_rub, только если поменялось что-то, влияющее на курс
     if {"amount", "currency", "date_odds"} & changes.keys():
         tx.amount_rub = _convert_to_rub(db, tx.currency, tx.amount, tx.date_odds)
@@ -496,6 +521,7 @@ def delete_transaction(
     tx = _get_transaction_or_404(db, user, transaction_id)
     role = check_company_role(db, user, tx.company_id, EDITORS)
     _check_can_edit(user, tx, role)
+    _check_not_locked(db, tx.company_id, tx.date_odds, tx.date_opu)
     tx_company_id = tx.company_id
 
     # Часть "Перемещения" (create_transfer) или "Начисления" (create_reclass)
@@ -559,6 +585,7 @@ def batch_delete_transactions(
             # Проверяем права на редактирование каждой операции
             role = check_company_role(db, user, tx.company_id, EDITORS)
             _check_can_edit(user, tx, role)
+            _check_not_locked(db, tx.company_id, tx.date_odds, tx.date_opu)
 
             # Удаляем и логируем
             tx_id = tx.id
@@ -567,7 +594,7 @@ def batch_delete_transactions(
             log_action(db, user, action="delete", entity_type="transaction", entity_id=tx_id, company_id=tx_company_id)
             deleted_count += 1
         except HTTPException:
-            # Если нет прав на редактирование конкретной операции — добавляем в failed
+            # Если нет прав (или период закрыт) на конкретную операцию — в failed
             failed_ids.append(tx.id)
 
     db.commit()
@@ -611,6 +638,7 @@ def batch_delete_transactions_by_filter(
         try:
             role = check_company_role(db, user, tx.company_id, EDITORS)
             _check_can_edit(user, tx, role)
+            _check_not_locked(db, tx.company_id, tx.date_odds, tx.date_opu)
 
             tx_id = tx.id
             tx_company_id = tx.company_id

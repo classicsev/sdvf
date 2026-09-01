@@ -102,6 +102,16 @@ class Company(Base):
     cn_org_registered_capital: Mapped[float] = mapped_column(Numeric(14, 2), nullable=True)
     cn_org_established_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     cn_org_business_scope_zh: Mapped[str] = mapped_column(Text, nullable=True)
+    # Показывать ли поле "Дата начисления" в форме операции — по образцу
+    # ПланФакт (см. HANDOVER.md): выключено = поле скрыто, дата начисления
+    # молча равна дате оплаты (accrual_confirmed следует за payment_confirmed),
+    # никакого "неподтверждённого начисления" не накапливается. Включено по
+    # умолчанию — сохраняет уже привычное поведение для существующих компаний.
+    show_accrual_date_field: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Закрытие периода (ПланФакт-стиль) — операции с датой оплаты ИЛИ датой
+    # начисления на эту дату или раньше нельзя создать/изменить/удалить
+    # вручную (см. transactions.py::_check_not_locked). None = не закрыто.
+    locked_before_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

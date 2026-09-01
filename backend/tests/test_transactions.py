@@ -484,3 +484,101 @@ def test_export_xlsx_returns_valid_workbook_with_readable_names(client, db_sessi
     assert data_row[3] == "Расчётный счёт"  # счёт по имени, не ID
     assert data_row[4] == "Аренда офиса"  # статья по имени
     assert data_row[9] == 15000  # сумма в руб.
+
+
+def test_locked_period_blocks_create_update_delete(client, db_session):
+    from app.models import Company
+
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.income)
+
+    company = db_session.get(Company, account.company_id)
+    company.locked_before_date = datetime.date(2026, 6, 15)
+    db_session.commit()
+
+    # Создание операции ВНУТРИ закрытого периода — 403.
+    resp = client.post(
+        "/transactions",
+        headers=headers,
+        json={
+            "date_odds": "2026-06-10",
+            "account_id": account.id,
+            "category_id": category.id,
+            "type": "income",
+            "amount": 100,
+            "currency": "RUB",
+        },
+    )
+    assert resp.status_code == 403, resp.text
+
+    # Создание операции ПОСЛЕ закрытого периода — ок.
+    ok = client.post(
+        "/transactions",
+        headers=headers,
+        json={
+            "date_odds": "2026-06-20",
+            "account_id": account.id,
+            "category_id": category.id,
+            "type": "income",
+            "amount": 100,
+            "currency": "RUB",
+        },
+    ).json()
+
+    # Правка операции после закрытого периода — ок, пока не переносишь дату внутрь него.
+    resp = client.patch(f"/transactions/{ok['id']}", headers=headers, json={"amount": 200})
+    assert resp.status_code == 200, resp.text
+
+    # Перенос даты операции ВНУТРЬ закрытого периода — 403.
+    resp = client.patch(f"/transactions/{ok['id']}", headers=headers, json={"date_odds": "2026-06-05"})
+    assert resp.status_code == 403, resp.text
+
+    # Удаление операции после закрытого периода — ок.
+    resp = client.delete(f"/transactions/{ok['id']}", headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    # Создаём операцию НАПРЯМУЮ в БД (как это делает банковский синк — минуя
+    # роутер) с датой внутри "закрытого" периода, затем убеждаемся, что
+    # ПРАВКА/УДАЛЕНИЕ через обычный API для неё блокируются.
+    old_tx = Transaction(
+        company_id=account.company_id,
+        date_odds=datetime.date(2026, 6, 1),
+        account_id=account.id,
+        category_id=category.id,
+        type=TxTypeEnum.income,
+        amount=50,
+        currency="RUB",
+        amount_rub=50,
+        created_by=admin.id,
+    )
+    db_session.add(old_tx)
+    db_session.commit()
+
+    resp = client.patch(f"/transactions/{old_tx.id}", headers=headers, json={"amount": 999})
+    assert resp.status_code == 403, resp.text
+    resp = client.delete(f"/transactions/{old_tx.id}", headers=headers)
+    assert resp.status_code == 403, resp.text
+
+
+def test_company_modules_update_accepts_period_lock_and_accrual_toggle(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+
+    resp = client.patch(
+        "/companies/me/modules",
+        headers=headers,
+        json={"show_accrual_date_field": False, "locked_before_date": "2026-07-31"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["show_accrual_date_field"] is False
+    assert body["locked_before_date"] == "2026-07-31"
+
+    # Снятие блокировки — явный null.
+    resp = client.patch(
+        "/companies/me/modules", headers=headers, json={"locked_before_date": None}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["locked_before_date"] is None

@@ -5,6 +5,7 @@ import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { ROLE_LABELS, roleLabel, roleDescription } from "../lib/roles";
 import { useTranslation } from "../lib/i18n";
+import { fmtDate } from "../lib/format";
 
 const MODULES = [
   { key: "module_finance_enabled", titleKey: "modules.module.finance.title", descKey: "modules.module.finance.description" },
@@ -61,6 +62,8 @@ export default function CompanyModules() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
   const [moduleBusyKey, setModuleBusyKey] = useState(null);
+  const [lockDateInput, setLockDateInput] = useState("");
+  const [lockSaving, setLockSaving] = useState(false);
   const [sdvfForm, setSdvfForm] = useState(SDVF_FORM_EMPTY);
   const [sdvfSaving, setSdvfSaving] = useState(false);
   const [sdvfSaved, setSdvfSaved] = useState(false);
@@ -140,6 +143,20 @@ export default function CompanyModules() {
     setCnForm(Object.fromEntries(CN_FIELDS.map((f) => [f.key, company[f.key] || ""])));
     setCnSaved(false);
     setDeleteError("");
+    setLockDateInput(company.locked_before_date || "");
+  }
+
+  async function saveLockDate(value) {
+    setLockSaving(true);
+    try {
+      await api.updateCompanyModulesFor(token, settingsFor, { locked_before_date: value || null });
+      await refreshCompanies();
+      await refreshUser();
+    } catch (err) {
+      setEditError(err.message || t("modules.err.save"));
+    } finally {
+      setLockSaving(false);
+    }
   }
 
   async function saveCompanyEdit(e) {
@@ -516,6 +533,79 @@ export default function CompanyModules() {
                           </div>
                         </label>
                       ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 8 }}>{t("modules.operationsHeading")}</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <label
+                        className="fp-switch"
+                        style={{
+                          display: "flex",
+                          alignItems: "flex-start",
+                          gap: 10,
+                          padding: 12,
+                          border: "1px solid var(--line)",
+                          borderRadius: 8,
+                          cursor: moduleBusyKey ? "default" : "pointer",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={Boolean(activeCompany.show_accrual_date_field)}
+                          disabled={moduleBusyKey === "show_accrual_date_field"}
+                          onChange={(e) => toggleModule("show_accrual_date_field", e.target.checked)}
+                          style={{ marginTop: 3 }}
+                        />
+                        <div>
+                          <div style={{ fontWeight: 600 }}>{t("modules.accrualField.title")}</div>
+                          <div className="fp-muted" style={{ fontSize: 12.5 }}>
+                            {t("modules.accrualField.description")}
+                          </div>
+                        </div>
+                      </label>
+
+                      <div style={{ padding: 12, border: "1px solid var(--line)", borderRadius: 8 }}>
+                        <div style={{ fontWeight: 600 }}>{t("modules.periodLock.title")}</div>
+                        <div className="fp-muted" style={{ fontSize: 12.5, marginBottom: 8 }}>
+                          {t("modules.periodLock.description")}
+                        </div>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <input
+                            type="date"
+                            value={lockDateInput}
+                            onChange={(e) => setLockDateInput(e.target.value)}
+                            disabled={lockSaving}
+                          />
+                          <button
+                            type="button"
+                            className="fp-btn-tiny"
+                            disabled={lockSaving || !lockDateInput}
+                            onClick={() => saveLockDate(lockDateInput)}
+                          >
+                            {lockSaving ? t("modules.periodLock.saving") : t("modules.periodLock.save")}
+                          </button>
+                          {activeCompany.locked_before_date && (
+                            <button
+                              type="button"
+                              className="fp-btn-tiny"
+                              disabled={lockSaving}
+                              onClick={() => {
+                                setLockDateInput("");
+                                saveLockDate("");
+                              }}
+                            >
+                              {t("modules.periodLock.clear")}
+                            </button>
+                          )}
+                        </div>
+                        {activeCompany.locked_before_date && (
+                          <div className="fp-muted" style={{ fontSize: 12.5, marginTop: 6 }}>
+                            {t("modules.periodLock.currentlyLocked", { date: fmtDate(activeCompany.locked_before_date) })}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 

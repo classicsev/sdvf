@@ -294,12 +294,26 @@ export default function Transactions() {
     setModalOpen(true);
   }
 
+  // Company.show_accrual_date_field === false (см. "Модули", по образцу
+  // ПланФакт) — поле "Дата начисления" в форме скрыто, а не просто пустое:
+  // дата начисления/подтверждение начисления держатся синхронно с датой
+  // оплаты/подтверждением оплаты прямо в состоянии формы, чтобы во всех
+  // трёх путях отправки (обычная операция/перемещение/начисление) на
+  // бэкенд ушли согласованные значения без дублирования логики в каждом.
+  const activeCompanyForForm =
+    companies.find((m) => m.company.id === formCompanyId)?.company || companies[0]?.company;
+  const showAccrualField = activeCompanyForForm ? activeCompanyForForm.show_accrual_date_field !== false : true;
+
   function updateField(field, value) {
     setForm((prev) => {
       const next = { ...prev, [field]: value };
       if (field === "account_id") {
         const acc = accountsById[value];
         if (acc) next.currency = acc.currency;
+      }
+      if (!showAccrualField) {
+        if (field === "date_odds") next.date_opu = value;
+        if (field === "payment_confirmed") next.accrual_confirmed = value;
       }
       return next;
     });
@@ -1114,10 +1128,12 @@ export default function Transactions() {
                   onChange={(e) => updateField("date_odds", e.target.value)}
                 />
               </label>
-              <label>
-                {t("tx.form.dateOpu")}
-                <input type="date" value={form.date_opu} onChange={(e) => updateField("date_opu", e.target.value)} />
-              </label>
+              {showAccrualField && (
+                <label>
+                  {t("tx.form.dateOpu")}
+                  <input type="date" value={form.date_opu} onChange={(e) => updateField("date_opu", e.target.value)} />
+                </label>
+              )}
 
               {isTransfer ? (
                 <>
@@ -1309,7 +1325,7 @@ export default function Transactions() {
                     />
                     {t("tx.form.confirmPayment")}
                   </label>
-                  {!isTransfer && (
+                  {!isTransfer && showAccrualField && (
                     <label className="fp-checkbox-row" style={{ margin: 0, padding: 0 }}>
                       <input
                         type="checkbox"
