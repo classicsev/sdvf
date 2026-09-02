@@ -450,6 +450,78 @@ def test_close_month_uses_accrual_confirmed_not_date_opu_null(client, db_session
     assert got.accrual_confirmed is True
 
 
+def test_close_month_scoped_to_selected_ids_ignores_payment_month(client, db_session):
+    """Регрессия: строки, выделенные пользователем галочками (сгруппированные
+    по проектной группе вида "Сентябрь 2026"), могут быть оплачены в другом
+    месяце — раньше закрытие месяца всегда фильтровало по date_odds внутри
+    целевого месяца, поэтому такие операции никогда не попадали под действие
+    ("Обновлено 0 операций"), даже если явно выбраны."""
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.income)
+
+    def _tx(date_odds, accrual_confirmed):
+        return client.post(
+            "/transactions",
+            headers=headers,
+            json={
+                "date_odds": date_odds,
+                "date_opu": date_odds,
+                "account_id": account.id,
+                "category_id": category.id,
+                "type": "income",
+                "amount": 100,
+                "currency": "RUB",
+                "accrual_confirmed": accrual_confirmed,
+            },
+        ).json()
+
+    # Оплачена в августе, но подтверждённое начисление — пользователь хочет
+    # явно перенести именно эту операцию в сентябрь.
+    august_confirmed = _tx("2026-08-31", True)
+    # Не выбрана пользователем — не должна быть затронута, хотя дата оплаты
+    # та же и начисление тоже не подтверждено.
+    august_confirmed_not_selected = _tx("2026-08-31", True)
+
+    # Без include_confirmed: выбранная, но уже подтверждённая — не трогаем.
+    resp = client.post(
+        "/transactions/close-month",
+        headers=headers,
+        json={
+            "company_id": account.company_id,
+            "month": "2026-09-01",
+            "transaction_ids": [august_confirmed["id"]],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["updated"] == 0
+
+    # С include_confirmed=True: та же выбранная строка перезаписывается,
+    # несмотря на дату оплаты в другом месяце и подтверждённый статус.
+    resp = client.post(
+        "/transactions/close-month",
+        headers=headers,
+        json={
+            "company_id": account.company_id,
+            "month": "2026-09-01",
+            "transaction_ids": [august_confirmed["id"]],
+            "include_confirmed": True,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["updated"] == 1
+
+    db_session.expire_all()
+    got = db_session.get(Transaction, august_confirmed["id"])
+    assert got.date_opu.isoformat() == "2026-09-01"
+    assert got.accrual_confirmed is True
+
+    # Невыбранная не задета вообще.
+    untouched = db_session.get(Transaction, august_confirmed_not_selected["id"])
+    assert untouched.date_opu.isoformat() == "2026-08-31"
+
+
 def test_export_xlsx_returns_valid_workbook_with_readable_names(client, db_session, tmp_path):
     admin = make_user(db_session, RoleEnum.admin)
     headers = auth_headers(admin)

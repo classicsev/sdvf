@@ -128,6 +128,14 @@ class TransactionBatchDelete(BaseModel):
 class CloseMonthIn(BaseModel):
     company_id: str
     month: date  # любая дата внутри целевого месяца — используется только год/месяц
+    # Если задан — операция применяется ТОЛЬКО к этим ID (например, выделенные
+    # галочками строки на странице), дата оплаты в целевой месяц не проверяется.
+    # Если не задан — старое поведение: все операции компании с датой оплаты
+    # внутри month.
+    transaction_ids: Optional[list[str]] = None
+    # По умолчанию (как раньше) не трогает операции с уже подтверждённым
+    # начислением. true — перезаписывает дату начисления и у них тоже.
+    include_confirmed: bool = False
 
 
 class CategoryIn(BaseModel):

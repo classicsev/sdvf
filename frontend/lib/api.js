@@ -207,8 +207,17 @@ export const api = {
     request("/transactions/transfer", { method: "POST", token, body: payload }),
   createReclass: (token, payload, companyId) =>
     request("/transactions/reclass", { method: "POST", token, body: payload, query: { company_id: companyId } }),
-  closeMonth: (token, companyId, month) =>
-    request("/transactions/close-month", { method: "POST", token, body: { company_id: companyId, month } }),
+  closeMonth: (token, companyId, month, { transactionIds, includeConfirmed } = {}) =>
+    request("/transactions/close-month", {
+      method: "POST",
+      token,
+      body: {
+        company_id: companyId,
+        month,
+        transaction_ids: transactionIds && transactionIds.length ? transactionIds : undefined,
+        include_confirmed: !!includeConfirmed,
+      },
+    }),
   batchDeleteTransactions: (token, transactionIds) =>
     request("/transactions/batch", { method: "DELETE", token, body: { transaction_ids: transactionIds } }),
   batchDeleteTransactionsByFilter: (token, query) =>

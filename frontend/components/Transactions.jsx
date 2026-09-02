@@ -103,6 +103,7 @@ export default function Transactions() {
   const [closeMonthBusy, setCloseMonthBusy] = useState(false);
   const [closeMonthError, setCloseMonthError] = useState("");
   const [closeMonthMsg, setCloseMonthMsg] = useState("");
+  const [closeMonthIncludeConfirmed, setCloseMonthIncludeConfirmed] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [pageSize, setPageSize] = useState(50);
   const [currentPage, setCurrentPage] = useState(0);
@@ -573,6 +574,7 @@ export default function Transactions() {
     setCloseMonthValue(new Date().toISOString().slice(0, 7));
     setCloseMonthError("");
     setCloseMonthMsg("");
+    setCloseMonthIncludeConfirmed(false);
     setCloseMonthOpen(true);
   }
 
@@ -581,8 +583,18 @@ export default function Transactions() {
     setCloseMonthError("");
     setCloseMonthMsg("");
     try {
-      const result = await api.closeMonth(token, closeMonthCompanyId, `${closeMonthValue}-01`);
+      // Если на странице выделены строки (галочками) — закрытие месяца
+      // применяется ровно к ним, вне зависимости от их даты оплаты (нужно,
+      // чтобы перенести начисление операций, сгруппированных пользователем
+      // под другой месяц, но фактически оплаченных раньше/позже). Иначе —
+      // старое поведение: все операции компании с датой оплаты в этом месяце.
+      const result = await api.closeMonth(token, closeMonthCompanyId, `${closeMonthValue}-01`, {
+        transactionIds: selectedTransactionIds.size > 0 ? Array.from(selectedTransactionIds) : undefined,
+        includeConfirmed: closeMonthIncludeConfirmed,
+      });
       setCloseMonthMsg(t("tx.closeMonth.result", { count: result.updated }));
+      setSelectedTransactionIds(new Set());
+      setSelectedAllMatching(false);
       reload();
     } catch (err) {
       setCloseMonthError(err.message);
@@ -1389,6 +1401,21 @@ export default function Transactions() {
                 <input type="month" value={closeMonthValue} onChange={(e) => setCloseMonthValue(e.target.value)} />
               </label>
               <p className="fp-note fp-span-2">{t("tx.closeMonth.confirm")}</p>
+              {selectedTransactionIds.size > 0 ? (
+                <p className="fp-note fp-span-2" style={{ color: "var(--accent)" }}>
+                  {t("tx.closeMonth.scopedToSelection", { count: selectedTransactionIds.size })}
+                </p>
+              ) : (
+                <p className="fp-note fp-span-2">{t("tx.closeMonth.scopedToMonth")}</p>
+              )}
+              <label className="fp-checkbox-row fp-span-2">
+                <input
+                  type="checkbox"
+                  checked={closeMonthIncludeConfirmed}
+                  onChange={(e) => setCloseMonthIncludeConfirmed(e.target.checked)}
+                />
+                {t("tx.closeMonth.includeConfirmed")}
+              </label>
               {closeMonthError && <div className="fp-form-error fp-span-2">{closeMonthError}</div>}
               {closeMonthMsg && <div className="fp-span-2" style={{ color: "var(--accent)", fontSize: 13 }}>✓ {closeMonthMsg}</div>}
               <div className="fp-modal-foot fp-span-2">

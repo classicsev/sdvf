@@ -474,10 +474,22 @@ def close_month(
     user: User = Depends(get_current_user),
 ):
     """Массово проставляет дату начисления (date_opu) = 1-е число месяца и
-    подтверждает начисление — только там, где начисление ещё НЕ подтверждено
+    подтверждает начисление. Доступно только admin — полу-необратимое
+    действие уровня "закрытие периода".
+
+    Два режима отбора операций:
+    - payload.transaction_ids задан — операция применяется ровно к этим ID
+      (например, строки, выделенные галочками на странице) вне зависимости
+      от их даты оплаты. Так можно "перенести" в целевой месяц операции,
+      оплаченные в другом месяце, но относящиеся к текущему по смыслу
+      (например, сгруппированные пользователем в проектную группу вида
+      "Сентябрь 2026").
+    - transaction_ids не задан — старое поведение: все операции компании с
+      датой оплаты внутри month.
+
+    По умолчанию не трогает операции с уже подтверждённым начислением
     (accrual_confirmed=False), не перезаписывает уже подтверждённые вручную
-    даты. Доступно только admin — полу-необратимое действие уровня "закрытие
-    периода".
+    даты) — payload.include_confirmed=True снимает это ограничение.
 
     accrual_confirmed, а не date_opu.is_(None), — с тех пор как форма
     операции стала сама подставлять сегодняшнюю дату начисления по
@@ -487,16 +499,19 @@ def close_month(
     check_company_role(db, user, payload.company_id, [RoleEnum.admin])
     month_start = payload.month.replace(day=1)
     next_month = date(month_start.year + (month_start.month == 12), (month_start.month % 12) + 1, 1)
-    updated = (
-        db.query(Transaction)
-        .filter(
-            Transaction.company_id == payload.company_id,
+
+    query = db.query(Transaction).filter(Transaction.company_id == payload.company_id)
+    if payload.transaction_ids:
+        query = query.filter(Transaction.id.in_(payload.transaction_ids))
+    else:
+        query = query.filter(
             Transaction.date_odds >= month_start,
             Transaction.date_odds < next_month,
-            Transaction.accrual_confirmed.is_(False),
         )
-        .update({"date_opu": month_start, "accrual_confirmed": True}, synchronize_session=False)
-    )
+    if not payload.include_confirmed:
+        query = query.filter(Transaction.accrual_confirmed.is_(False))
+
+    updated = query.update({"date_opu": month_start, "accrual_confirmed": True}, synchronize_session=False)
     db.commit()
     log_action(
         db,
