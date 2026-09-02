@@ -2,7 +2,7 @@ from datetime import date
 from decimal import Decimal
 
 from app.config import settings
-from app.models import Counterparty, Transaction, TxTypeEnum
+from app.models import Company, Counterparty, Transaction, TxTypeEnum
 from tests.conftest import make_account, make_category, make_company, make_user
 
 
@@ -100,3 +100,49 @@ def test_reconciliation_feed_cannot_read_another_users_company(client, db_sessio
         },
     )
     assert response.status_code == 404
+
+
+def test_reconciliation_feed_includes_bank_alias_without_inn(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "sdvf_reconciliation_api_key", "test-key")
+    user = _seed(db_session)
+    company = db_session.query(Company).filter(Company.sdvf_org_inn == "2500000000").one()
+    alias = Counterparty(
+        company_id=company.id,
+        name='ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ "ООО ПОКУПАТЕЛЬ" Р/С 40702810000000000001',
+        inn=None,
+    )
+    db_session.add(alias)
+    db_session.flush()
+    account = make_account(db_session, company_id=company.id)
+    category = make_category(db_session, tx_type=TxTypeEnum.income, company_id=company.id)
+    db_session.add(
+        Transaction(
+            company_id=company.id,
+            date_odds=date(2026, 3, 1),
+            account_id=account.id,
+            category_id=category.id,
+            counterparty_id=alias.id,
+            type=TxTypeEnum.income,
+            amount=Decimal("123.00"),
+            amount_rub=Decimal("123.00"),
+            currency="RUB",
+            bank_payment_purpose="Оплата по счету",
+            external_ref="bank:alias",
+        )
+    )
+    db_session.commit()
+
+    response = client.get(
+        "/integration/sdvf/reconciliation-data",
+        headers={"X-API-Key": "test-key"},
+        params={
+            "user_id": user.id,
+            "organization_inn": "2500000000",
+            "counterparty_inn": "7300036917",
+            "date_from": "2026-01-01",
+            "date_to": "2026-09-02",
+        },
+    )
+
+    assert response.status_code == 200
+    assert [item["external_ref"] for item in response.json()["items"]] == ["bank:test-1", "bank:alias"]

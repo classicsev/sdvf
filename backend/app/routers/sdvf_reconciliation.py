@@ -7,6 +7,7 @@ access.
 """
 
 import secrets
+import re
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -24,6 +25,15 @@ router = APIRouter(prefix="/integration/sdvf", tags=["sdvf-reconciliation"])
 
 def _digits(value: str | None) -> str:
     return "".join(ch for ch in (value or "") if ch.isdigit())
+
+
+def _normalized_legal_name(value: str | None) -> str:
+    """Collapse bank-created aliases to the legal entity's distinctive name."""
+    name = (value or "").lower().replace("ё", "е")
+    name = re.sub(r"\bр\s*/?\s*с\b.*$", "", name)
+    name = name.replace("общество с ограниченной ответственностью", " ")
+    name = re.sub(r"\bооо\b", " ", name)
+    return " ".join(re.findall(r"[а-яa-z0-9]+", name))
 
 
 def _authenticate(api_key: str | None) -> None:
@@ -79,7 +89,17 @@ def reconciliation_data(
     if not counterparties:
         raise HTTPException(status_code=404, detail="Контрагент с этим ИНН не найден в выбранной компании")
 
-    counterparty_ids = [item.id for item in counterparties]
+    target_names = {_normalized_legal_name(item.name) for item in counterparties}
+    # Bank imports can create a second card such as the full legal name plus
+    # "Р/С ..." without an INN. Include only aliases with the exact same
+    # distinctive normalized name; never absorb a card carrying another INN.
+    aliases = [
+        item
+        for item in db.query(Counterparty).filter(Counterparty.company_id == company.id).all()
+        if _normalized_legal_name(item.name) in target_names
+        and (not _digits(item.inn) or _digits(item.inn) == coun_inn)
+    ]
+    counterparty_ids = list({item.id for item in counterparties + aliases})
     transactions = (
         db.query(Transaction)
         .filter(
