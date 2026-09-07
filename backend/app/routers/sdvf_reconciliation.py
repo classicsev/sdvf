@@ -32,7 +32,8 @@ def _normalized_legal_name(value: str | None) -> str:
     name = (value or "").lower().replace("ё", "е")
     name = re.sub(r"\bр\s*/?\s*с\b.*$", "", name)
     name = name.replace("общество с ограниченной ответственностью", " ")
-    name = re.sub(r"\bооо\b", " ", name)
+    name = name.replace("индивидуальный предприниматель", " ")
+    name = re.sub(r"\b(?:ооо|ип)\b", " ", name)
     return " ".join(re.findall(r"[а-яa-z0-9]+", name))
 
 

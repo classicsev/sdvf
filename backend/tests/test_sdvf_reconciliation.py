@@ -146,3 +146,59 @@ def test_reconciliation_feed_includes_bank_alias_without_inn(client, db_session,
 
     assert response.status_code == 200
     assert [item["external_ref"] for item in response.json()["items"]] == ["bank:test-1", "bank:alias"]
+
+
+def test_reconciliation_feed_matches_full_individual_entrepreneur_name(
+    client, db_session, monkeypatch
+):
+    monkeypatch.setattr(settings, "sdvf_reconciliation_api_key", "test-key")
+    company = make_company(db_session, "ИП Продавец")
+    company.sdvf_org_inn = "920000000000"
+    user = make_user(db_session, company_id=company.id)
+    official = Counterparty(
+        company_id=company.id,
+        name="ИП Азаров Виталий Викторович",
+        inn="231407055842",
+    )
+    bank_alias = Counterparty(
+        company_id=company.id,
+        name="ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ АЗАРОВ ВИТАЛИЙ ВИКТОРОВИЧ",
+        inn=None,
+    )
+    db_session.add_all([official, bank_alias])
+    db_session.flush()
+    account = make_account(db_session, company_id=company.id)
+    category = make_category(db_session, tx_type=TxTypeEnum.income, company_id=company.id)
+    db_session.add(
+        Transaction(
+            company_id=company.id,
+            date_odds=date(2026, 1, 12),
+            account_id=account.id,
+            category_id=category.id,
+            counterparty_id=bank_alias.id,
+            type=TxTypeEnum.income,
+            amount=Decimal("100000.00"),
+            amount_rub=Decimal("100000.00"),
+            currency="RUB",
+            bank_payment_purpose="Оплата за товар",
+            external_ref="bank:individual-entrepreneur-alias",
+        )
+    )
+    db_session.commit()
+
+    response = client.get(
+        "/integration/sdvf/reconciliation-data",
+        headers={"X-API-Key": "test-key"},
+        params={
+            "user_id": user.id,
+            "organization_inn": "920000000000",
+            "counterparty_inn": "231407055842",
+            "date_from": "2026-01-01",
+            "date_to": "2026-09-07",
+        },
+    )
+
+    assert response.status_code == 200
+    assert [item["external_ref"] for item in response.json()["items"]] == [
+        "bank:individual-entrepreneur-alias"
+    ]
