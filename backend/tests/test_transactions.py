@@ -1,4 +1,6 @@
 import datetime
+from decimal import Decimal
+from unittest.mock import patch
 
 import openpyxl
 
@@ -138,24 +140,77 @@ def test_bank_payment_purpose_and_comment_are_independent_fields(client, db_sess
 
 
 def test_create_transaction_foreign_currency_without_rate_fails(client, db_session):
+    """Курса нет ни локально, ни у ЦБ РФ (напр. сеть недоступна, или валюта
+    им вообще не публикуется) — 422, а не 500."""
     admin = make_user(db_session, RoleEnum.admin)
     account = make_account(db_session, currency="USD")
     category = make_category(db_session, tx_type=TxTypeEnum.expense)
 
-    resp = client.post(
-        "/transactions",
-        headers=auth_headers(admin),
-        json={
-            "date_odds": "2026-06-01",
-            "account_id": account.id,
-            "category_id": category.id,
-            "type": "expense",
-            "amount": 100,
-            "currency": "USD",
-        },
-    )
+    with patch("app.fx.fetch_cbr_rate", return_value=None):
+        resp = client.post(
+            "/transactions",
+            headers=auth_headers(admin),
+            json={
+                "date_odds": "2026-06-01",
+                "account_id": account.id,
+                "category_id": category.id,
+                "type": "expense",
+                "amount": 100,
+                "currency": "USD",
+            },
+        )
     assert resp.status_code == 422
     assert "курса" in resp.json()["detail"]
+
+
+def test_create_transaction_foreign_currency_falls_back_to_cbr_rate(client, db_session):
+    """Локального курса нет — раньше это сразу блокировало сохранение
+    операции (жалоба пользователя, 2026-09-07: "были на балансе юани,
+    тратились юани — почему не проводится?"). Теперь тянем официальный курс
+    ЦБ РФ и кэшируем его в exchange_rates, чтобы повторные операции той же
+    валютой/датой не ходили в ЦБ заново."""
+    admin = make_user(db_session, RoleEnum.admin)
+    account = make_account(db_session, currency="CNY")
+    category = make_category(db_session, tx_type=TxTypeEnum.expense)
+
+    with patch("app.fx.fetch_cbr_rate", return_value=Decimal("12.5")) as mocked:
+        resp = client.post(
+            "/transactions",
+            headers=auth_headers(admin),
+            json={
+                "date_odds": "2026-09-07",
+                "account_id": account.id,
+                "category_id": category.id,
+                "type": "expense",
+                "amount": 604,
+                "currency": "CNY",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["amount_rub"] == 7550.0  # 604 * 12.5
+        mocked.assert_called_once_with("CNY", datetime.date(2026, 9, 7))
+
+    cached = db_session.query(ExchangeRate).filter(ExchangeRate.currency == "CNY").all()
+    assert len(cached) == 1
+    assert cached[0].rate_to_rub == Decimal("12.5")
+
+    # Повторная операция в тот же день не должна снова дёргать ЦБ РФ —
+    # берётся уже закэшированный курс.
+    with patch("app.fx.fetch_cbr_rate") as mocked_again:
+        resp2 = client.post(
+            "/transactions",
+            headers=auth_headers(admin),
+            json={
+                "date_odds": "2026-09-07",
+                "account_id": account.id,
+                "category_id": category.id,
+                "type": "expense",
+                "amount": 100,
+                "currency": "CNY",
+            },
+        )
+        assert resp2.status_code == 200, resp2.text
+        mocked_again.assert_not_called()
 
 
 def test_create_transaction_foreign_currency_uses_latest_rate_not_future(client, db_session):
