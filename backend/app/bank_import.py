@@ -1,5 +1,7 @@
+from datetime import timedelta
 from typing import Iterable, Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.auth import get_accessible_company_ids
@@ -96,22 +98,39 @@ def import_mapped_transactions(
         # его external_ref (префикс "statement:...") синтетический хэш по
         # (дата, сумма, описание) и НИКОГДА не совпадёт с external_ref той же
         # операции, пришедшей через синк по API (там "alfa:<uuid>"/"tbank:<id>"
-        # и т.п.) — проверка выше её не поймает. Если счёт уже синкается по API
-        # (или начнёт синкаться позже за уже импортированный период), выписка
-        # задвоила бы каждую операцию. Подстраховка: для операций из выписки
-        # дополнительно ищем совпадение по смыслу (счёт+дата+сумма+тип) среди
-        # ЛЮБЫХ уже существующих операций, независимо от их external_ref.
-        if mapped["external_ref"].startswith("statement:") and (
-            db.query(Transaction)
-            .filter(
-                Transaction.company_id == company_id,
-                Transaction.account_id == account.id,
-                Transaction.date_odds == mapped["date_odds"],
-                Transaction.amount == mapped["amount"],
-                Transaction.type == mapped["type"],
+        # и т.п.) — проверка выше её не поймает. То же самое верно и для
+        # операций, заведённых вручную через интерфейс (external_ref IS NULL) —
+        # у ТД Щёлоковъ нашлась ровно такая: одна и та же реальная оплата была
+        # занесена руками ДО подключения API, синк её не узнал и задвоил.
+        # Задвоение возможно в ОБЕ стороны: не-API-источник (выписка/ручной
+        # ввод) импортирован раньше, чем счёт начал синкаться по API (или
+        # наоборот, API уже синкался, а потом за тот же период разобрали
+        # выписку/добавили вручную) — исторически была защита только от
+        # первого направления, из-за чего ТД Щёлоковъ реально задвоился
+        # 03.09.2026 (см. HANDOVER.md). Подстраховка теперь симметричная: для
+        # операции из выписки ищем совпадение по смыслу (счёт+дата+сумма+тип)
+        # среди ЛЮБЫХ существующих операций; для операции из API — только
+        # среди уже существующих НЕ-API операций (ручной ввод или выписка) —
+        # два реальных API-перевода на одну и ту же сумму в один день не
+        # считаются дублями, см. test_api_import_does_not_use_semantic_dedup.
+        # Дата — с допуском ±1 день: разбор той же PDF-выписки Альфа-Бизнес
+        # у ТД Щёлоковъ систематически показал дату операции на 1 день позже
+        # даты из API (probably дата проводки vs дата исполнения) — 9 из 603
+        # реальных дублей 03.09.2026 не поймались бы точным равенством дат.
+        is_from_statement = mapped["external_ref"].startswith("statement:")
+        semantic_match_query = db.query(Transaction).filter(
+            Transaction.company_id == company_id,
+            Transaction.account_id == account.id,
+            Transaction.date_odds >= mapped["date_odds"] - timedelta(days=1),
+            Transaction.date_odds <= mapped["date_odds"] + timedelta(days=1),
+            Transaction.amount == mapped["amount"],
+            Transaction.type == mapped["type"],
+        )
+        if not is_from_statement:
+            semantic_match_query = semantic_match_query.filter(
+                or_(Transaction.external_ref.is_(None), Transaction.external_ref.startswith("statement:"))
             )
-            .first()
-        ):
+        if semantic_match_query.first():
             skipped_duplicate += 1
             continue
         seen_refs_in_batch.add(mapped["external_ref"])
