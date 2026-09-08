@@ -20,6 +20,19 @@ def get_or_create_import_category(db: Session, tx_type: TxTypeEnum, company_id: 
     return category
 
 
+def get_or_create_unallocated_category(db: Session, tx_type: TxTypeEnum, company_id: str) -> Category:
+    """Статья по умолчанию, когда пользователь создаёт операцию вручную, не
+    выбирая статью — чтобы не блокировать сохранение (по просьбе
+    пользователя, 2026-09-07)."""
+    name = "Нераспределённый доход" if tx_type == "income" else "Нераспределённый расход"
+    category = db.query(Category).filter(Category.company_id == company_id, Category.name == name).first()
+    if category is None:
+        category = Category(company_id=company_id, name=name, group_name="Нераспределено", type=tx_type)
+        db.add(category)
+        db.flush()
+    return category
+
+
 def get_or_create_financing_category(db: Session, tx_type: TxTypeEnum, company_id: str) -> Category:
     # Кредитная линия/овердрафт — не доход и не расход бизнеса (см.
     # integrations/tbank.py::FINANCING_CATEGORIES), отдельная категория с

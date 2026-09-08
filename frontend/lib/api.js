@@ -25,6 +25,22 @@ class ApiError extends Error {
   }
 }
 
+const SESSION_EXPIRED_MESSAGE =
+  "Сессия истекла — обновите страницу и войдите заново. Введённые данные сохраните перед этим.";
+
+// 401 при наличии token — не "запрос не туда ушёл", а истекшая сессия
+// (см. jwt_expire_minutes). Раньше это всплывало как техническое
+// "Not authenticated", а форма (напр. ProfileModal) просто падала с
+// невнятной ошибкой — пользователь недоумевал и терял введённые данные.
+function apiErrorFromResponse(res, data, token) {
+  if (res.status === 401 && token) {
+    return new ApiError(SESSION_EXPIRED_MESSAGE, 401);
+  }
+  const detail = data?.detail;
+  const message = Array.isArray(detail) ? detail.map((d) => d.msg).join("; ") : detail || `Ошибка запроса (${res.status})`;
+  return new ApiError(message, res.status);
+}
+
 async function request(path, { method = "GET", token, body, query } = {}) {
   const headers = { Accept: "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -49,11 +65,7 @@ async function request(path, { method = "GET", token, body, query } = {}) {
   const data = isJson ? await res.json().catch(() => null) : null;
 
   if (!res.ok) {
-    const detail = data?.detail;
-    const message = Array.isArray(detail)
-      ? detail.map((d) => d.msg).join("; ")
-      : detail || `Ошибка запроса (${res.status})`;
-    throw new ApiError(message, res.status);
+    throw apiErrorFromResponse(res, data, token);
   }
 
   return data;
@@ -64,7 +76,7 @@ async function download(path, { token, query } = {}) {
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${API_BASE}${path}${buildQuery(query)}`, { headers });
   if (!res.ok) {
-    throw new ApiError(`Не удалось скачать файл (${res.status})`, res.status);
+    throw res.status === 401 && token ? new ApiError(SESSION_EXPIRED_MESSAGE, 401) : new ApiError(`Не удалось скачать файл (${res.status})`, res.status);
   }
   const blob = await res.blob();
   const disposition = res.headers.get("content-disposition") || "";
@@ -99,11 +111,7 @@ async function uploadFile(path, { token, file, query } = {}) {
   const data = isJson ? await res.json().catch(() => null) : null;
 
   if (!res.ok) {
-    const detail = data?.detail;
-    const message = Array.isArray(detail)
-      ? detail.map((d) => d.msg).join("; ")
-      : detail || `Ошибка запроса (${res.status})`;
-    throw new ApiError(message, res.status);
+    throw apiErrorFromResponse(res, data, token);
   }
 
   return data;
@@ -114,7 +122,7 @@ async function openPdf(path, { token, query } = {}) {
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${API_BASE}${path}${buildQuery(query)}`, { headers });
   if (!res.ok) {
-    throw new ApiError(`Не удалось открыть документ (${res.status})`, res.status);
+    throw res.status === 401 && token ? new ApiError(SESSION_EXPIRED_MESSAGE, 401) : new ApiError(`Не удалось открыть документ (${res.status})`, res.status);
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -149,7 +157,7 @@ export const api = {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) {
-      throw new ApiError(data?.detail || `Ошибка запроса (${res.status})`, res.status);
+      throw apiErrorFromResponse(res, data, token);
     }
     return data;
   },

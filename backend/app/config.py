@@ -6,7 +6,12 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 480
+    # 30 дней — раньше было 480 (8 часов) без какого-либо refresh-механизма:
+    # оставленная открытой вкладка/фоновая перезагрузка браузера после
+    # рабочего дня давали 401 на любое действие, включая сохранение профиля,
+    # и приложение перекидывало на экран входа, теряя незасохранённые данные
+    # формы (жалоба пользователя, 2026-09-07).
+    jwt_expire_minutes: int = 43200
     field_encryption_key: str
     tbank_base_url: str = "https://business.tbank.ru/openapi"
     # Sandbox по умолчанию — на проде переключить на https://baas.alfabank.ru/api

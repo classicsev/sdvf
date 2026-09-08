@@ -11,6 +11,7 @@ import { backdropClickProps } from "../lib/modalBackdrop";
 import Counterparties from "./Counterparties";
 import ProjectCard from "./ProjectCard";
 import AmountInput from "./AmountInput";
+import BalanceKpiRow from "./BalanceKpiRow";
 import { useTranslation } from "../lib/i18n";
 
 // Вычисляемый статус проекта (planned/in_progress/closed — см.
@@ -948,6 +949,8 @@ export default function Reference({ initialTab = "categories" }) {
           </button>
         )}
       </div>
+
+      {tab === "projects" && <BalanceKpiRow companyId={companyFilter} />}
 
       {tab === "accounts" && syncBanner && (
         <div className="fp-panel" style={{ padding: "10px 14px", fontSize: 13 }}>

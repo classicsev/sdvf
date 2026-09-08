@@ -19,6 +19,7 @@ from app.auth import (
     scope_project_filter,
 )
 from app.automation_engine import apply_rules
+from app.bank_import import get_or_create_unallocated_category
 from app.database import get_db
 from app.fx import convert_to_rub
 from app.holding_transfers import get_or_create_internal_transfer_category
@@ -219,7 +220,8 @@ def create_transaction(
     get_or_404_accessible(db, Account, payload.account_id, [target], "Счёт не найден")
     # Статья/проект — не строгое совпадение company_id, а "видна ли компании
     # target" (своя, глобальная или явно расшаренная — см. reference_scope.py).
-    get_visible_or_404(db, Category, payload.category_id, [target], "Статья не найдена")
+    if payload.category_id:
+        get_visible_or_404(db, Category, payload.category_id, [target], "Статья не найдена")
     if payload.project_id:
         get_visible_or_404(db, Project, payload.project_id, [target], "Проект не найден")
     if payload.counterparty_id:
@@ -233,6 +235,12 @@ def create_transaction(
     # категорию/проект операции по условиям (контрагент, комментарий, сумма).
     data = payload.model_dump()
     data.update(apply_rules(db, payload, target))
+
+    # Статья не выбрана и ни одно правило её не подставило — операция всё
+    # равно должна сохраниться (по просьбе пользователя, 2026-09-07), уходит
+    # в "Нераспределённый доход/расход" вместо блокировки сохранения.
+    if not data.get("category_id"):
+        data["category_id"] = get_or_create_unallocated_category(db, payload.type, target).id
 
     tx = Transaction(
         **data,

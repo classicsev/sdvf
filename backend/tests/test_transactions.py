@@ -2,7 +2,7 @@ import datetime
 
 import openpyxl
 
-from app.models import ExchangeRate, RoleEnum, Transaction, TxTypeEnum
+from app.models import Category, ExchangeRate, RoleEnum, Transaction, TxTypeEnum
 from tests.conftest import auth_headers, make_account, make_category, make_project, make_project_group, make_user
 
 
@@ -26,6 +26,46 @@ def test_create_transaction_rub_no_conversion(client, db_session):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["amount_rub"] == 1000.0
+
+
+def test_create_transaction_without_category_defaults_to_unallocated(client, db_session):
+    """Статья не обязательна при создании операции (по просьбе пользователя,
+    2026-09-07) — без выбора статьи операция уходит в автоматически
+    созданную "Нераспределённый доход/расход", а не блокируется."""
+    admin = make_user(db_session, RoleEnum.admin)
+    account = make_account(db_session)
+
+    resp = client.post(
+        "/transactions",
+        headers=auth_headers(admin),
+        json={
+            "date_odds": "2026-06-01",
+            "account_id": account.id,
+            "type": "expense",
+            "amount": 500,
+            "currency": "RUB",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    category = db_session.get(Category, body["category_id"])
+    assert category.name == "Нераспределённый расход"
+    assert category.type == TxTypeEnum.expense
+
+    # Повторное создание без статьи переиспользует ту же категорию, не плодит дубли
+    resp2 = client.post(
+        "/transactions",
+        headers=auth_headers(admin),
+        json={
+            "date_odds": "2026-06-02",
+            "account_id": account.id,
+            "type": "expense",
+            "amount": 700,
+            "currency": "RUB",
+        },
+    )
+    assert resp2.status_code == 200, resp2.text
+    assert resp2.json()["category_id"] == body["category_id"]
 
 
 def test_update_transaction_with_date_odds_in_payload_does_not_crash_audit_log(client, db_session):

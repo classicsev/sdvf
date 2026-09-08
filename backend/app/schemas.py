@@ -18,7 +18,10 @@ class TransactionBase(BaseModel):
     date_odds: date
     date_opu: Optional[date] = None
     account_id: str
-    category_id: str
+    # Необязательна при создании — если не выбрана, подставляется
+    # "Нераспределённый доход/расход" (см. get_or_create_unallocated_category
+    # в bank_import.py и create_transaction в routers/transactions.py).
+    category_id: Optional[str] = None
     project_id: Optional[str] = None
     counterparty_id: Optional[str] = None
     # Необязательная связь со Складским заказом — "оплачено X из Y" (см.

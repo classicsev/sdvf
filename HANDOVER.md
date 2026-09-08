@@ -3239,3 +3239,63 @@ fuzzy-match). Полный `pytest` — 522/523 (единственный кра
 Деплой — обычная схема (`rsync` app+tests → `docker compose -f
 docker-compose.prod.yml up -d --build backend`), код на проде подтверждён
 grep'ом внутри контейнера.
+
+## Три доработки по прямому запросу пользователя (2026-09-07)
+
+**1. Статья необязательна при создании операции.** Раньше
+`category_id` был обязательным полем и на бэкенде (`Transaction.category_id`
+NOT NULL, `TransactionCreate.category_id: str`), и на фронте (`required` у
+Combobox в Transactions.jsx) — пользователь не мог сохранить операцию, не
+выбрав статью. Теперь `TransactionBase.category_id: Optional[str] = None`;
+если статья не выбрана и правила автоматизации (`apply_rules`) её тоже не
+подставили — `create_transaction` (routers/transactions.py) уходит в
+статью **"Нераспределённый доход"/"Нераспределённый расход"**, создаваемую
+автоматически (`get_or_create_unallocated_category`, `app/bank_import.py`,
+по аналогии с `get_or_create_import_category`). Тест —
+`test_create_transaction_without_category_defaults_to_unallocated`
+(`backend/tests/test_transactions.py`).
+
+**2. Табло с балансом на вкладках Операций/Отчётов/Проектов.** Раньше
+KPI-виджет (остаток/приход/расход/чистый поток, `Dashboard.jsx::KpiCard`)
+был только на Дашборде. Вынесла в новый переиспользуемый компонент
+`frontend/components/BalanceKpiRow.jsx` (тот же JSX/логика, просто
+самодостаточный — сам дёргает `api.dashboardSummary`), не трогая рабочий
+Dashboard.jsx. Подключила: `Transactions.jsx` (над списком операций,
+scoped по `filters.company`), `Reports.jsx` (над вкладками отчётов, по
+всем компаниям сразу — там нет единого company-фильтра на уровне шелла),
+`Reference.jsx` (только на вкладке `tab === "projects"`, scoped по
+`companyFilter`).
+
+**3. Слишком частый разлогин, иногда прямо при сохранении (напр.
+профиля), с потерей введённых данных.** Корень: `jwt_expire_minutes=480`
+(8 часов) БЕЗ какого-либо refresh-токена/silent-renewal — оставленная
+открытая вкладка дольше рабочего дня или фоновая перезагрузка браузера
+(частое явление на мобильных/после сна ноутбука) → токен истёк → любой
+запрос 401 → при следующем полном ремаунте `AuthProvider` (напр. F5)
+`api.me(stored)` в `useEffect` падает → токен стирается из localStorage →
+`user` становится null → `app/page.jsx` рендерит `<Login/>` вместо
+`<Shell/>` → всё, что было в несохранённой форме (напр. открытая
+`ProfileModal`), теряется вместе с размонтированным деревом. Явного кода,
+который бы разлогинивал СРАЗУ на 401 (без ремаунта), не нашла — ни в
+`api.js`, ни в auth-context.jsx нет обработчика 401, `logout()` вызывается
+только по кнопке "Выйти" (Shell.jsx). Фикс:
+- `jwt_expire_minutes` — 480 → **43200 (30 дней)**, дефолт в
+  `backend/app/config.py` и явный override в проде
+  (`/opt/finance-app/backend/.env`, старое значение — в бэкапе
+  `.env.bak_<timestamp>` рядом). Резко снижает саму частоту истечения
+  сессии в реалистичном сценарии использования.
+- `frontend/lib/api.js` — новый общий хелпер `apiErrorFromResponse`:
+  401 при наличии `token` (т.е. сессия реально была, не анонимный запрос)
+  теперь даёт понятное сообщение "Сессия истекла — обновите страницу и
+  войдите заново. Введённые данные сохраните перед этим." вместо
+  технического "Not authenticated"/generic "Ошибка запроса (401)" — во
+  всех путях, где раньше была дублирующаяся inline-логика (`request`,
+  `uploadFile`, `uploadMyAvatar`, плюс упрощённая версия в `download`/
+  `openPdf`, которые не парсят JSON).
+
+Деплой — `rsync` backend+frontend → `docker compose -f
+docker-compose.prod.yml up -d --build backend frontend`, всё подтверждено
+grep'ом внутри контейнеров (в т.ч. в собранных JS-чанках фронтенда).
+Полный `pytest` — 523/524 (единственный красный —
+`test_alfabank_sync_e2e.py::test_sync_fails_when_alfa_returns_error`,
+предсуществующий, не связан ни с одним из этих трёх изменений).

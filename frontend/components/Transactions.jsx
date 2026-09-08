@@ -10,6 +10,7 @@ import { canEditTransactions } from "../lib/roles";
 import { Combobox } from "./Combobox";
 import AmountInput from "./AmountInput";
 import AttachmentList from "./AttachmentList";
+import BalanceKpiRow from "./BalanceKpiRow";
 import { backdropClickProps } from "../lib/modalBackdrop";
 import { useTranslation } from "../lib/i18n";
 
@@ -438,7 +439,7 @@ export default function Transactions() {
         date_odds: form.date_odds,
         date_opu: form.date_opu || null,
         account_id: form.account_id,
-        category_id: form.category_id,
+        category_id: form.category_id || null,
         project_id: form.project_id || null,
         counterparty_id: form.counterparty_id || null,
         order_id: form.order_id || null,
@@ -665,6 +666,7 @@ export default function Transactions() {
         <AccountBalancesPanel token={token} companyId={filters.company} />
       ) : (
       <>
+      <BalanceKpiRow companyId={filters.company} />
       <div className="fp-tabs-row">
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {multiCompany && (
@@ -1242,7 +1244,6 @@ export default function Transactions() {
                         name: `${c.name}${c.is_active === false ? t("tx.deactivatedSuffixF") : ""}`
                       }))}
                       placeholder={t("tx.form.selectCategory")}
-                      required
                       onCreateNew={handleCreateCategory}
                     />
                   </label>

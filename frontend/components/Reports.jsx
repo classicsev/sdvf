@@ -11,6 +11,7 @@ import { useTranslation } from "../lib/i18n";
 import ProjectCard from "./ProjectCard";
 import { Combobox } from "./Combobox";
 import AmountInput from "./AmountInput";
+import BalanceKpiRow from "./BalanceKpiRow";
 
 const TAB_KEYS = ["cashflow", "pnl", "balance", "debt", "profitability", "companyBudget", "calendar"];
 
@@ -635,6 +636,7 @@ export default function Reports() {
 
   return (
     <div className="fp-dash">
+      <BalanceKpiRow />
       <div className="fp-tabs">
         {TAB_KEYS.map((key) => (
           <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>
