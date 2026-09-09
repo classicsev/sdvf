@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
-from sqlalchemy.orm import Session, Query
+from sqlalchemy.orm import Session, Query, selectinload
 
 from app.audit import log_action
 from app.auth import (
@@ -23,7 +23,20 @@ from app.bank_import import get_or_create_unallocated_category
 from app.database import get_db
 from app.fx import convert_to_rub
 from app.holding_transfers import get_or_create_internal_transfer_category
-from app.models import Account, Category, Company, Counterparty, Order, Project, RoleEnum, Transaction, TxTypeEnum, User
+from app.models import (
+    Account,
+    Category,
+    Company,
+    Counterparty,
+    Order,
+    Project,
+    RoleEnum,
+    Transaction,
+    TransactionCategorySplit,
+    TransactionProjectSplit,
+    TxTypeEnum,
+    User,
+)
 from app.reference_scope import get_visible_or_404
 from app.schemas import (
     CloseMonthIn,
@@ -54,6 +67,36 @@ def _convert_to_rub(db: Session, currency: str, amount, on_date: date) -> Decima
     return rub
 
 
+def _validate_split_sum(lines, total_amount, what: str) -> None:
+    total = sum(Decimal(str(line.amount)) for line in lines)
+    if abs(total - Decimal(str(total_amount))) > Decimal("0.01"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Сумма долей по {what} ({total}) не совпадает с суммой операции ({total_amount})",
+        )
+
+
+def _build_split_rows(lines, split_model, id_field: str, total_amount, total_amount_rub) -> list:
+    """lines — CategorySplitLineIn/ProjectSplitLineIn (len>=2, сумма уже
+    провалидирована _validate_split_sum). amount_rub каждой доли — пропорция
+    от total_amount_rub; последняя строка донабирает остаток, чтобы сумма
+    долей в рублях точно совпадала с amount_rub без потерь на округлении."""
+    total_amount_dec = Decimal(str(total_amount))
+    remaining_rub = Decimal(str(total_amount_rub))
+    rows = []
+    for i, line in enumerate(lines):
+        is_last = i == len(lines) - 1
+        if is_last or total_amount_dec == 0:
+            leg_rub = remaining_rub
+        else:
+            leg_rub = (Decimal(str(line.amount)) / total_amount_dec * Decimal(str(total_amount_rub))).quantize(
+                Decimal("0.01")
+            )
+            remaining_rub -= leg_rub
+        rows.append(split_model(**{id_field: getattr(line, id_field), "amount": line.amount, "amount_rub": leg_rub}))
+    return rows
+
+
 def _filtered_query(
     db: Session,
     user: User,
@@ -69,15 +112,31 @@ def _filtered_query(
     # Без ?company_id= — сразу по всем компаниям пользователя (сводно, без
     # переключения контекста); с ?company_id= — только по одной.
     company_ids = resolve_company_ids(db, user, company_id)
-    query = db.query(Transaction).filter(Transaction.company_id.in_(company_ids))
+    query = (
+        db.query(Transaction)
+        .options(selectinload(Transaction.category_splits), selectinload(Transaction.project_splits))
+        .filter(Transaction.company_id.in_(company_ids))
+    )
+
+    def _has_project_split(project_id: str):
+        return Transaction.id.in_(
+            db.query(TransactionProjectSplit.transaction_id).filter(TransactionProjectSplit.project_id == project_id)
+        )
+
+    def _has_category_split(category_id: str):
+        return Transaction.id.in_(
+            db.query(TransactionCategorySplit.transaction_id).filter(
+                TransactionCategorySplit.category_id == category_id
+            )
+        )
 
     # Row-level security: project_manager принудительно видит только свой проект,
     # даже если он передаст другой ?project= в запросе.
     forced_project = scope_project_filter(user)
     if forced_project:
-        query = query.filter(Transaction.project_id == forced_project)
+        query = query.filter((Transaction.project_id == forced_project) | _has_project_split(forced_project))
     elif project:
-        query = query.filter(Transaction.project_id == project)
+        query = query.filter((Transaction.project_id == project) | _has_project_split(project))
     elif project_group_id:
         query = query.filter(
             Transaction.project_id.in_(db.query(Project.id).filter(Project.group_id == project_group_id))
@@ -86,7 +145,7 @@ def _filtered_query(
     if account:
         query = query.filter(Transaction.account_id == account)
     if category:
-        query = query.filter(Transaction.category_id == category)
+        query = query.filter((Transaction.category_id == category) | _has_category_split(category))
     if date_from:
         query = query.filter(Transaction.date_odds >= date_from)
     if date_to:
@@ -233,14 +292,38 @@ def create_transaction(
 
     # Правила автоматизации (см. /automation-rules) могут переопределить
     # категорию/проект операции по условиям (контрагент, комментарий, сумма).
-    data = payload.model_dump()
+    data = payload.model_dump(exclude={"category_splits", "project_splits"})
     data.update(apply_rules(db, payload, target))
 
-    # Статья не выбрана и ни одно правило её не подставило — операция всё
-    # равно должна сохраниться (по просьбе пользователя, 2026-09-07), уходит
-    # в "Нераспределённый доход/расход" вместо блокировки сохранения.
-    if not data.get("category_id"):
+    # Разбивка на несколько статей/проектов (см. HANDOVER.md, "Разбивка
+    # операции на несколько статей/проектов") — 2+ строк побеждает и
+    # правила автоматизации, и обычный category_id/project_id: пользователь
+    # разбил операцию осознанно в форме. 0 или 1 строка — как обычно.
+    category_splits = payload.category_splits
+    is_category_split = bool(category_splits and len(category_splits) >= 2)
+    if is_category_split:
+        for line in category_splits:
+            get_visible_or_404(db, Category, line.category_id, [target], "Статья не найдена")
+        _validate_split_sum(category_splits, payload.amount, "статьям")
+        data["category_id"] = None
+    elif category_splits and len(category_splits) == 1:
+        data["category_id"] = category_splits[0].category_id
+    elif not data.get("category_id"):
+        # Статья не выбрана и ни одно правило её не подставило — операция
+        # всё равно должна сохраниться (по просьбе пользователя,
+        # 2026-09-07), уходит в "Нераспределённый доход/расход" вместо
+        # блокировки сохранения.
         data["category_id"] = get_or_create_unallocated_category(db, payload.type, target).id
+
+    project_splits = payload.project_splits
+    is_project_split = bool(project_splits and len(project_splits) >= 2)
+    if is_project_split:
+        for line in project_splits:
+            get_visible_or_404(db, Project, line.project_id, [target], "Проект не найден")
+        _validate_split_sum(project_splits, payload.amount, "проектам")
+        data["project_id"] = None
+    elif project_splits and len(project_splits) == 1:
+        data["project_id"] = project_splits[0].project_id
 
     tx = Transaction(
         **data,
@@ -248,6 +331,14 @@ def create_transaction(
         company_id=target,
         created_by=user.id,
     )
+    if is_category_split:
+        tx.category_splits = _build_split_rows(
+            category_splits, TransactionCategorySplit, "category_id", payload.amount, amount_rub
+        )
+    if is_project_split:
+        tx.project_splits = _build_split_rows(
+            project_splits, TransactionProjectSplit, "project_id", payload.amount, amount_rub
+        )
     db.add(tx)
     db.commit()
     db.refresh(tx)
@@ -428,7 +519,8 @@ def update_transaction(
     role = check_company_role(db, user, tx.company_id, EDITORS)
     _check_can_edit(user, tx, role)
 
-    changes = payload.model_dump(exclude_unset=True)
+    fields_set = payload.model_fields_set
+    changes = payload.model_dump(exclude_unset=True, exclude={"category_splits", "project_splits"})
 
     # При смене счёта/статьи/проекта/контрагента — та же защита от межкомпанийной
     # ссылки, что и при создании (см. create_transaction).
@@ -454,6 +546,44 @@ def update_transaction(
     # Пересчитываем amount_rub, только если поменялось что-то, влияющее на курс
     if {"amount", "currency", "date_odds"} & changes.keys():
         tx.amount_rub = _convert_to_rub(db, tx.currency, tx.amount, tx.date_odds)
+
+    # Разбивка на несколько статей/проектов — replace-all (тот же приём,
+    # что reference.py::replace_project_budget_lines): присланный список
+    # целиком заменяет предыдущий набор долей. Поле не передано в PATCH —
+    # разбивка не трогается вообще (см. model_fields_set).
+    if "category_splits" in fields_set:
+        category_splits = payload.category_splits
+        if category_splits and len(category_splits) >= 2:
+            for line in category_splits:
+                get_visible_or_404(db, Category, line.category_id, [tx.company_id], "Статья не найдена")
+            _validate_split_sum(category_splits, tx.amount, "статьям")
+            tx.category_id = None
+            tx.category_splits = _build_split_rows(
+                category_splits, TransactionCategorySplit, "category_id", tx.amount, tx.amount_rub
+            )
+        elif category_splits and len(category_splits) == 1:
+            tx.category_splits = []
+            tx.category_id = category_splits[0].category_id
+        else:
+            tx.category_splits = []
+            if not tx.category_id:
+                tx.category_id = get_or_create_unallocated_category(db, tx.type, tx.company_id).id
+
+    if "project_splits" in fields_set:
+        project_splits = payload.project_splits
+        if project_splits and len(project_splits) >= 2:
+            for line in project_splits:
+                get_visible_or_404(db, Project, line.project_id, [tx.company_id], "Проект не найден")
+            _validate_split_sum(project_splits, tx.amount, "проектам")
+            tx.project_id = None
+            tx.project_splits = _build_split_rows(
+                project_splits, TransactionProjectSplit, "project_id", tx.amount, tx.amount_rub
+            )
+        elif project_splits and len(project_splits) == 1:
+            tx.project_splits = []
+            tx.project_id = project_splits[0].project_id
+        else:
+            tx.project_splits = []
 
     # Операция, сопоставленная с выплатой Jump.Finance (jump_payment_id
     # заполнен — см. jump_matching.py) — при ручной правке статьи/проекта

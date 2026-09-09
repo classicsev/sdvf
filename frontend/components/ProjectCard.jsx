@@ -344,7 +344,21 @@ export default function ProjectCard({ token, projectId, onBack, canEdit }) {
                 <tr key={tx.id}>
                   <td>{fmtDate(tx.date_odds)}</td>
                   <td>{accountsById[tx.account_id]?.name || "—"}</td>
-                  <td>{categoriesById[tx.category_id]?.name || "—"}</td>
+                  <td>
+                    {categoriesById[tx.category_id]?.name ||
+                      (tx.category_splits?.length ? (
+                        <span
+                          className="fp-split-badge"
+                          title={tx.category_splits
+                            .map((l) => `${categoriesById[l.category_id]?.name || "—"}: ${fmt(l.amount, tx.currency)}`)
+                            .join(", ")}
+                        >
+                          {t("tx.form.splitCategoriesCount", { count: tx.category_splits.length })}
+                        </span>
+                      ) : (
+                        "—"
+                      ))}
+                  </td>
                   <td className="fp-muted">
                     {tx.counterparty_id ? counterpartiesById[tx.counterparty_id]?.name || "—" : "—"}
                   </td>

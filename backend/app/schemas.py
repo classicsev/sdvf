@@ -14,6 +14,32 @@ from app.models import (
 )
 
 
+class CategorySplitLineIn(BaseModel):
+    category_id: str
+    amount: float
+
+
+class ProjectSplitLineIn(BaseModel):
+    project_id: str
+    amount: float
+
+
+class CategorySplitLineOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    category_id: str
+    amount: float
+    amount_rub: float
+
+
+class ProjectSplitLineOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    project_id: str
+    amount: float
+    amount_rub: float
+
+
 class TransactionBase(BaseModel):
     date_odds: date
     date_opu: Optional[date] = None
@@ -23,6 +49,13 @@ class TransactionBase(BaseModel):
     # в bank_import.py и create_transaction в routers/transactions.py).
     category_id: Optional[str] = None
     project_id: Optional[str] = None
+    # Разбивка операции на несколько статей/проектов (независимо друг от
+    # друга) — если задано 2+ строк, category_id/project_id выше
+    # игнорируется при сохранении (операция уходит в "разбитую", см.
+    # create_transaction/update_transaction). 0 или 1 строка — как обычно,
+    # через category_id/project_id. Сумма строк должна совпадать с amount.
+    category_splits: Optional[list[CategorySplitLineIn]] = None
+    project_splits: Optional[list[ProjectSplitLineIn]] = None
     counterparty_id: Optional[str] = None
     # Необязательная связь со Складским заказом — "оплачено X из Y" (см.
     # Order.total_amount/paid_amount в orders.py). Ручная, как project_id.
@@ -58,6 +91,8 @@ class TransactionOut(TransactionBase):
     external_ref: Optional[str] = None
     transfer_pair_id: Optional[str] = None
     reclass_pair_id: Optional[str] = None
+    category_splits: list[CategorySplitLineOut] = []
+    project_splits: list[ProjectSplitLineOut] = []
 
 
 class TransferCreate(BaseModel):
@@ -111,6 +146,8 @@ class TransactionUpdate(BaseModel):
     account_id: Optional[str] = None
     category_id: Optional[str] = None
     project_id: Optional[str] = None
+    category_splits: Optional[list[CategorySplitLineIn]] = None
+    project_splits: Optional[list[ProjectSplitLineIn]] = None
     counterparty_id: Optional[str] = None
     order_id: Optional[str] = None
     type: Optional[TxTypeEnum] = None

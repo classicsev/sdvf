@@ -3405,3 +3405,101 @@ replication` → `role:master` (атака `SLAVEOF` не закрепилась
 (в отличие от прежних docker-логов, которые терялись). Проверено живым
 подключением — `connection received`/`connection authorized` реально
 попадают в файл.
+
+## Разбивка операции на несколько статей и/или проектов (2026-09-09)
+
+Пользователь: платёж на несколько проектов/статей (пример — доставка в
+аэропорт для нескольких заказов, 3000 ₽ на 3 проекта) должен разбиваться
+в статистике/отчётах по каждому, **без лишних строк** в списке операций.
+Обе размерности (статьи и проекты) разбиваются независимо друг от друга;
+по умолчанию сумма делится поровну, доступна ручная правка по строкам.
+
+**Схема** — две новые таблицы "долей", каждая существует ТОЛЬКО когда
+операция реально разбита на 2+ (models.py):
+- `TransactionCategorySplit` (transaction_id, category_id, amount, amount_rub)
+- `TransactionProjectSplit` (transaction_id, project_id, amount, amount_rub)
+
+`transactions.category_id` стал nullable (`project_id` уже был) — `NULL`
+означает "смотри в таблицу долей". Для подавляющего большинства операций
+(без разбивки) ничего не меняется — `category_id`/`project_id` работают
+ровно как раньше, новые таблицы вообще не задействуются. Миграция
+`c1d2e3f4a5b6`.
+
+**Общая точка правды для чтения** — `backend/app/split_legs.py`, три
+SQLAlchemy-хелпера (union_all неразбитых операций + строк из split-таблиц):
+- `category_amount_legs(db)` — один ряд на (transaction_id, category_id,
+  amount_rub); для неразбитых amount_rub = вся сумма операции, для
+  разбитых — доля.
+- `project_amount_legs(db)` — симметрично по проектам.
+- `project_category_amount_legs(db)` — пересечение (доля проекта × доля
+  статьи), нужна ТОЛЬКО там, где надо разбить расход по статьям ВНУТРИ
+  конкретного проекта (project_detail), а операция может быть разбита по
+  ОБОИМ измерениям одновременно независимо. amount_rub = project_leg *
+  category_leg / transaction.amount_rub — пропорциональное распределение;
+  для операции, разбитой только по ОДНОМУ измерению (типичный случай),
+  это точная арифметика, не приближение — approximation работает только
+  когда оба измерения разбиты на одной и той же операции сразу.
+
+**Сохранение** (`routers/transactions.py`) — `TransactionBase` получил
+`category_splits`/`project_splits: Optional[list[{category_id|project_id,
+amount}]]`. 2+ строк → валидация суммы (`_validate_split_sum`, допуск
+1 копейка) → создаются split-строки (`_build_split_rows` — последняя
+строка донабирает остаток в рублях, чтобы сумма долей точно совпадала),
+`category_id`/`project_id` на самой операции → `NULL`. 0 или 1 строка —
+обычное поведение, как раньше. `update_transaction` — replace-all (тот же
+приём, что `reference.py::replace_project_budget_lines`): если поле
+передано в PATCH — старые доли удаляются (cascade через relationship),
+новые создаются заново; поле не передано — разбивка не трогается вообще
+(`payload.model_fields_set`). `_filtered_query` (список операций) —
+фильтр по статье/проекту теперь матчит и через split-таблицы (`EXISTS`),
+не только точное совпадение `category_id`/`project_id`.
+
+**9 отчётных функций переписаны** на суммирование по долям вместо
+`Transaction.amount_rub` целиком (полный список с деталями — в плане
+`/Users/eduard/.claude/plans/wise-pondering-harp.md`, если ещё не удалён):
+`_income_expense_for_range` и `_project_transactions_query`/
+`_project_statuses` (две центральные, через них работает
+`dashboard_summary`/`balance_analysis_report`/`profitability_report`/
+`project_detail`), плюс отдельно `cashflow_report`, `pnl_report`,
+`_compute_balance` (заём/не-заём доля), `top_clients_report`,
+`payment_calendar`, `company_budget_report`. `cashflow_forecast`/
+`debt_report` — точечная правка (проектный фильтр через `EXISTS` по
+split-таблице, сами суммы не по долям — там нет разбивки по статье в
+принципе).
+
+**Фронтенд** (`Transactions.jsx`) — новый компонент `SplitEditor`: 0-1
+строка — обычный одиночный `Combobox` (визуально неотличимо от старого
+поведения) + кнопка "Ещё статья/проект"; 2+ строки — построчный редактор
+(`Combobox` + `AmountInput` + корзина на каждой, паттерн budget-строк из
+`ProjectCard.jsx`), живой индикатор "Распределено X из Y ₽" (красным при
+несовпадении, блокирует сохранение). Список операций и
+`ProjectCard.jsx` — когда `category_id`/`project_id` пустой, но есть
+`category_splits`/`project_splits`, бейдж "N статей"/"N проектов" с
+тултипом-расшифровкой вместо "—".
+
+**Тесты**: 9 новых в `test_transactions.py` (создание/редактирование/
+удаление/фильтр по split-долям, несовпадение суммы → 422, 1 строка = не
+разбивка), 3 в `test_reports.py` (profitability по проектам,
+project_detail — своя доля + by-category внутри проекта, dashboard по
+статьям), 1 в `test_company_budget.py`. Полный `pytest` — 540/541 (тот
+же предсуществующий несвязанный красный тест).
+
+**Живая проверка перед деплоем**: поднят локальный dev-стек (тот же
+Postgres, что и прод — реальные company_id ТД Щёлоковъ/黑龙江路上进出口貿易
+уже там есть, это не одноразовая песочница), миграция накатана,
+backend+frontend подняты локально, через реальный HTTP (не pytest-фикстуры)
+создана и проверена ровно та операция из примера пользователя — 3000 ₽ на
+3 проекта поровну, `profitability_report` вернул по 1000 на каждый
+проект. Все тестовые сущности удалены после проверки (транзакция и
+3 проекта — через API; тестовая статья — DELETE-эндпоинта для категорий
+не существует, 405, удалена напрямую SQL, связанных строк уже не было).
+Playwright недоступен в этой среде — интерактивный UI (клик "+ Ещё
+статья") не прогонялся автоматизированно, только прослежен по коду и
+получены чистые сборки (`next build` + dev-компиляция без ошибок).
+
+Деплой — бэкап БД (`pg_dump -F c`, на сервере
+`/opt/finance-app/backups/backup_pre_splits_20260909_1735.dump`) → rsync
+backend+frontend+alembic → пересборка backend → `alembic upgrade head`
+внутри контейнера → health-check → пересборка frontend → health-check →
+подтверждено grep'ом новой строки (`splitCategoriesCount`) в собранных
+JS-чанках.

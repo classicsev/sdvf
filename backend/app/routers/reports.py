@@ -6,13 +6,14 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
-from sqlalchemy import case, func
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import Query as SAQuery
 
 from app.auth import get_current_user, require_module, require_roles, resolve_company_ids, scope_project_filter
 from app.database import get_db
 from app.fx import convert_to_rub
+from app.split_legs import category_amount_legs, project_amount_legs, project_category_amount_legs
 from app.models import (
     Account,
     Category,
@@ -153,9 +154,18 @@ def _income_expense_for_range(
     # входят в "Приход/Расход" ни по одной компании, ни сводно по всем сразу
     # (свой перевод — не выручка ни там, ни там); сами операции остаются в
     # списке транзакций и в остатке счёта, просто не искажают эти сводные цифры.
+    #
+    # Считаем по ДОЛЯМ статьи (category_amount_legs, см. app/split_legs.py),
+    # не по Transaction.amount_rub напрямую — операция, разбитая на
+    # несколько статей, должна вносить в каждую свою долю, а не всю сумму
+    # целиком (см. HANDOVER.md, "Разбивка операции на несколько статей/
+    # проектов"). Для НЕразбитых операций это ровно то же самое, что было.
+    legs = category_amount_legs(db)
     query = (
-        db.query(Transaction)
-        .join(Category, Transaction.category_id == Category.id)
+        db.query(legs.c.transaction_id, legs.c.amount_rub, Transaction.type, Transaction.company_id)
+        .select_from(legs)
+        .join(Transaction, Transaction.id == legs.c.transaction_id)
+        .join(Category, Category.id == legs.c.category_id)
         .filter(
             Transaction.company_id.in_(company_ids),
             Transaction.date_odds >= period_from,
@@ -166,27 +176,32 @@ def _income_expense_for_range(
         )
     )
     if forced_project:
-        query = query.filter(Transaction.project_id == forced_project)
+        project_legs = project_amount_legs(db)
+        query = query.filter(
+            legs.c.transaction_id.in_(
+                select(project_legs.c.transaction_id).where(project_legs.c.project_id == forced_project)
+            )
+        )
 
     income = (
         query.filter(Transaction.type == TxTypeEnum.income)
-        .with_entities(func.coalesce(func.sum(Transaction.amount_rub), 0))
+        .with_entities(func.coalesce(func.sum(legs.c.amount_rub), 0))
         .scalar()
     )
     expense = (
         query.filter(Transaction.type == TxTypeEnum.expense)
-        .with_entities(func.coalesce(func.sum(Transaction.amount_rub), 0))
+        .with_entities(func.coalesce(func.sum(legs.c.amount_rub), 0))
         .scalar()
     )
     income_by_company = dict(
         query.filter(Transaction.type == TxTypeEnum.income)
-        .with_entities(Transaction.company_id, func.coalesce(func.sum(Transaction.amount_rub), 0))
+        .with_entities(Transaction.company_id, func.coalesce(func.sum(legs.c.amount_rub), 0))
         .group_by(Transaction.company_id)
         .all()
     )
     expense_by_company = dict(
         query.filter(Transaction.type == TxTypeEnum.expense)
-        .with_entities(Transaction.company_id, func.coalesce(func.sum(Transaction.amount_rub), 0))
+        .with_entities(Transaction.company_id, func.coalesce(func.sum(legs.c.amount_rub), 0))
         .group_by(Transaction.company_id)
         .all()
     )
@@ -377,7 +392,13 @@ def cashflow_forecast(
         Transaction.date_odds <= horizon_end,
     )
     if forced_project:
-        plan_query = plan_query.filter(Transaction.project_id == forced_project)
+        project_legs = project_amount_legs(db)
+        plan_query = plan_query.filter(
+            (Transaction.project_id == forced_project)
+            | Transaction.id.in_(
+                select(project_legs.c.transaction_id).where(project_legs.c.project_id == forced_project)
+            )
+        )
     by_day = dict(plan_query.group_by(Transaction.date_odds).all())
 
     running = current_balance_rub
@@ -414,9 +435,13 @@ def cashflow_report(
     # is_financing/is_internal_transfer исключены по той же причине, что и в
     # dashboard_summary/pnl_report — иначе кредитные линии и переводы между
     # своими же счетами раздувают "Приход/Расход" на графике по месяцам.
+    # Считаем по ДОЛЯМ статьи (category_amount_legs) — см. dashboard_summary.
+    legs = category_amount_legs(db)
     query = (
-        db.query(Transaction)
-        .join(Category, Transaction.category_id == Category.id)
+        db.query(legs.c.transaction_id, legs.c.category_id, legs.c.amount_rub, Transaction.type, Transaction.date_odds)
+        .select_from(legs)
+        .join(Transaction, Transaction.id == legs.c.transaction_id)
+        .join(Category, Category.id == legs.c.category_id)
         .filter(
             Transaction.company_id.in_(company_ids),
             Category.is_financing.is_(False),
@@ -426,14 +451,19 @@ def cashflow_report(
     )
     forced_project = scope_project_filter(user)
     if forced_project:
-        query = query.filter(Transaction.project_id == forced_project)
+        project_legs = project_amount_legs(db)
+        query = query.filter(
+            legs.c.transaction_id.in_(
+                select(project_legs.c.transaction_id).where(project_legs.c.project_id == forced_project)
+            )
+        )
 
     if period:
         start, end = _parse_period(period)
         query = query.filter(Transaction.date_odds >= start, Transaction.date_odds <= end)
 
         rows = (
-            query.with_entities(Category.id, Category.name, Transaction.type, func.sum(Transaction.amount_rub))
+            query.with_entities(Category.id, Category.name, Transaction.type, func.sum(legs.c.amount_rub))
             .group_by(Category.id, Category.name, Transaction.type)
             .all()
         )
@@ -452,7 +482,7 @@ def cashflow_report(
 
     month_label = func.to_char(Transaction.date_odds, "YYYY-MM").label("period")
     rows = (
-        query.with_entities(month_label, Transaction.type, func.sum(Transaction.amount_rub))
+        query.with_entities(month_label, Transaction.type, func.sum(legs.c.amount_rub))
         .group_by(month_label, Transaction.type)
         .order_by(month_label)
         .all()
@@ -479,33 +509,45 @@ def pnl_report(
     start, end = _parse_period(period) if period else _current_month_bounds()
 
     company_ids = resolve_company_ids(db, user, company_id)
-    query = db.query(Transaction).filter(
-        Transaction.company_id.in_(company_ids),
-        Transaction.date_odds >= start,
-        Transaction.date_odds <= end,
-        Transaction.accrual_confirmed.is_(True),
-    )
-    forced_project = scope_project_filter(user)
-    if forced_project:
-        query = query.filter(Transaction.project_id == forced_project)
-
     # is_financing (кредитные линии/займы и их погашение) и is_internal_transfer
     # (переводы между своими же счетами/компаниями/физлицами) исключены из П&Л —
     # ни то, ни другое не доход и не расход бизнеса (см. dashboard_summary выше).
+    # Считаем по ДОЛЯМ статьи (category_amount_legs), как и dashboard_summary —
+    # операция, разбитая на несколько статей, вносит в каждую свою долю.
+    legs = category_amount_legs(db)
+    query = (
+        db.query(legs.c.transaction_id, legs.c.amount_rub, Transaction.type)
+        .select_from(legs)
+        .join(Transaction, Transaction.id == legs.c.transaction_id)
+        .join(Category, Category.id == legs.c.category_id)
+        .filter(
+            Transaction.company_id.in_(company_ids),
+            Transaction.date_odds >= start,
+            Transaction.date_odds <= end,
+            Transaction.accrual_confirmed.is_(True),
+            Category.is_financing.is_(False),
+            Category.is_internal_transfer.is_(False),
+        )
+    )
+    forced_project = scope_project_filter(user)
+    if forced_project:
+        project_legs = project_amount_legs(db)
+        query = query.filter(
+            legs.c.transaction_id.in_(
+                select(project_legs.c.transaction_id).where(project_legs.c.project_id == forced_project)
+            )
+        )
+
     revenue = (
         query.filter(Transaction.type == TxTypeEnum.income)
-        .join(Category, Transaction.category_id == Category.id)
-        .filter(Category.is_financing.is_(False), Category.is_internal_transfer.is_(False))
-        .with_entities(func.coalesce(func.sum(Transaction.amount_rub), 0))
+        .with_entities(func.coalesce(func.sum(legs.c.amount_rub), 0))
         .scalar()
     )
 
     group_expr = func.coalesce(Category.group_name, Category.name)
     expense_rows = (
         query.filter(Transaction.type == TxTypeEnum.expense)
-        .join(Category, Transaction.category_id == Category.id)
-        .filter(Category.is_financing.is_(False), Category.is_internal_transfer.is_(False))
-        .with_entities(group_expr.label("group_name"), func.sum(Transaction.amount_rub))
+        .with_entities(group_expr.label("group_name"), func.sum(legs.c.amount_rub))
         .group_by(group_expr)
         .all()
     )
@@ -551,16 +593,21 @@ def _compute_balance(db: Session, company_ids: list[str], as_of: date) -> dict:
     # куммулятивно к as_of, тот же паттерн, что _account_balance, но по
     # категории, а не по счёту: получили заём (income) увеличивает долг,
     # погасили (expense) уменьшает.
+    # Считаем по ДОЛЯМ статьи — операция, разбитая между "займовой" и обычной
+    # статьёй, должна вносить в остаток займа только свою финансовую долю.
+    loans_legs = category_amount_legs(db)
     loans_flow = (
         db.query(
             func.sum(
                 case(
-                    (Transaction.type == TxTypeEnum.income, Transaction.amount_rub),
-                    else_=-Transaction.amount_rub,
+                    (Transaction.type == TxTypeEnum.income, loans_legs.c.amount_rub),
+                    else_=-loans_legs.c.amount_rub,
                 )
             )
         )
-        .join(Category, Transaction.category_id == Category.id)
+        .select_from(loans_legs)
+        .join(Transaction, Transaction.id == loans_legs.c.transaction_id)
+        .join(Category, Category.id == loans_legs.c.category_id)
         .filter(
             Transaction.company_id.in_(company_ids),
             Transaction.date_odds <= as_of,
@@ -718,7 +765,13 @@ def debt_report(
     )
     forced_project = scope_project_filter(user)
     if forced_project:
-        query = query.filter(Transaction.project_id == forced_project)
+        project_legs = project_amount_legs(db)
+        query = query.filter(
+            (Transaction.project_id == forced_project)
+            | Transaction.id.in_(
+                select(project_legs.c.transaction_id).where(project_legs.c.project_id == forced_project)
+            )
+        )
 
     rows = (
         query.join(Counterparty, Transaction.counterparty_id == Counterparty.id)
@@ -759,35 +812,45 @@ def top_clients_report(
     limit = max(1, min(limit, 50))
     start, end = _parse_period(period) if period else _current_month_bounds()
     company_ids = resolve_company_ids(db, user, company_id)
-    query = db.query(Transaction).filter(
-        Transaction.company_id.in_(company_ids),
-        Transaction.counterparty_id.isnot(None),
-        Transaction.type == TxTypeEnum.income,
-        Transaction.payment_confirmed.is_(True),
-        Transaction.date_odds >= start,
-        Transaction.date_odds <= end,
+    # Считаем по ДОЛЯМ статьи (category_amount_legs) — та же причина, что и
+    # в dashboard_summary/pnl_report: разбитая по статьям операция должна
+    # вносить в выручку клиента только свою (не-финансовую) долю.
+    legs = category_amount_legs(db)
+    query = (
+        db.query(legs.c.transaction_id, legs.c.amount_rub, Transaction.counterparty_id)
+        .select_from(legs)
+        .join(Transaction, Transaction.id == legs.c.transaction_id)
+        .join(Category, Category.id == legs.c.category_id)
+        .filter(
+            Transaction.company_id.in_(company_ids),
+            Transaction.counterparty_id.isnot(None),
+            Transaction.type == TxTypeEnum.income,
+            Transaction.payment_confirmed.is_(True),
+            Transaction.date_odds >= start,
+            Transaction.date_odds <= end,
+            Category.is_financing.is_(False),
+            Category.is_internal_transfer.is_(False),
+        )
     )
     forced_project = scope_project_filter(user)
     if forced_project:
-        query = query.filter(Transaction.project_id == forced_project)
+        project_legs = project_amount_legs(db)
+        query = query.filter(
+            legs.c.transaction_id.in_(
+                select(project_legs.c.transaction_id).where(project_legs.c.project_id == forced_project)
+            )
+        )
 
     rows = (
-        query.join(Category, Transaction.category_id == Category.id)
-        .filter(Category.is_financing.is_(False), Category.is_internal_transfer.is_(False))
-        .join(Counterparty, Transaction.counterparty_id == Counterparty.id)
-        .with_entities(Counterparty.id, Counterparty.name, func.sum(Transaction.amount_rub))
+        query.join(Counterparty, Transaction.counterparty_id == Counterparty.id)
+        .with_entities(Counterparty.id, Counterparty.name, func.sum(legs.c.amount_rub))
         .group_by(Counterparty.id, Counterparty.name)
-        .order_by(func.sum(Transaction.amount_rub).desc())
+        .order_by(func.sum(legs.c.amount_rub).desc())
         .limit(limit)
         .all()
     )
 
-    total_revenue = (
-        query.join(Category, Transaction.category_id == Category.id)
-        .filter(Category.is_financing.is_(False), Category.is_internal_transfer.is_(False))
-        .with_entities(func.coalesce(func.sum(Transaction.amount_rub), 0))
-        .scalar()
-    )
+    total_revenue = query.with_entities(func.coalesce(func.sum(legs.c.amount_rub), 0)).scalar()
     total_revenue = float(total_revenue)
 
     items = []
@@ -827,10 +890,21 @@ def _project_transactions_query(
     method: str,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-) -> SAQuery:
-    """Базовый запрос по операциям С проектом (project_id задан) — общий для
-    profitability_report (список) и project_detail (карточка одного
-    проекта), не дублировать SQL дважды.
+    project_id: Optional[str] = None,
+):
+    """Базовый запрос по операциям С проектом — общий для profitability_report
+    (список) и project_detail (карточка одного проекта), не дублировать SQL
+    дважды. Возвращает **подзапрос** (не Transaction-сущности) с колонками
+    (transaction_id, project_id, amount_rub, type, date_odds) через
+    project_category_amount_legs (см. app/split_legs.py) — amount_rub здесь
+    это доля, приходящаяся на пересечение проекта и статьи этой операции,
+    что для операций без разбивки в точности равно amount_rub самой
+    операции, а для разбитых — их фактическая доля (см. HANDOVER.md,
+    "Разбивка операции на несколько статей/проектов"). Вызывающий код
+    строит свой db.query(sub.c...).select_from(sub) поверх этого
+    подзапроса. project_id — явный фильтр на конкретный проект (нужен
+    вместо старого Transaction.project_id == X, который для разбитых
+    операций всегда NULL).
 
     3 режима: "accrual"/"cash" — версии прибыли, обе исключают финансовую
     деятельность (is_financing/is_internal_transfer) — тем же паттерном,
@@ -839,20 +913,33 @@ def _project_transactions_query(
     включая финансовую деятельность, если она к проекту привязана (иначе не
     было бы отличия от "cash" вообще)."""
     confirmed_col = _method_confirmed_column(method)
-    query = db.query(Transaction).filter(
-        Transaction.company_id.in_(company_ids),
-        Transaction.project_id.isnot(None),
-        confirmed_col.is_(True),
+    legs = project_category_amount_legs(db)
+    query = (
+        db.query(
+            legs.c.transaction_id,
+            legs.c.project_id,
+            legs.c.amount_rub,
+            Transaction.type,
+            Transaction.date_odds,
+        )
+        .select_from(legs)
+        .join(Transaction, Transaction.id == legs.c.transaction_id)
+        .filter(
+            Transaction.company_id.in_(company_ids),
+            confirmed_col.is_(True),
+        )
     )
+    if project_id:
+        query = query.filter(legs.c.project_id == project_id)
     if method != "net_cash_flow":
-        query = query.join(Category, Transaction.category_id == Category.id).filter(
+        query = query.join(Category, Category.id == legs.c.category_id).filter(
             Category.is_financing.is_(False), Category.is_internal_transfer.is_(False)
         )
     if date_from:
         query = query.filter(Transaction.date_odds >= date_from)
     if date_to:
         query = query.filter(Transaction.date_odds <= date_to)
-    return query
+    return query.subquery()
 
 
 def _project_statuses(db: Session, company_ids: list[str], project_ids: list[str]) -> dict[str, str]:
@@ -864,12 +951,15 @@ def _project_statuses(db: Session, company_ids: list[str], project_ids: list[str
     if not project_ids:
         return {}
     active_flags = dict(db.query(Project.id, Project.is_active).filter(Project.id.in_(project_ids)).all())
+    legs = project_amount_legs(db)
     has_payment = {
         pid
-        for (pid,) in db.query(Transaction.project_id)
+        for (pid,) in db.query(legs.c.project_id)
+        .select_from(legs)
+        .join(Transaction, Transaction.id == legs.c.transaction_id)
         .filter(
             Transaction.company_id.in_(company_ids),
-            Transaction.project_id.in_(project_ids),
+            legs.c.project_id.in_(project_ids),
             Transaction.payment_confirmed.is_(True),
         )
         .distinct()
@@ -911,15 +1001,14 @@ def profitability_report(
     projects = projects_query.all()
     project_ids = [p.id for p in projects]
 
-    query = _project_transactions_query(db, company_ids, method, date_from, date_to)
-    if forced_project:
-        query = query.filter(Transaction.project_id == forced_project)
-    elif project:
-        query = query.filter(Transaction.project_id == project)
+    sub = _project_transactions_query(
+        db, company_ids, method, date_from, date_to, project_id=forced_project or project
+    )
 
     rows = (
-        query.with_entities(Transaction.project_id, Transaction.type, func.sum(Transaction.amount_rub))
-        .group_by(Transaction.project_id, Transaction.type)
+        db.query(sub.c.project_id, sub.c.type, func.sum(sub.c.amount_rub))
+        .select_from(sub)
+        .group_by(sub.c.project_id, sub.c.type)
         .all()
     )
     by_project: dict = {}
@@ -955,13 +1044,23 @@ def profitability_report(
     # нельзя — это утечка данных за пределы разрешённого проекта.
     if not forced_project:
         confirmed_col = _method_confirmed_column(method)
-        unalloc_query = db.query(Transaction).filter(
-            Transaction.company_id.in_(company_ids),
-            Transaction.project_id.is_(None),
-            confirmed_col.is_(True),
+        # "Нет проекта" теперь значит "нет ни одной доли проекта" — не просто
+        # Transaction.project_id IS NULL, это условие не поймало бы операцию,
+        # разбитую по статьям, но без разбивки по проектам.
+        cat_legs = category_amount_legs(db)
+        proj_legs = project_amount_legs(db)
+        unalloc_query = (
+            db.query(cat_legs.c.amount_rub, Transaction.type)
+            .select_from(cat_legs)
+            .join(Transaction, Transaction.id == cat_legs.c.transaction_id)
+            .filter(
+                Transaction.company_id.in_(company_ids),
+                confirmed_col.is_(True),
+                cat_legs.c.transaction_id.not_in(select(proj_legs.c.transaction_id)),
+            )
         )
         if method != "net_cash_flow":
-            unalloc_query = unalloc_query.join(Category, Transaction.category_id == Category.id).filter(
+            unalloc_query = unalloc_query.join(Category, Category.id == cat_legs.c.category_id).filter(
                 Category.is_financing.is_(False), Category.is_internal_transfer.is_(False)
             )
         if date_from:
@@ -969,7 +1068,7 @@ def profitability_report(
         if date_to:
             unalloc_query = unalloc_query.filter(Transaction.date_odds <= date_to)
         unalloc_rows = (
-            unalloc_query.with_entities(Transaction.type, func.sum(Transaction.amount_rub))
+            unalloc_query.with_entities(Transaction.type, func.sum(cat_legs.c.amount_rub))
             .group_by(Transaction.type)
             .all()
         )
@@ -1068,27 +1167,33 @@ def project_detail(
     if project_obj is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Проект не найден")
 
-    query = _project_transactions_query(db, company_ids, method, date_from, date_to).filter(
-        Transaction.project_id == project_id
-    )
+    sub = _project_transactions_query(db, company_ids, method, date_from, date_to, project_id=project_id)
 
     revenue = (
-        query.filter(Transaction.type == TxTypeEnum.income)
-        .with_entities(func.coalesce(func.sum(Transaction.amount_rub), 0))
+        db.query(func.coalesce(func.sum(sub.c.amount_rub), 0))
+        .select_from(sub)
+        .filter(sub.c.type == TxTypeEnum.income)
         .scalar()
     )
     expense = (
-        query.filter(Transaction.type == TxTypeEnum.expense)
-        .with_entities(func.coalesce(func.sum(Transaction.amount_rub), 0))
+        db.query(func.coalesce(func.sum(sub.c.amount_rub), 0))
+        .select_from(sub)
+        .filter(sub.c.type == TxTypeEnum.expense)
         .scalar()
     )
     revenue, expense = float(revenue), float(expense)
     profit = revenue - expense
     margin = profit / revenue if revenue else None
 
+    # Диапазон дат — по ЛЮБОЙ операции, где у проекта есть доля (прямая или
+    # через разбивку), независимо от метода/подтверждений (та же семантика,
+    # что и раньше — просто "с какой даты по какую вообще есть движения").
+    range_legs = project_amount_legs(db)
     date_range_row = (
         db.query(func.min(Transaction.date_odds), func.max(Transaction.date_odds))
-        .filter(Transaction.project_id == project_id, Transaction.company_id.in_(company_ids))
+        .select_from(range_legs)
+        .join(Transaction, Transaction.id == range_legs.c.transaction_id)
+        .filter(range_legs.c.project_id == project_id, Transaction.company_id.in_(company_ids))
         .first()
     )
     date_range = {
@@ -1096,10 +1201,11 @@ def project_detail(
         "max": date_range_row[1].isoformat() if date_range_row and date_range_row[1] else None,
     }
 
-    month_label = func.to_char(Transaction.date_odds, "YYYY-MM").label("period")
+    month_label = func.to_char(sub.c.date_odds, "YYYY-MM").label("period")
     month_rows = (
-        query.with_entities(month_label, Transaction.type, func.sum(Transaction.amount_rub))
-        .group_by(month_label, Transaction.type)
+        db.query(month_label, sub.c.type, func.sum(sub.c.amount_rub))
+        .select_from(sub)
+        .group_by(month_label, sub.c.type)
         .order_by(month_label)
         .all()
     )
@@ -1112,18 +1218,34 @@ def project_detail(
             row["expense"] = float(total)
     by_month = list(by_month_map.values())
 
+    # Расходы по статьям ВНУТРИ этого проекта — через project_category_amount_legs
+    # (пересечение долей проекта и статьи), не через sub (там категория уже
+    # схлопнута фильтром is_financing). См. app/split_legs.py — для операций,
+    # разбитых только по одному измерению, это точная арифметика, не приближение.
+    pc_legs = project_category_amount_legs(db)
     group_expr = func.coalesce(Category.group_name, Category.name)
-    category_query = query.filter(Transaction.type == TxTypeEnum.expense)
-    # query уже джойнит Category для accrual/cash (см. _project_transactions_query,
-    # где это нужно для фильтра is_financing/is_internal_transfer) — повторный
-    # join уронил бы SQL с "table name specified more than once".
-    if method == "net_cash_flow":
-        category_query = category_query.join(Category, Transaction.category_id == Category.id)
+    category_query = (
+        db.query(group_expr.label("category"), func.sum(pc_legs.c.amount_rub))
+        .select_from(pc_legs)
+        .join(Transaction, Transaction.id == pc_legs.c.transaction_id)
+        .join(Category, Category.id == pc_legs.c.category_id)
+        .filter(
+            pc_legs.c.project_id == project_id,
+            Transaction.company_id.in_(company_ids),
+            Transaction.type == TxTypeEnum.expense,
+            _method_confirmed_column(method).is_(True),
+        )
+    )
+    if method != "net_cash_flow":
+        category_query = category_query.filter(
+            Category.is_financing.is_(False), Category.is_internal_transfer.is_(False)
+        )
+    if date_from:
+        category_query = category_query.filter(Transaction.date_odds >= date_from)
+    if date_to:
+        category_query = category_query.filter(Transaction.date_odds <= date_to)
     category_rows = (
-        category_query.with_entities(group_expr.label("category"), func.sum(Transaction.amount_rub))
-        .group_by(group_expr)
-        .order_by(func.sum(Transaction.amount_rub).desc())
-        .all()
+        category_query.group_by(group_expr).order_by(func.sum(pc_legs.c.amount_rub).desc()).all()
     )
     by_category = [{"category": category, "amount": float(total)} for category, total in category_rows]
 
@@ -1146,11 +1268,14 @@ def project_detail(
     else:
         # "Операции" — тот же приём, что уже используется в payment_calendar:
         # план — это ещё не подтверждённые по начислению операции проекта.
+        plan_legs = project_amount_legs(db)
         plan_rows = (
-            db.query(Transaction.type, func.sum(Transaction.amount_rub))
+            db.query(Transaction.type, func.sum(plan_legs.c.amount_rub))
+            .select_from(plan_legs)
+            .join(Transaction, Transaction.id == plan_legs.c.transaction_id)
             .filter(
                 Transaction.company_id.in_(company_ids),
-                Transaction.project_id == project_id,
+                plan_legs.c.project_id == project_id,
                 Transaction.accrual_confirmed.is_(False),
             )
             .group_by(Transaction.type)
@@ -1203,37 +1328,55 @@ def payment_calendar(
     # только флагом accrual_confirmed (см. HANDOVER.md, "План/факт
     # (ПланФакт-стиль)") — раньше план брался из отдельной сущности
     # Планирования, та этим механизмом заменена.
-    plan_query = db.query(Transaction).filter(
-        Transaction.company_id.in_(company_ids),
-        Transaction.date_odds >= year_start,
-        Transaction.date_odds <= year_end,
-        Transaction.accrual_confirmed.is_(False),
-        Transaction.reclass_pair_id.is_(None),
+    # Считаем по ДОЛЯМ статьи (category_amount_legs) — разбитая по статьям
+    # операция должна попадать в план/факт КАЖДОЙ своей статьи со своей
+    # долей, не всей суммой в одну.
+    legs = category_amount_legs(db)
+    plan_query = (
+        db.query(legs.c.transaction_id, legs.c.category_id, legs.c.amount_rub, Transaction.type, Transaction.date_odds)
+        .select_from(legs)
+        .join(Transaction, Transaction.id == legs.c.transaction_id)
+        .filter(
+            Transaction.company_id.in_(company_ids),
+            Transaction.date_odds >= year_start,
+            Transaction.date_odds <= year_end,
+            Transaction.accrual_confirmed.is_(False),
+            Transaction.reclass_pair_id.is_(None),
+        )
     )
-    fact_query = db.query(Transaction).filter(
-        Transaction.company_id.in_(company_ids),
-        Transaction.date_odds >= year_start,
-        Transaction.date_odds <= year_end,
-        Transaction.accrual_confirmed.is_(True),
+    fact_query = (
+        db.query(legs.c.transaction_id, legs.c.category_id, legs.c.amount_rub, Transaction.type, Transaction.date_odds)
+        .select_from(legs)
+        .join(Transaction, Transaction.id == legs.c.transaction_id)
+        .filter(
+            Transaction.company_id.in_(company_ids),
+            Transaction.date_odds >= year_start,
+            Transaction.date_odds <= year_end,
+            Transaction.accrual_confirmed.is_(True),
+        )
     )
     if forced_project:
-        plan_query = plan_query.filter(Transaction.project_id == forced_project)
-        fact_query = fact_query.filter(Transaction.project_id == forced_project)
+        project_legs = project_amount_legs(db)
+        proj_filter = legs.c.transaction_id.in_(
+            select(project_legs.c.transaction_id).where(project_legs.c.project_id == forced_project)
+        )
+        plan_query = plan_query.filter(proj_filter)
+        fact_query = fact_query.filter(proj_filter)
 
     def _empty_quarters():
         return {q: {"plan": 0.0, "fact": 0.0} for q in range(1, 5)}
 
     by_category: dict = {}
 
-    for tx in plan_query.all():
-        row = by_category.setdefault(tx.category_id, _empty_quarters())
-        signed = float(tx.amount_rub) if tx.type == TxTypeEnum.income else -float(tx.amount_rub)
-        row[_quarter_of(tx.date_odds)]["plan"] += signed
+    for _tx_id, category_id, amount_rub, tx_type, date_odds in plan_query.all():
+        row = by_category.setdefault(category_id, _empty_quarters())
+        signed = float(amount_rub) if tx_type == TxTypeEnum.income else -float(amount_rub)
+        row[_quarter_of(date_odds)]["plan"] += signed
 
-    for tx in fact_query.all():
-        row = by_category.setdefault(tx.category_id, _empty_quarters())
-        signed = float(tx.amount_rub) if tx.type == TxTypeEnum.income else -float(tx.amount_rub)
-        row[_quarter_of(tx.date_odds)]["fact"] += signed
+    for _tx_id, category_id, amount_rub, tx_type, date_odds in fact_query.all():
+        row = by_category.setdefault(category_id, _empty_quarters())
+        signed = float(amount_rub) if tx_type == TxTypeEnum.income else -float(amount_rub)
+        row[_quarter_of(date_odds)]["fact"] += signed
 
     category_names = {c.id: c.name for c in db.query(Category).filter(Category.company_id.in_(company_ids)).all()}
     rows = []

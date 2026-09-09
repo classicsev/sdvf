@@ -181,6 +181,18 @@ html, body {
 .fp-source-badge.alfabank { background: #FBE7E7; color: #A53A3A; }
 .fp-source-badge.plan { background: #FBF1D6; color: var(--gold); font-weight: 600; }
 
+.fp-split-badge {
+  font-size: 11px; padding: 1px 6px; border-radius: 10px;
+  background: var(--bg); color: var(--ink-soft); border: 1px dashed var(--border);
+  cursor: help; white-space: nowrap;
+}
+.fp-split-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.fp-split-row > *:first-child { flex: 1; min-width: 0; }
+.fp-split-label { font-size: 12px; color: var(--ink-soft); margin-bottom: 4px; }
+.fp-split-add { margin-top: 4px; font-size: 12px; }
+.fp-split-mismatch { font-size: 12px; color: var(--expense); margin-top: 4px; }
+.fp-split-ok { font-size: 12px; color: var(--ink-soft); margin-top: 4px; }
+
 .fp-dk-badge {
   display: inline-flex; align-items: center; justify-content: center;
   width: 16px; height: 16px; border-radius: 4px; font-size: 10px; font-weight: 700;

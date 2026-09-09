@@ -4,7 +4,15 @@ from unittest.mock import patch
 
 import openpyxl
 
-from app.models import Category, ExchangeRate, RoleEnum, Transaction, TxTypeEnum
+from app.models import (
+    Category,
+    ExchangeRate,
+    RoleEnum,
+    Transaction,
+    TransactionCategorySplit,
+    TransactionProjectSplit,
+    TxTypeEnum,
+)
 from tests.conftest import auth_headers, make_account, make_category, make_project, make_project_group, make_user
 
 
@@ -749,3 +757,241 @@ def test_company_modules_update_accepts_period_lock_and_accrual_toggle(client, d
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["locked_before_date"] is None
+
+
+def test_create_transaction_with_project_splits_even(client, db_session):
+    """Пример из запроса пользователя: 3000 ₽ за доставку в аэропорт на 3
+    проекта поровну — по 1000 на каждый, без лишних строк операций."""
+    admin = make_user(db_session, RoleEnum.admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.expense)
+    p1 = make_project(db_session, name="Проект 1")
+    p2 = make_project(db_session, name="Проект 2")
+    p3 = make_project(db_session, name="Проект 3")
+
+    resp = client.post(
+        "/transactions",
+        headers=auth_headers(admin),
+        json={
+            "date_odds": "2026-09-09",
+            "account_id": account.id,
+            "category_id": category.id,
+            "type": "expense",
+            "amount": 3000,
+            "currency": "RUB",
+            "project_splits": [
+                {"project_id": p1.id, "amount": 1000},
+                {"project_id": p2.id, "amount": 1000},
+                {"project_id": p3.id, "amount": 1000},
+            ],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["project_id"] is None
+    assert len(body["project_splits"]) == 3
+    assert {line["amount"] for line in body["project_splits"]} == {1000.0}
+    assert sum(line["amount_rub"] for line in body["project_splits"]) == 3000.0
+
+    assert db_session.query(Transaction).count() == 1  # одна строка операции, не три
+    assert db_session.query(TransactionProjectSplit).filter(
+        TransactionProjectSplit.transaction_id == body["id"]
+    ).count() == 3
+
+
+def test_create_transaction_with_category_splits_custom_amounts(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    account = make_account(db_session)
+    project = make_project(db_session)
+    c1 = make_category(db_session, name="Статья 1", tx_type=TxTypeEnum.expense)
+    c2 = make_category(db_session, name="Статья 2", tx_type=TxTypeEnum.expense)
+
+    resp = client.post(
+        "/transactions",
+        headers=auth_headers(admin),
+        json={
+            "date_odds": "2026-09-09",
+            "account_id": account.id,
+            "project_id": project.id,
+            "type": "expense",
+            "amount": 3000,
+            "currency": "RUB",
+            "category_splits": [
+                {"category_id": c1.id, "amount": 1800},
+                {"category_id": c2.id, "amount": 1200},
+            ],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["category_id"] is None
+    amounts = {line["category_id"]: line["amount"] for line in body["category_splits"]}
+    assert amounts == {c1.id: 1800.0, c2.id: 1200.0}
+
+
+def test_create_transaction_split_sum_mismatch_rejected(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.expense)
+    p1 = make_project(db_session, name="Проект 1")
+    p2 = make_project(db_session, name="Проект 2")
+
+    resp = client.post(
+        "/transactions",
+        headers=auth_headers(admin),
+        json={
+            "date_odds": "2026-09-09",
+            "account_id": account.id,
+            "category_id": category.id,
+            "type": "expense",
+            "amount": 3000,
+            "currency": "RUB",
+            "project_splits": [
+                {"project_id": p1.id, "amount": 1000},
+                {"project_id": p2.id, "amount": 1000},  # итого 2000, не 3000
+            ],
+        },
+    )
+    assert resp.status_code == 422
+    assert "не совпадает" in resp.json()["detail"]
+    assert db_session.query(Transaction).count() == 0
+
+
+def test_create_transaction_single_split_line_behaves_as_plain_project(client, db_session):
+    """1 строка в project_splits — не считается разбивкой, ведёт себя как
+    обычный единственный project_id (единый путь для фронтенда)."""
+    admin = make_user(db_session, RoleEnum.admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.expense)
+    project = make_project(db_session)
+
+    resp = client.post(
+        "/transactions",
+        headers=auth_headers(admin),
+        json={
+            "date_odds": "2026-09-09",
+            "account_id": account.id,
+            "category_id": category.id,
+            "type": "expense",
+            "amount": 500,
+            "currency": "RUB",
+            "project_splits": [{"project_id": project.id, "amount": 500}],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["project_id"] == project.id
+    assert body["project_splits"] == []
+
+
+def test_update_transaction_replaces_splits(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.expense)
+    p1 = make_project(db_session, name="Проект 1")
+    p2 = make_project(db_session, name="Проект 2")
+    p3 = make_project(db_session, name="Проект 3")
+
+    create_resp = client.post(
+        "/transactions",
+        headers=auth_headers(admin),
+        json={
+            "date_odds": "2026-09-09",
+            "account_id": account.id,
+            "category_id": category.id,
+            "type": "expense",
+            "amount": 1000,
+            "currency": "RUB",
+            "project_id": p1.id,
+        },
+    )
+    tx_id = create_resp.json()["id"]
+
+    # Разбить на 2 проекта задним числом.
+    resp = client.patch(
+        f"/transactions/{tx_id}",
+        headers=auth_headers(admin),
+        json={"project_splits": [{"project_id": p1.id, "amount": 600}, {"project_id": p2.id, "amount": 400}]},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["project_id"] is None
+    assert len(body["project_splits"]) == 2
+
+    # Заменить набор целиком другим (replace-all, не merge).
+    resp = client.patch(
+        f"/transactions/{tx_id}",
+        headers=auth_headers(admin),
+        json={"project_splits": [{"project_id": p3.id, "amount": 1000}]},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # 1 строка = снова обычный единственный project_id, не разбивка
+    assert body["project_id"] == p3.id
+    assert body["project_splits"] == []
+    assert db_session.query(TransactionProjectSplit).filter(
+        TransactionProjectSplit.transaction_id == tx_id
+    ).count() == 0
+
+
+def test_delete_transaction_cascades_split_rows(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.expense)
+    p1 = make_project(db_session, name="Проект 1")
+    p2 = make_project(db_session, name="Проект 2")
+
+    create_resp = client.post(
+        "/transactions",
+        headers=auth_headers(admin),
+        json={
+            "date_odds": "2026-09-09",
+            "account_id": account.id,
+            "category_id": category.id,
+            "type": "expense",
+            "amount": 1000,
+            "currency": "RUB",
+            "project_splits": [{"project_id": p1.id, "amount": 600}, {"project_id": p2.id, "amount": 400}],
+        },
+    )
+    tx_id = create_resp.json()["id"]
+    assert db_session.query(TransactionProjectSplit).filter(
+        TransactionProjectSplit.transaction_id == tx_id
+    ).count() == 2
+
+    resp = client.delete(f"/transactions/{tx_id}", headers=auth_headers(admin))
+    assert resp.status_code == 200, resp.text
+    assert db_session.query(TransactionProjectSplit).filter(
+        TransactionProjectSplit.transaction_id == tx_id
+    ).count() == 0
+
+
+def test_list_transactions_filter_by_project_matches_split_leg(client, db_session):
+    """Фильтр по проекту в списке операций должен находить и операции,
+    где этот проект — только одна из нескольких долей разбивки."""
+    admin = make_user(db_session, RoleEnum.admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.expense)
+    p1 = make_project(db_session, name="Проект 1")
+    p2 = make_project(db_session, name="Проект 2")
+
+    client.post(
+        "/transactions",
+        headers=auth_headers(admin),
+        json={
+            "date_odds": "2026-09-09",
+            "account_id": account.id,
+            "category_id": category.id,
+            "type": "expense",
+            "amount": 1000,
+            "currency": "RUB",
+            "project_splits": [{"project_id": p1.id, "amount": 600}, {"project_id": p2.id, "amount": 400}],
+        },
+    )
+
+    resp = client.get("/transactions", headers=auth_headers(admin), params={"project": p2.id})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["project_id"] is None
+    assert {line["project_id"] for line in body[0]["project_splits"]} == {p1.id, p2.id}

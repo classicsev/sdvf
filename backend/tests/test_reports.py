@@ -1,5 +1,5 @@
 from app.models import RoleEnum, TxTypeEnum
-from tests.conftest import auth_headers, make_account, make_category, make_counterparty, make_user
+from tests.conftest import auth_headers, make_account, make_category, make_counterparty, make_project, make_user
 
 
 def _create_tx(client, headers, account_id, category_id, amount, tx_type, date_odds="2026-06-15", **extra):
@@ -538,3 +538,103 @@ def test_top_clients_report_ranks_by_revenue_with_cumulative_pct(client, db_sess
     assert items[0]["cumulative_pct"] == 60.0
     assert items[1]["name"] == "Клиент Б"
     assert items[1]["cumulative_pct"] == 100.0
+
+
+def test_profitability_report_splits_expense_across_projects(client, db_session):
+    """Пример пользователя: 3000 ₽ за доставку в аэропорт на 3 проекта
+    поровну — рентабельность каждого проекта должна нести свои 1000 ₽
+    расхода, не всю сумму и не ноль."""
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.expense)
+    p1 = make_project(db_session, name="Проект 1")
+    p2 = make_project(db_session, name="Проект 2")
+    p3 = make_project(db_session, name="Проект 3")
+
+    resp = client.post(
+        "/transactions",
+        headers=headers,
+        json={
+            "date_odds": "2026-06-15",
+            "account_id": account.id,
+            "category_id": category.id,
+            "type": "expense",
+            "amount": 3000,
+            "currency": "RUB",
+            "project_splits": [
+                {"project_id": p1.id, "amount": 1000},
+                {"project_id": p2.id, "amount": 1000},
+                {"project_id": p3.id, "amount": 1000},
+            ],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = client.get("/reports/profitability", headers=headers, params={"date_from": "2026-06-01", "date_to": "2026-06-30"})
+    assert resp.status_code == 200, resp.text
+    by_id = {row["project_id"]: row for row in resp.json()}
+    assert by_id[p1.id]["expense"] == 1000.0
+    assert by_id[p2.id]["expense"] == 1000.0
+    assert by_id[p3.id]["expense"] == 1000.0
+
+
+def test_project_detail_shows_only_own_split_share(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    category = make_category(db_session, tx_type=TxTypeEnum.expense, name="Транспорт")
+    p1 = make_project(db_session, name="Проект 1")
+    p2 = make_project(db_session, name="Проект 2")
+
+    client.post(
+        "/transactions",
+        headers=headers,
+        json={
+            "date_odds": "2026-06-15",
+            "account_id": account.id,
+            "category_id": category.id,
+            "type": "expense",
+            "amount": 3000,
+            "currency": "RUB",
+            "project_splits": [{"project_id": p1.id, "amount": 1800}, {"project_id": p2.id, "amount": 1200}],
+        },
+    )
+
+    resp = client.get(f"/reports/projects/{p1.id}/detail", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["expense"] == 1800.0
+    assert body["by_category"] == [{"category": "Транспорт", "amount": 1800.0}]
+
+    resp2 = client.get(f"/reports/projects/{p2.id}/detail", headers=headers)
+    assert resp2.json()["expense"] == 1200.0
+
+
+def test_dashboard_summary_splits_expense_across_categories(client, db_session):
+    """Та же операция разбита по СТАТЬЯМ вместо проектов — общий расход
+    компании не должен задваиваться или теряться."""
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    project = make_project(db_session)
+    c1 = make_category(db_session, name="Статья 1", tx_type=TxTypeEnum.expense)
+    c2 = make_category(db_session, name="Статья 2", tx_type=TxTypeEnum.expense)
+
+    client.post(
+        "/transactions",
+        headers=headers,
+        json={
+            "date_odds": "2026-06-15",
+            "account_id": account.id,
+            "project_id": project.id,
+            "type": "expense",
+            "amount": 3000,
+            "currency": "RUB",
+            "category_splits": [{"category_id": c1.id, "amount": 1800}, {"category_id": c2.id, "amount": 1200}],
+        },
+    )
+
+    resp = client.get("/reports/dashboard-summary", headers=headers, params={"date_from": "2026-06-01", "date_to": "2026-06-30"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["period_expense_rub"] == 3000.0

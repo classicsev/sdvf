@@ -568,7 +568,14 @@ class Transaction(Base):
     date_odds: Mapped[date] = mapped_column(Date)
     date_opu: Mapped[date] = mapped_column(Date, nullable=True)
     account_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("accounts.id"))
-    category_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("categories.id"))
+    # NULL означает "операция разбита на несколько статей" — сами доли лежат
+    # в TransactionCategorySplit (см. ниже), эта колонка тогда не используется.
+    # Для подавляющего большинства операций (без разбивки) заполнена как
+    # раньше, включая фолбэк на "Нераспределённый доход/расход".
+    category_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("categories.id"), nullable=True)
+    # NULL — либо проект не указан вовсе, либо операция разбита на несколько
+    # проектов (см. TransactionProjectSplit) — оба случая неразличимы в этой
+    # колонке, различать по наличию строк в transaction_project_splits.
     project_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("projects.id"), nullable=True)
     counterparty_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False), ForeignKey("counterparties.id"), nullable=True
@@ -634,6 +641,43 @@ class Transaction(Base):
 
     account = relationship("Account")
     category = relationship("Category")
+    category_splits = relationship("TransactionCategorySplit", cascade="all, delete-orphan")
+    project_splits = relationship("TransactionProjectSplit", cascade="all, delete-orphan")
+
+
+class TransactionCategorySplit(Base):
+    """Доля операции, приходящаяся на одну статью — существует только когда
+    операция реально разбита на 2+ статьи (см. Transaction.category_id).
+    Одна операция без разбивки не создаёт ни одной такой строки."""
+
+    __tablename__ = "transaction_category_splits"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    transaction_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("transactions.id", ondelete="CASCADE"), index=True
+    )
+    category_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("categories.id"), index=True)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2))
+    amount_rub: Mapped[float] = mapped_column(Numeric(14, 2))
+
+    category = relationship("Category")
+
+
+class TransactionProjectSplit(Base):
+    """Доля операции, приходящаяся на один проект — симметрично
+    TransactionCategorySplit, независимая разбивка по другому измерению."""
+
+    __tablename__ = "transaction_project_splits"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    transaction_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("transactions.id", ondelete="CASCADE"), index=True
+    )
+    project_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("projects.id"), index=True)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2))
+    amount_rub: Mapped[float] = mapped_column(Numeric(14, 2))
+
+    project = relationship("Project")
 
 
 class Planning(Base):

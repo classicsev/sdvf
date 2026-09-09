@@ -9,6 +9,7 @@ from app.auth import check_company_role, get_current_user, require_module, resol
 from app.database import get_db
 from app.models import Category, CompanyBudgetLine, RoleEnum, Transaction, User
 from app.schemas import CompanyBudgetLineIn, CompanyBudgetLineOut
+from app.split_legs import category_amount_legs
 from app.utils import get_or_404_accessible
 
 router = APIRouter(tags=["company-budget"])
@@ -104,9 +105,15 @@ def company_budget_report(
     )
     plan_by_category = {line.category_id: float(line.amount) for line in plan_rows}
 
+    # Считаем по ДОЛЯМ статьи (category_amount_legs) — операция, разбитая на
+    # несколько статей, должна вносить в план/факт каждой свою долю (см.
+    # app/split_legs.py, HANDOVER.md "Разбивка операции...").
+    legs = category_amount_legs(db)
     fact_rows = (
-        db.query(Category.id, Category.name, Category.type, func.coalesce(func.sum(Transaction.amount_rub), 0))
-        .join(Transaction, Transaction.category_id == Category.id)
+        db.query(Category.id, Category.name, Category.type, func.coalesce(func.sum(legs.c.amount_rub), 0))
+        .select_from(legs)
+        .join(Transaction, Transaction.id == legs.c.transaction_id)
+        .join(Category, Category.id == legs.c.category_id)
         .filter(
             Transaction.company_id.in_(company_ids),
             Transaction.date_odds >= period_from,

@@ -37,12 +37,105 @@ function sourceBadge(externalRef, t) {
   );
 }
 
+// Разбивка суммы поровну между n строк, последняя донабирает остаток
+// копеек — тот же приём, что и на бэкенде (см. _build_split_rows,
+// routers/transactions.py), чтобы сумма долей всегда точно сходилась.
+function splitEvenly(n, total) {
+  const totalNum = Number(total) || 0;
+  if (n <= 0) return [];
+  const base = Math.floor((totalNum / n) * 100) / 100;
+  const amounts = Array(n).fill(base);
+  const remainder = Math.round((totalNum - base * n) * 100) / 100;
+  amounts[n - 1] = Math.round((amounts[n - 1] + remainder) * 100) / 100;
+  return amounts;
+}
+
+// Редактор разбивки операции на несколько статей/проектов — по просьбе
+// пользователя (2026-09-09): "чтобы расходы могли учитываться на несколько
+// статей или проектов". lines.length <= 1 — обычное единственное поле
+// (как раньше), 2+ — построчный редактор с суммой на каждую (паттерн
+// budget-строк из ProjectCard.jsx: Combobox + AmountInput + корзина + "+").
+function SplitEditor({ label, idField, lines, options, placeholder, totalAmount, onCreateNew, onChange, t }) {
+  function updateSingle(val) {
+    onChange([{ [idField]: val, amount: totalAmount }]);
+  }
+  function addLine() {
+    const base = lines.length ? lines : [{ [idField]: lines[0]?.[idField] || "", amount: totalAmount }];
+    const next = [...base, { [idField]: "", amount: "0" }];
+    const amounts = splitEvenly(next.length, totalAmount);
+    onChange(next.map((l, i) => ({ ...l, amount: String(amounts[i]) })));
+  }
+  function removeLine(index) {
+    const next = lines.filter((_, i) => i !== index);
+    if (next.length <= 1) {
+      onChange([]);
+      return;
+    }
+    const amounts = splitEvenly(next.length, totalAmount);
+    onChange(next.map((l, i) => ({ ...l, amount: String(amounts[i]) })));
+  }
+  function updateLine(index, field, value) {
+    onChange(lines.map((l, i) => (i === index ? { ...l, [field]: value } : l)));
+  }
+
+  if (lines.length <= 1) {
+    return (
+      <label>
+        {label}
+        <Combobox
+          value={lines[0]?.[idField] || ""}
+          onChange={updateSingle}
+          options={options}
+          placeholder={placeholder}
+          onCreateNew={onCreateNew}
+        />
+        <button type="button" className="fp-btn-ghost fp-split-add" onClick={addLine}>
+          <Plus size={13} /> {t("tx.form.splitAdd")}
+        </button>
+      </label>
+    );
+  }
+
+  const distributed = lines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
+  const total = Number(totalAmount) || 0;
+  const mismatch = Math.abs(distributed - total) > 0.01;
+
+  return (
+    <div>
+      <div className="fp-split-label">{label}</div>
+      {lines.map((line, i) => (
+        <div key={i} className="fp-split-row">
+          <Combobox
+            value={line[idField]}
+            onChange={(val) => updateLine(i, idField, val)}
+            options={options}
+            placeholder={placeholder}
+            onCreateNew={onCreateNew}
+          />
+          <AmountInput style={{ width: 120 }} value={line.amount} onChange={(v) => updateLine(i, "amount", v)} />
+          <button type="button" className="fp-icon-btn" onClick={() => removeLine(i)}>
+            <Trash2 size={14} />
+          </button>
+        </div>
+      ))}
+      <button type="button" className="fp-btn-ghost" onClick={addLine}>
+        <Plus size={13} /> {t("tx.form.splitAdd")}
+      </button>
+      <div className={mismatch ? "fp-split-mismatch" : "fp-split-ok"}>
+        {t("tx.form.splitDistributed")}: {fmt(distributed, "RUB")} {t("tx.form.splitOf")} {fmt(total, "RUB")}
+      </div>
+    </div>
+  );
+}
+
 const EMPTY_FORM = {
   date_odds: new Date().toISOString().slice(0, 10),
   date_opu: new Date().toISOString().slice(0, 10),
   account_id: "",
   category_id: "",
   project_id: "",
+  category_splits: [],
+  project_splits: [],
   counterparty_id: "",
   order_id: "",
   type: "expense",
@@ -240,6 +333,8 @@ export default function Transactions() {
       account_id: tx.account_id,
       category_id: tx.category_id,
       project_id: tx.project_id || "",
+      category_splits: (tx.category_splits || []).map((l) => ({ category_id: l.category_id, amount: String(l.amount) })),
+      project_splits: (tx.project_splits || []).map((l) => ({ project_id: l.project_id, amount: String(l.amount) })),
       counterparty_id: tx.counterparty_id || "",
       order_id: tx.order_id || "",
       type: tx.type,
@@ -329,6 +424,8 @@ export default function Transactions() {
       account_id: "",
       category_id: "",
       project_id: "",
+      category_splits: [],
+      project_splits: [],
       counterparty_id: "",
       from_account_id: "",
       to_account_id: "",
@@ -435,12 +532,36 @@ export default function Transactions() {
         setSelectedTransactionIds(new Set());
         return;
       }
+      if (form.category_splits.length >= 2) {
+        const distributed = form.category_splits.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+        if (Math.abs(distributed - Number(form.amount)) > 0.01) {
+          setFormError(t("tx.form.splitMismatchCategory"));
+          setSaving(false);
+          return;
+        }
+      }
+      if (form.project_splits.length >= 2) {
+        const distributed = form.project_splits.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+        if (Math.abs(distributed - Number(form.amount)) > 0.01) {
+          setFormError(t("tx.form.splitMismatchProject"));
+          setSaving(false);
+          return;
+        }
+      }
       const payload = {
         date_odds: form.date_odds,
         date_opu: form.date_opu || null,
         account_id: form.account_id,
         category_id: form.category_id || null,
         project_id: form.project_id || null,
+        category_splits:
+          form.category_splits.length >= 2
+            ? form.category_splits.map((l) => ({ category_id: l.category_id, amount: Number(l.amount) }))
+            : null,
+        project_splits:
+          form.project_splits.length >= 2
+            ? form.project_splits.map((l) => ({ project_id: l.project_id, amount: Number(l.amount) }))
+            : null,
         counterparty_id: form.counterparty_id || null,
         order_id: form.order_id || null,
         type: form.type,
@@ -945,7 +1066,19 @@ export default function Transactions() {
                     </td>
                     <td>
                       <span className={`fp-cat-dot ${tx.type}`} />
-                      {cat?.name || "—"}
+                      {cat?.name ||
+                        (tx.category_splits?.length ? (
+                          <span
+                            className="fp-split-badge"
+                            title={tx.category_splits
+                              .map((l) => `${categoriesById[l.category_id]?.name || "—"}: ${fmt(l.amount, tx.currency)}`)
+                              .join(", ")}
+                          >
+                            {t("tx.form.splitCategoriesCount", { count: tx.category_splits.length })}
+                          </span>
+                        ) : (
+                          "—"
+                        ))}
                       {tx.transfer_pair_id && (
                         <span className="fp-source-badge" title={t("tx.transferBadge")} style={{ marginLeft: 6 }}>
                           🔁
@@ -957,7 +1090,21 @@ export default function Transactions() {
                         </span>
                       )}
                     </td>
-                    <td>{proj?.name || <span className="fp-muted">—</span>}</td>
+                    <td>
+                      {proj?.name ||
+                        (tx.project_splits?.length ? (
+                          <span
+                            className="fp-split-badge"
+                            title={tx.project_splits
+                              .map((l) => `${projectsById[l.project_id]?.name || "—"}: ${fmt(l.amount, tx.currency)}`)
+                              .join(", ")}
+                          >
+                            {t("tx.form.splitProjectsCount", { count: tx.project_splits.length })}
+                          </span>
+                        ) : (
+                          <span className="fp-muted">—</span>
+                        ))}
+                    </td>
                     <td>{cp?.name || <span className="fp-muted">—</span>}</td>
                     <td
                       className="fp-muted fp-table-comment-col"
@@ -1234,32 +1381,46 @@ export default function Transactions() {
                     />
                   </label>
 
-                  <label>
-                    {t("tx.form.category")}
-                    <Combobox
-                      value={form.category_id}
-                      onChange={(val) => updateField("category_id", val)}
-                      options={filteredCategories.map((c) => ({
-                        id: c.id,
-                        name: `${c.name}${c.is_active === false ? t("tx.deactivatedSuffixF") : ""}`
-                      }))}
-                      placeholder={t("tx.form.selectCategory")}
-                      onCreateNew={handleCreateCategory}
-                    />
-                  </label>
-                  <label>
-                    {t("tx.form.project")}
-                    <Combobox
-                      value={form.project_id}
-                      onChange={(val) => updateField("project_id", val)}
-                      options={selectableProjects.map((p) => ({
-                        id: p.id,
-                        name: `${p.name}${p.is_active === false ? t("tx.deactivatedSuffix") : ""}`
-                      }))}
-                      placeholder={t("tx.form.notSpecified")}
-                      onCreateNew={handleCreateProject}
-                    />
-                  </label>
+                  <SplitEditor
+                    label={t("tx.form.category")}
+                    idField="category_id"
+                    lines={form.category_splits.length ? form.category_splits : [{ category_id: form.category_id, amount: form.amount }]}
+                    options={filteredCategories.map((c) => ({
+                      id: c.id,
+                      name: `${c.name}${c.is_active === false ? t("tx.deactivatedSuffixF") : ""}`
+                    }))}
+                    placeholder={t("tx.form.selectCategory")}
+                    totalAmount={form.amount}
+                    onCreateNew={handleCreateCategory}
+                    onChange={(lines) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        category_splits: lines.length > 1 ? lines : [],
+                        category_id: lines.length <= 1 ? lines[0]?.category_id || "" : prev.category_id,
+                      }))
+                    }
+                    t={t}
+                  />
+                  <SplitEditor
+                    label={t("tx.form.project")}
+                    idField="project_id"
+                    lines={form.project_splits.length ? form.project_splits : [{ project_id: form.project_id, amount: form.amount }]}
+                    options={selectableProjects.map((p) => ({
+                      id: p.id,
+                      name: `${p.name}${p.is_active === false ? t("tx.deactivatedSuffix") : ""}`
+                    }))}
+                    placeholder={t("tx.form.notSpecified")}
+                    totalAmount={form.amount}
+                    onCreateNew={handleCreateProject}
+                    onChange={(lines) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        project_splits: lines.length > 1 ? lines : [],
+                        project_id: lines.length <= 1 ? lines[0]?.project_id || "" : prev.project_id,
+                      }))
+                    }
+                    t={t}
+                  />
 
                   <label>
                     {t("tx.form.counterparty")}

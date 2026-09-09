@@ -92,3 +92,33 @@ def test_company_budget_report_plan_vs_fact(client, db_session):
     assert line["fact_rub"] == 30000.0
     assert body["plan_total_rub"] == 50000.0
     assert body["fact_total_rub"] == 30000.0
+
+
+def test_company_budget_report_fact_splits_across_categories(client, db_session):
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    account = make_account(db_session)
+    c1 = make_category(db_session, "Аренда", TxTypeEnum.expense)
+    c2 = make_category(db_session, "Реклама", TxTypeEnum.expense)
+
+    client.post(
+        "/transactions",
+        headers=headers,
+        json={
+            "date_odds": "2026-08-10",
+            "account_id": account.id,
+            "type": "expense",
+            "amount": 30000,
+            "currency": "RUB",
+            "category_splits": [{"category_id": c1.id, "amount": 18000}, {"category_id": c2.id, "amount": 12000}],
+        },
+    )
+
+    resp = client.get("/reports/company-budget", headers=headers, params={"period": "2026-08"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    line1 = next(l for l in body["lines"] if l["category_id"] == c1.id)
+    line2 = next(l for l in body["lines"] if l["category_id"] == c2.id)
+    assert line1["fact_rub"] == 18000.0
+    assert line2["fact_rub"] == 12000.0
+    assert body["fact_total_rub"] == 30000.0
