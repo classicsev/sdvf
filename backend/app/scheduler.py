@@ -1,11 +1,19 @@
-"""Повторяющиеся плановые операции — единственный фоновый джоб в проекте.
+"""Фоновые джобы проекта — APScheduler в процессе backend, не Celery+beat:
+однопроцессный uvicorn на одном сервере, нагрузка по расписанию мизерная,
+отдельный worker+beat контейнер ради пары задач избыточен.
 
-Решение (см. план "Пассивы/капитал.../recurring"): APScheduler в процессе
-backend, не Celery+beat — однопроцессный uvicorn на одном сервере, нагрузка
-по расписанию мизерная, отдельный worker+beat контейнер ради одной задачи
-избыточен. Джоб создаёт обычную Transaction (payment_confirmed=False,
-accrual_confirmed=False) — платёжный календарь и прогноз остатка уже читают
-неподтверждённые операции, доп. код для их отображения не нужен.
+1. Повторяющиеся плановые операции — создаёт обычную Transaction
+   (payment_confirmed=False, accrual_confirmed=False); платёжный календарь
+   и прогноз остатка уже читают неподтверждённые операции, доп. код для их
+   отображения не нужен.
+2. Автосинк Google-таблицы склада (добавлено 2026-09-10) — раньше синк
+   запускался ТОЛЬКО кнопкой "Синхронизировать сейчас", из-за чего реальные
+   правки в таблице могли неделями не попадать в приложение незаметно (см.
+   HANDOVER.md). Джоб не создаёт новых операций, просто регулярно вызывает
+   тот же sync_connection, что и кнопка — конкретный интервал реального
+   похода в Google по-прежнему решает connection.autosync_interval_minutes,
+   джоб просто гарантирует, что этот интервал реально проверяется, даже
+   если никто не открывает страницу Склада.
 """
 
 import logging
@@ -14,7 +22,7 @@ from datetime import date, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.database import SessionLocal
-from app.models import RecurringFrequencyEnum, RecurringTemplate, Transaction
+from app.models import RecurringFrequencyEnum, RecurringTemplate, Transaction, WarehouseSheetConnection
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +89,39 @@ def _run_job() -> None:
         db.close()
 
 
+def sync_all_warehouse_sheets(db) -> int:
+    """Проходит по ВСЕМ подключённым Google-таблицам склада (across всех
+    компаний — фоновый джоб не привязан к конкретному пользователю/его
+    правам доступа, в отличие от HTTP-эндпоинта /warehouse/sheets/sync-all)
+    и синкает каждую через тот же sync_connection, что и кнопка
+    "Синхронизировать сейчас". force=False — реальный поход в Google
+    по-прежнему ограничен connection.autosync_interval_minutes, джоб просто
+    даёт этому таймеру шанс сработать без участия пользователя. Возвращает
+    число реально обработанных (не пропущенных по таймеру) подключений."""
+    from app.routers.warehouse_sync import sync_connection  # локальный импорт — избегаем цикла при старте приложения
+
+    connections = db.query(WarehouseSheetConnection).filter(WarehouseSheetConnection.is_connected.is_(True)).all()
+    processed = 0
+    for conn in connections:
+        try:
+            was_processed, _results = sync_connection(db, conn, force=False)
+            if was_processed:
+                processed += 1
+        except Exception:
+            logger.exception("warehouse_sheets: сбой автосинка подключения %s", conn.id)
+    return processed
+
+
+def _run_warehouse_sheets_job() -> None:
+    db = SessionLocal()
+    try:
+        processed = sync_all_warehouse_sheets(db)
+        if processed:
+            logger.info("warehouse_sheets: автосинк обработал %s подключений", processed)
+    finally:
+        db.close()
+
+
 def start_scheduler() -> None:
     """Регистрируется в main.py только при ENV=production или явном флаге
     RUN_SCHEDULER=1 — чтобы uvicorn --reload в dev не плодил по джобу на
@@ -90,4 +131,8 @@ def start_scheduler() -> None:
         return
     _scheduler = BackgroundScheduler(timezone="UTC")
     _scheduler.add_job(_run_job, "cron", hour=6, id="recurring_transactions")
+    # Каждый час — реальный поход в Google Sheets всё равно ограничен
+    # autosync_interval_minutes на каждом подключении (обычно 180 мин),
+    # часовой интервал джоба просто даёт этому таймеру шанс сработать.
+    _scheduler.add_job(_run_warehouse_sheets_job, "cron", minute=15, id="warehouse_sheets_autosync")
     _scheduler.start()

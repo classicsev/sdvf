@@ -184,6 +184,65 @@ def preview_tab(tab_id: str, db: Session = Depends(get_db), user: User = Depends
     return result
 
 
+def sync_connection(db: Session, conn: WarehouseSheetConnection, force: bool) -> tuple[bool, list[WarehouseSheetSyncResult]]:
+    """Синхронизирует ОДНО подключение (все его активные вкладки + экспорт
+    остатков/контрагентов/персонала обратно в таблицу) — вынесено из
+    `sync_all`, чтобы тем же кодом пользовался и фоновый джоб
+    (`app/scheduler.py::sync_all_warehouse_sheets`, см. HANDOVER.md
+    "Автосинк Google-таблицы склада", 2026-09-10): раньше синк запускался
+    ТОЛЬКО кнопкой "Синхронизировать сейчас" на странице Склада — если
+    никто не заходил, реальные правки в таблице (например, новый расход)
+    неделями не попадали в приложение, а обе стороны выглядели
+    одинаково "старыми", расхождение было незаметно.
+
+    Возвращает (processed, results) — processed=False, если пропущено по
+    таймеру (не force и ещё не прошёл autosync_interval_minutes)."""
+    now = datetime.utcnow()
+    if not force and conn.last_sync_at:
+        elapsed_minutes = (now - conn.last_sync_at).total_seconds() / 60
+        if elapsed_minutes < conn.autosync_interval_minutes:
+            return False, []
+
+    results: list[WarehouseSheetSyncResult] = []
+    tabs = db.query(WarehouseSheetTab).filter(
+        WarehouseSheetTab.connection_id == conn.id, WarehouseSheetTab.is_active.is_(True)
+    ).all()
+    spreadsheet_ids_for_balances: set[str] = set()
+    for tab in tabs:
+        try:
+            r = sync_tab(db, conn, tab, dry_run=False)
+            results.append(WarehouseSheetSyncResult(**r))
+            if tab.format.value == "movements":
+                spreadsheet_ids_for_balances.add(tab.spreadsheet_id)
+        except Exception as err:
+            results.append(WarehouseSheetSyncResult(tab_id=tab.id, tab_name=tab.tab_name, imported=0, error=str(err)))
+
+    for spreadsheet_id in spreadsheet_ids_for_balances:
+        try:
+            export_balances(db, conn, spreadsheet_id, conn.company_id)
+        except Exception:
+            pass  # остатки — вторичный эффект, не должны валить весь синк движений
+        try:
+            export_counterparties(db, conn, spreadsheet_id, conn.company_id)
+        except Exception:
+            pass  # аналогично — список контрагентов вторичен относительно самого синка движений
+        try:
+            export_personnel(db, conn, spreadsheet_id, conn.company_id)
+        except Exception:
+            pass  # аналогично — список сотрудников (аналог "БАЗА") вторичен относительно самого синка движений
+        # update_ostatok_balance() отключено (2026-08-23) — пользователь прямо
+        # потребовал вернуть лист "ОСТАТОК" на живые формулы вместо периодически
+        # переписываемых приложением статичных чисел: реальная таблица должна
+        # оставаться источником истины и реагировать мгновенно на правки, а не
+        # раз в цикл синка. Функция оставлена в warehouse_sheets.py на случай,
+        # если к идее вернутся осознанно и по-другому — просто не вызывается.
+
+    conn.last_sync_at = now
+    db.add(conn)
+    db.commit()
+    return True, results
+
+
 @router.post("/sync-all", response_model=WarehouseSheetSyncAllResult, dependencies=[WAREHOUSE_MODULE])
 def sync_all(
     company_id: Optional[str] = None,
@@ -191,64 +250,29 @@ def sync_all(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Без отдельного планировщика/крона — тот же ленивый паттерн, что и
-    automation.py::sync_all_integrations: реально идём в Google не чаще
-    connection.autosync_interval_minutes, если не force=True (кнопка
-    "Синхронизировать сейчас")."""
+    """Без отдельного планировщика/крона на этом пути — тот же ленивый
+    паттерн, что и automation.py::sync_all_integrations: реально идём в
+    Google не чаще connection.autosync_interval_minutes, если не
+    force=True (кнопка "Синхронизировать сейчас"). Дополнительно к этому
+    ручному пути теперь есть независимый фоновый джоб (см. sync_connection
+    выше и app/scheduler.py), который не зависит от того, зашёл ли кто-то
+    в приложение."""
     company_ids = resolve_company_ids(db, user, company_id)
     connections = db.query(WarehouseSheetConnection).filter(
         WarehouseSheetConnection.company_id.in_(company_ids), WarehouseSheetConnection.is_connected.is_(True)
     ).all()
 
-    now = datetime.utcnow()
     processed = 0
     skipped_rate_limited = 0
     results: list[WarehouseSheetSyncResult] = []
 
     for conn in connections:
-        if not force and conn.last_sync_at:
-            elapsed_minutes = (now - conn.last_sync_at).total_seconds() / 60
-            if elapsed_minutes < conn.autosync_interval_minutes:
-                skipped_rate_limited += 1
-                continue
-
-        tabs = db.query(WarehouseSheetTab).filter(
-            WarehouseSheetTab.connection_id == conn.id, WarehouseSheetTab.is_active.is_(True)
-        ).all()
-        spreadsheet_ids_for_balances: set[str] = set()
-        for tab in tabs:
-            try:
-                r = sync_tab(db, conn, tab, dry_run=False)
-                results.append(WarehouseSheetSyncResult(**r))
-                if tab.format.value == "movements":
-                    spreadsheet_ids_for_balances.add(tab.spreadsheet_id)
-            except Exception as err:
-                results.append(WarehouseSheetSyncResult(tab_id=tab.id, tab_name=tab.tab_name, imported=0, error=str(err)))
-
-        for spreadsheet_id in spreadsheet_ids_for_balances:
-            try:
-                export_balances(db, conn, spreadsheet_id, conn.company_id)
-            except Exception:
-                pass  # остатки — вторичный эффект, не должны валить весь синк движений
-            try:
-                export_counterparties(db, conn, spreadsheet_id, conn.company_id)
-            except Exception:
-                pass  # аналогично — список контрагентов вторичен относительно самого синка движений
-            try:
-                export_personnel(db, conn, spreadsheet_id, conn.company_id)
-            except Exception:
-                pass  # аналогично — список сотрудников (аналог "БАЗА") вторичен относительно самого синка движений
-            # update_ostatok_balance() отключено (2026-08-23) — пользователь прямо
-            # потребовал вернуть лист "ОСТАТОК" на живые формулы вместо периодически
-            # переписываемых приложением статичных чисел: реальная таблица должна
-            # оставаться источником истины и реагировать мгновенно на правки, а не
-            # раз в цикл синка. Функция оставлена в warehouse_sheets.py на случай,
-            # если к идее вернутся осознанно и по-другому — просто не вызывается.
-
-        conn.last_sync_at = now
-        db.add(conn)
-        db.commit()
-        processed += 1
+        was_processed, conn_results = sync_connection(db, conn, force)
+        if was_processed:
+            processed += 1
+            results.extend(conn_results)
+        else:
+            skipped_rate_limited += 1
 
     message = f"Синхронизировано подключений: {processed} из {len(connections)}"
     if skipped_rate_limited:
