@@ -51,6 +51,19 @@ def test_project_detail_accrual_vs_cash_method_differ(client, db_session):
     assert cash_resp["revenue"] == 0.0
 
 
+def test_project_detail_returns_company_id(client, db_session):
+    """company_id нужен фронтенду (ProjectCard.jsx) для быстрого создания
+    операции прямо из карточки проекта — компания там не выбирается
+    пользователем заново, а берётся отсюда (2026-09-11)."""
+    admin = make_user(db_session, RoleEnum.admin)
+    headers = auth_headers(admin)
+    project = make_project(db_session)
+
+    resp = client.get(f"/reports/projects/{project.id}/detail", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["company_id"] == project.company_id
+
+
 def test_project_detail_date_range_filters(client, db_session):
     admin = make_user(db_session, RoleEnum.admin)
     headers = auth_headers(admin)

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, Plus, Trash2, Save } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Save, X } from "lucide-react";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -18,6 +18,7 @@ import { useResource } from "../lib/useResource";
 import { fmt, fmtDate } from "../lib/format";
 import { Combobox } from "./Combobox";
 import AmountInput from "./AmountInput";
+import { backdropClickProps } from "../lib/modalBackdrop";
 import { useTranslation } from "../lib/i18n";
 
 // Карточка проекта — см. HANDOVER.md "Карточка проекта" (сделано по образцу
@@ -43,7 +44,7 @@ export default function ProjectCard({ token, projectId, onBack, canEdit }) {
     [token, projectId, method, dateFrom, dateTo, planSource]
   );
 
-  const { data: operations } = useResource(
+  const { data: operations, reload: reloadOperations } = useResource(
     () => api.listTransactions(token, { project: projectId, limit: 20 }),
     [token, projectId]
   );
@@ -63,6 +64,59 @@ export default function ProjectCard({ token, projectId, onBack, canEdit }) {
   const [budgetRows, setBudgetRows] = useState([]);
   const [budgetSaving, setBudgetSaving] = useState(false);
   const [budgetError, setBudgetError] = useState("");
+
+  // Быстрое добавление операции прямо из карточки проекта (по просьбе
+  // пользователя, 2026-09-11) — project_id всегда = этот проект, не
+  // выбирается заново. Компактная форма, не полная модалка Transactions.jsx
+  // (без перемещений/начислений/разбивки — для этого открыть Операции).
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createForm, setCreateForm] = useState(null);
+  const [createSaving, setCreateSaving] = useState(false);
+  const [createError, setCreateError] = useState("");
+
+  function openCreate() {
+    setCreateForm({
+      date_odds: new Date().toISOString().slice(0, 10),
+      account_id: "",
+      type: "expense",
+      category_id: "",
+      counterparty_id: "",
+      amount: "",
+      comment: "",
+    });
+    setCreateError("");
+    setCreateOpen(true);
+  }
+
+  async function handleCreateSubmit(e) {
+    e.preventDefault();
+    setCreateSaving(true);
+    setCreateError("");
+    try {
+      const account = accountsById[createForm.account_id];
+      await api.createTransaction(
+        token,
+        {
+          date_odds: createForm.date_odds,
+          account_id: createForm.account_id,
+          category_id: createForm.category_id || null,
+          project_id: projectId,
+          counterparty_id: createForm.counterparty_id || null,
+          type: createForm.type,
+          amount: Number(createForm.amount),
+          currency: account?.currency || "RUB",
+          comment: createForm.comment || null,
+        },
+        detail?.company_id
+      );
+      setCreateOpen(false);
+      reloadOperations();
+    } catch (err) {
+      setCreateError(err.message);
+    } finally {
+      setCreateSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (fetchedBudgetLines) {
@@ -323,8 +377,16 @@ export default function ProjectCard({ token, projectId, onBack, canEdit }) {
       </div>
 
       <div className="fp-panel fp-table-panel">
-        <div className="fp-panel-head" style={{ padding: "18px 18px 0" }}>
+        <div
+          className="fp-panel-head"
+          style={{ padding: "18px 18px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+        >
           <h3>{t("reference.projects.operations")}</h3>
+          {canEdit && (
+            <button type="button" className="fp-btn-primary" onClick={openCreate}>
+              <Plus size={14} /> {t("tx.newTransaction")}
+            </button>
+          )}
         </div>
         {(operations || []).length === 0 ? (
           <div className="fp-empty">{t("tx.notFound")}</div>
@@ -372,6 +434,104 @@ export default function ProjectCard({ token, projectId, onBack, canEdit }) {
           </table>
         )}
       </div>
+
+      {createOpen && createForm && (
+        <div className="fp-modal-backdrop" {...backdropClickProps(() => setCreateOpen(false))}>
+          <div className="fp-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="fp-modal-head">
+              <h3>{t("tx.newTransaction")}</h3>
+              <button type="button" className="fp-icon-btn" onClick={() => setCreateOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <form onSubmit={handleCreateSubmit} className="fp-form-grid">
+              <div className="fp-type-toggle fp-span-2">
+                <button
+                  type="button"
+                  className={createForm.type === "income" ? "active income" : ""}
+                  onClick={() => setCreateForm((p) => ({ ...p, type: "income", category_id: "" }))}
+                >
+                  {t("tx.income")}
+                </button>
+                <button
+                  type="button"
+                  className={createForm.type === "expense" ? "active expense" : ""}
+                  onClick={() => setCreateForm((p) => ({ ...p, type: "expense", category_id: "" }))}
+                >
+                  {t("tx.expense")}
+                </button>
+              </div>
+
+              <label>
+                {t("tx.form.date")}
+                <input
+                  type="date"
+                  required
+                  value={createForm.date_odds}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, date_odds: e.target.value }))}
+                />
+              </label>
+              <label>
+                {t("tx.form.selectAccount")}
+                <Combobox
+                  value={createForm.account_id}
+                  onChange={(val) => setCreateForm((p) => ({ ...p, account_id: val }))}
+                  options={(accounts || []).map((a) => ({ id: a.id, name: `${a.name} (${a.currency})` }))}
+                  placeholder={t("tx.form.selectAccount")}
+                  required
+                />
+              </label>
+              <label>
+                {t("tx.form.category")}
+                <Combobox
+                  value={createForm.category_id}
+                  onChange={(val) => setCreateForm((p) => ({ ...p, category_id: val }))}
+                  options={(categories || [])
+                    .filter((c) => c.type === createForm.type)
+                    .map((c) => ({ id: c.id, name: c.name }))}
+                  placeholder={t("tx.form.selectCategory")}
+                />
+              </label>
+              <label>
+                {t("tx.form.counterparty")}
+                <Combobox
+                  value={createForm.counterparty_id}
+                  onChange={(val) => setCreateForm((p) => ({ ...p, counterparty_id: val }))}
+                  options={(counterparties || []).map((c) => ({ id: c.id, name: c.name }))}
+                  placeholder={t("tx.form.notSpecified")}
+                />
+              </label>
+              <label>
+                {t("tx.form.amount")}
+                <AmountInput
+                  required
+                  value={createForm.amount}
+                  onChange={(v) => setCreateForm((p) => ({ ...p, amount: v }))}
+                />
+              </label>
+              <label className="fp-span-2">
+                {t("tx.form.comment")}
+                <input
+                  type="text"
+                  value={createForm.comment}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, comment: e.target.value }))}
+                />
+              </label>
+
+              {createError && <div className="fp-form-error fp-span-2">{createError}</div>}
+
+              <div className="fp-modal-foot fp-span-2">
+                <button type="button" className="fp-btn-ghost" onClick={() => setCreateOpen(false)}>
+                  {t("common.cancel")}
+                </button>
+                <button type="submit" className="fp-btn-primary" disabled={createSaving}>
+                  {createSaving ? t("common.saving") : t("common.save")}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

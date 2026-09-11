@@ -1290,6 +1290,7 @@ def project_detail(
     return {
         "project_id": project_obj.id,
         "project_name": project_obj.name,
+        "company_id": project_obj.company_id,
         "status": project_status,
         "date_range": date_range,
         "revenue": revenue,

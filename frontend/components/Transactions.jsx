@@ -242,6 +242,34 @@ export default function Transactions() {
     reload,
   } = useResource(() => api.listTransactions(token, query), [token, JSON.stringify(query)]);
 
+  // Разбивка списка по дням ("Сегодня"/"Вчера и ранее") — по образцу
+  // оригинального ПланФакта (по просьбе пользователя, 2026-09-11). Список
+  // уже приходит с бэкенда отсортированным по date_odds убыв. (см.
+  // routers/transactions.py::_filtered_query), поэтому строки одной даты
+  // всегда идут подряд — достаточно пройти один раз и вставлять заголовок
+  // при смене дня. Операции с датой ПОЗЖЕ сегодня (плановое начисление
+  // наперёд, напр. будущий платёж по кредиту) идут без заголовка первыми
+  // (сортировка убыв. и так ставит их выше "Сегодня") — их достаточно
+  // просто визуально выделить другим цветом (isFuture), без своей группы.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const groupedRows = useMemo(() => {
+    const items = [];
+    let lastGroup = null;
+    for (const tx of transactions || []) {
+      const group = tx.date_odds > todayIso ? "future" : tx.date_odds === todayIso ? "today" : "past";
+      if (group !== lastGroup && group !== "future") {
+        items.push({
+          kind: "header",
+          key: `h-${group}-${tx.id}`,
+          label: group === "today" ? t("tx.group.today") : t("tx.group.earlier"),
+        });
+      }
+      items.push({ kind: "row", key: tx.id, tx, isFuture: group === "future" });
+      lastGroup = group;
+    }
+    return items;
+  }, [transactions, todayIso, t]);
+
   const countQuery = {
     company_id: filters.company || undefined,
     project: filters.project || undefined,
@@ -749,6 +777,11 @@ export default function Transactions() {
   const selectableOrders = selectable(orders, form.order_id);
   const editableCompanies = companies.filter((m) => canEditTransactions(m.role));
   const showCompanyColumn = multiCompany && !filters.company;
+  // Дата оплаты/Дата начисления/Счёт/Статья/Проект/Контрагент/Комментарий/
+  // Источник/Комиссия/Сумма — 10 постоянных колонок, +чекбокс/действия при
+  // canEdit, +компания при showCompanyColumn (см. <thead> ниже) — для
+  // colSpan строки-заголовка группы по дням.
+  const tableColumnCount = 10 + (canEdit ? 2 : 0) + (showCompanyColumn ? 1 : 0);
   // Перемещение — не привязано к одной выбранной в форме компании: счета
   // списания/зачисления могут принадлежать РАЗНЫМ компаниям одного холдинга
   // (см. app/holding_transfers.py на бэкенде), поэтому список счетов здесь —
@@ -1035,7 +1068,15 @@ export default function Transactions() {
               </tr>
             </thead>
             <tbody>
-              {transactions.map((tx) => {
+              {groupedRows.map((item) => {
+                if (item.kind === "header") {
+                  return (
+                    <tr key={item.key} className="fp-table-group-row">
+                      <td colSpan={tableColumnCount}>{item.label}</td>
+                    </tr>
+                  );
+                }
+                const tx = item.tx;
                 const acc = accountsById[tx.account_id];
                 const cat = categoriesById[tx.category_id];
                 const proj = tx.project_id ? projectsById[tx.project_id] : null;
@@ -1044,7 +1085,7 @@ export default function Transactions() {
                 const canEditRow =
                   canEditTransactions(rowRole) && (rowRole === "admin" || tx.created_by === user.id);
                 return (
-                  <tr key={tx.id}>
+                  <tr key={tx.id} className={item.isFuture ? "fp-row-future" : undefined}>
                     {canEdit && (
                       <td style={{ width: 40, textAlign: "center", paddingLeft: 8 }}>
                         <input
