@@ -15,7 +15,7 @@ import {
 } from "recharts";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
-import { fmt, fmtDate } from "../lib/format";
+import { fmt, fmtDate, todayIso } from "../lib/format";
 import { Combobox } from "./Combobox";
 import AmountInput from "./AmountInput";
 import { backdropClickProps } from "../lib/modalBackdrop";
@@ -76,7 +76,7 @@ export default function ProjectCard({ token, projectId, onBack, canEdit }) {
 
   function openCreate() {
     setCreateForm({
-      date_odds: new Date().toISOString().slice(0, 10),
+      date_odds: todayIso(),
       account_id: "",
       type: "expense",
       category_id: "",

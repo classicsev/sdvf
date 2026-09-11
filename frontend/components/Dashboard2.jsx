@@ -18,7 +18,7 @@ import {
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
-import { fmt } from "../lib/format";
+import { fmt, todayIso } from "../lib/format";
 import { useTranslation } from "../lib/i18n";
 
 // Палитра для срезов "Структура платежей" — те же оттенки, что и в остальном
@@ -101,7 +101,7 @@ export default function Dashboard2() {
   const companies = user?.companies || [];
   const multiCompany = companies.length > 1;
 
-  const [period, setPeriod] = useState(() => new Date().toISOString().slice(0, 7));
+  const [period, setPeriod] = useState(() => todayIso().slice(0, 7));
   const [companyFilter, setCompanyFilter] = useState("");
   const [method, setMethod] = useState("accrual");
 

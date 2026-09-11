@@ -5,7 +5,7 @@ import { Plus, Save, Trash2 } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
-import { fmt } from "../lib/format";
+import { fmt, todayIso } from "../lib/format";
 import { canEditReference } from "../lib/roles";
 import { useTranslation } from "../lib/i18n";
 import ProjectCard from "./ProjectCard";
@@ -305,7 +305,7 @@ function CompanyBudgetTab({ token }) {
   const { user } = useAuth();
   const canEdit = (user.companies || []).some((m) => canEditReference(m.role));
   const [companyId, setCompanyId] = useState("");
-  const [period, setPeriod] = useState(() => new Date().toISOString().slice(0, 7));
+  const [period, setPeriod] = useState(() => todayIso().slice(0, 7));
 
   const { data: categories } = useResource(() => api.listCategories(token), [token]);
   const { data, loading, error, reload } = useResource(

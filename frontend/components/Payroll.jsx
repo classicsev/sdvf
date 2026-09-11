@@ -5,7 +5,7 @@ import { Plus, X, Pencil, Trash2, Wallet, ArrowUpRight, AlertTriangle, RotateCcw
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
-import { fmt, fmtDate } from "../lib/format";
+import { fmt, fmtDate, todayIso } from "../lib/format";
 import { canEditPayroll } from "../lib/roles";
 import { backdropClickProps } from "../lib/modalBackdrop";
 import { useTranslation } from "../lib/i18n";
@@ -285,7 +285,7 @@ function EmployeesPanel({ token, employees, reload, companyFilter }) {
   );
 }
 
-const ACCRUAL_EMPTY = { employee_id: "", project_id: "", period: new Date().toISOString().slice(0, 10), salary: "0", bonus: "0", deductions: "0" };
+const ACCRUAL_EMPTY = { employee_id: "", project_id: "", period: todayIso(), salary: "0", bonus: "0", deductions: "0" };
 
 function AccrualsPanel({ token, employees, projects, accruals, reload, companyFilter }) {
   const { user } = useAuth();
@@ -458,7 +458,7 @@ function AccrualsPanel({ token, employees, projects, accruals, reload, companyFi
   );
 }
 
-const PAYMENT_EMPTY = { employee_id: "", accrual_id: "", account_id: "", date: new Date().toISOString().slice(0, 10), amount: "0", payment_type: "ЗП" };
+const PAYMENT_EMPTY = { employee_id: "", accrual_id: "", account_id: "", date: todayIso(), amount: "0", payment_type: "ЗП" };
 
 // Значения хранятся в БД как русские строки (payment_type — свободный текст,
 // не enum) — при переводе меняем только отображаемую подпись, не value.

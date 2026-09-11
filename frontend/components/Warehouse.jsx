@@ -32,7 +32,7 @@ import AttachmentList from "./AttachmentList";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
-import { fmt, fmtDate } from "../lib/format";
+import { fmt, fmtDate, todayIso } from "../lib/format";
 import { canEditWarehouse } from "../lib/roles";
 import { backdropClickProps } from "../lib/modalBackdrop";
 import { useTranslation } from "../lib/i18n";
@@ -337,7 +337,7 @@ function BalancesPanel({ token, companies, multiCompany }) {
 // ---------------------------------------------------------------------------
 
 const MOVEMENT_FORM_EMPTY = {
-  date: new Date().toISOString().slice(0, 10),
+  date: todayIso(),
   warehouse_id: "",
   product_variant_id: "",
   direction: "in",
@@ -348,7 +348,7 @@ const MOVEMENT_FORM_EMPTY = {
 };
 
 const TRANSFER_FORM_EMPTY = {
-  date: new Date().toISOString().slice(0, 10),
+  date: todayIso(),
   product_variant_id: "",
   from_warehouse_id: "",
   to_warehouse_id: "",
@@ -1512,7 +1512,7 @@ const RECIPE_FORM_EMPTY = {
 const RUN_FORM_EMPTY = {
   recipe_id: "",
   warehouse_id: "",
-  date: new Date().toISOString().slice(0, 10),
+  date: todayIso(),
   output_qty: "",
   note: "",
 };

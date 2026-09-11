@@ -5,7 +5,7 @@ import { Plus, Download, X, Pencil, Trash2, Lock, RefreshCw, CalendarCheck, Wall
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { useResource } from "../lib/useResource";
-import { fmt, fmtDate } from "../lib/format";
+import { fmt, fmtDate, todayIso } from "../lib/format";
 import { canEditTransactions } from "../lib/roles";
 import { Combobox } from "./Combobox";
 import AmountInput from "./AmountInput";
@@ -129,8 +129,8 @@ function SplitEditor({ label, idField, lines, options, placeholder, totalAmount,
 }
 
 const EMPTY_FORM = {
-  date_odds: new Date().toISOString().slice(0, 10),
-  date_opu: new Date().toISOString().slice(0, 10),
+  date_odds: todayIso(),
+  date_opu: todayIso(),
   account_id: "",
   category_id: "",
   project_id: "",
@@ -193,7 +193,7 @@ export default function Transactions() {
   const [saveConfirmMsg, setSaveConfirmMsg] = useState("");
   const [closeMonthOpen, setCloseMonthOpen] = useState(false);
   const [closeMonthCompanyId, setCloseMonthCompanyId] = useState("");
-  const [closeMonthValue, setCloseMonthValue] = useState(new Date().toISOString().slice(0, 7));
+  const [closeMonthValue, setCloseMonthValue] = useState(todayIso().slice(0, 7));
   const [closeMonthBusy, setCloseMonthBusy] = useState(false);
   const [closeMonthError, setCloseMonthError] = useState("");
   const [closeMonthMsg, setCloseMonthMsg] = useState("");
@@ -251,12 +251,12 @@ export default function Transactions() {
   // наперёд, напр. будущий платёж по кредиту) идут без заголовка первыми
   // (сортировка убыв. и так ставит их выше "Сегодня") — их достаточно
   // просто визуально выделить другим цветом (isFuture), без своей группы.
-  const todayIso = new Date().toISOString().slice(0, 10);
   const groupedRows = useMemo(() => {
+    const today = todayIso();
     const items = [];
     let lastGroup = null;
     for (const tx of transactions || []) {
-      const group = tx.date_odds > todayIso ? "future" : tx.date_odds === todayIso ? "today" : "past";
+      const group = tx.date_odds > today ? "future" : tx.date_odds === today ? "today" : "past";
       if (group !== lastGroup && group !== "future") {
         items.push({
           kind: "header",
@@ -268,7 +268,7 @@ export default function Transactions() {
       lastGroup = group;
     }
     return items;
-  }, [transactions, todayIso, t]);
+  }, [transactions, t]);
 
   const countQuery = {
     company_id: filters.company || undefined,
@@ -721,7 +721,7 @@ export default function Transactions() {
   function openCloseMonth() {
     const preselected = adminCompanies.find((m) => m.company.id === filters.company) || adminCompanies[0];
     setCloseMonthCompanyId(preselected?.company.id || "");
-    setCloseMonthValue(new Date().toISOString().slice(0, 7));
+    setCloseMonthValue(todayIso().slice(0, 7));
     setCloseMonthError("");
     setCloseMonthMsg("");
     setCloseMonthIncludeConfirmed(false);
